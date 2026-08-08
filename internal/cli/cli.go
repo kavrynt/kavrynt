@@ -14,7 +14,11 @@ import (
 	"github.com/kavrynt/kavryctl/internal/registry"
 )
 
-const Version = "0.1.0-dev"
+var (
+	Version   = "0.1.0-dev"
+	Commit    = "unknown"
+	BuildDate = "unknown"
+)
 
 func Execute(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -24,7 +28,7 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 
 	switch args[0] {
 	case "version":
-		fmt.Fprintf(stdout, "kavryctl %s\n", Version)
+		fmt.Fprintf(stdout, "kavryctl %s\ncommit %s\nbuilt %s\n", Version, Commit, BuildDate)
 		return 0
 	case "help", "-h", "--help":
 		printUsage(stdout)

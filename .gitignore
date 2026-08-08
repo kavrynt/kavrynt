@@ -3,6 +3,7 @@ kavryctl
 dist/
 bin/
 .cache/
+coverage.out
 
 # Local Kavrynt state
 .kavrynt/

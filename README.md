@@ -7,6 +7,17 @@ MCP server metadata. It is intentionally small so the product can validate CLI
 shape, manifest validation, and registry semantics before introducing Gateway,
 Kubernetes Operator, or remote control-plane behavior.
 
+## Development Model
+
+Kavrynt uses GitFlow:
+
+- `main` is production-ready code.
+- `develop` is the latest integrated development branch.
+- `feature/<branch-name>` is used for each focused feature.
+
+Repository coding, branching, and security standards are defined in
+[AGENTS.md](AGENTS.md).
+
 ## Current Commands
 
 ```bash
@@ -32,6 +43,9 @@ go run . register examples/mcp-server.json
 go run . list
 go run . inspect example-mcp-server
 ```
+
+For Docker, Helm, GitHub Actions, and first-time contributor steps, see
+[docs/RUNBOOK.md](docs/RUNBOOK.md).
 
 ## Manifest Shape
 
