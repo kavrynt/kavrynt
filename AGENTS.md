@@ -11,22 +11,25 @@ approved design says otherwise.
 
 ## Branching Strategy
 
-Use GitFlow.
+Use a lightweight GitFlow model while Kavrynt is in active MVP development.
 
 - `main`: production-ready code only.
 - `develop`: latest integrated development code.
-- `feature/<branch-name>`: one focused feature, fix, or documentation change.
+- `feature/<branch-name>`: optional branch for larger, risky, or explicitly
+  requested feature work.
 - `release/<version>`: release stabilization when needed.
 - `hotfix/<branch-name>`: urgent production fixes from `main`.
 
 Rules:
 
-1. Start new work from `develop`.
-2. Create a branch named `feature/<short-kebab-case-name>`.
-3. Keep each feature branch focused.
-4. Run local validation before merging.
-5. Merge tested feature branches back into `develop`.
-6. Merge `develop` into `main` only for production-ready releases.
+1. Default to doing iterative MVP work directly on `develop`.
+2. Create `feature/<short-kebab-case-name>` only when the user asks, when the
+   work is high-risk, or when parallel review is useful.
+3. Keep each change focused even when working directly on `develop`.
+4. Run local validation before pushing.
+5. Merge or fast-forward tested feature branches back into `develop` when
+   feature branches are used.
+6. Move `main` forward only for production-ready release baselines.
 7. Do not force-push shared branches.
 8. Do not commit secrets, local state, build output, or machine-specific files.
 
@@ -35,8 +38,8 @@ Rules:
 For every code or infrastructure change:
 
 1. Inspect the current repo state.
-2. Confirm the branch is a `feature/*` branch unless the user explicitly asks
-   for a different branch.
+2. Confirm the branch is `develop` for normal MVP work, or a deliberate
+   `feature/*` branch for larger/riskier work.
 3. Keep edits scoped to the requested change.
 4. Update tests and documentation when behavior changes.
 5. Run formatting, tests, and relevant smoke checks.
