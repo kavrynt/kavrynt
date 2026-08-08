@@ -25,14 +25,42 @@ Use GitFlow.
 
 Rules:
 
-1. Start new work from `develop`.
-2. Create a branch named `feature/<short-kebab-case-name>`.
-3. Keep each feature branch focused.
-4. Run local validation before merging.
-5. Merge tested feature branches back into `develop`.
-6. Merge `develop` into `main` only for production-ready releases.
-7. Do not force-push shared branches.
-8. Do not commit secrets, local state, build output, or machine-specific files.
+1. Keep `main` and `develop` present in every Kavrynt repository.
+2. `main` is the production-ready baseline.
+3. `develop` is the default branch for ongoing MVP integration.
+4. Use `feature/<short-kebab-case-name>` only when the user asks for feature branch isolation or a risky change needs review separation.
+5. Keep each change focused and easy to review.
+6. Run local validation before asking the user to review or merge.
+7. Merge tested feature branches back into `develop`.
+8. Merge `develop` into `main` only for production-ready releases.
+9. Do not force-push shared branches.
+10. Do not commit secrets, local state, build output, or machine-specific files.
+
+Current repository bootstrap note:
+
+- If the remote only has `feature/registry-mvp-scaffold`, create `develop` from the current reviewed commit first.
+- Create `main` from the same reviewed commit until a separate production release baseline exists.
+- After the user confirms the local changes, the user will push branches and workflow fixes to GitHub.
+
+Suggested first-time branch bootstrap:
+
+```bash
+git switch feature/registry-mvp-scaffold
+git switch -c develop
+git push -u origin develop
+git switch -c main
+git push -u origin main
+git switch develop
+```
+
+## Codex Operating Rules
+
+- Create and update files inside the repository only unless the user explicitly asks for commits or pushes.
+- Do not push to remote for this repository unless the user explicitly asks in the current turn.
+- Before changing files, inspect the existing repository shape and preserve its conventions.
+- Prefer small, reviewable edits over broad rewrites.
+- Report exact validation commands and whether they passed.
+- If GitHub Actions fail, reproduce the relevant local command first, then fix the smallest repo issue that explains the failure.
 
 ## Current Product Scope
 
