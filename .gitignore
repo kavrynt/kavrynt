@@ -1,0 +1,16 @@
+# Build output
+kavryctl
+dist/
+bin/
+.cache/
+
+# Local Kavrynt state
+.kavrynt/
+
+# macOS
+.DS_Store
+
+# Logs and temp files
+*.log
+tmp/
+temp/

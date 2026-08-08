@@ -1,0 +1,213 @@
+package cli
+
+import (
+	"encoding/json"
+	"flag"
+	"fmt"
+	"io"
+	"path/filepath"
+	"strings"
+	"text/tabwriter"
+	"time"
+
+	"github.com/kavrynt/kavryctl/internal/manifest"
+	"github.com/kavrynt/kavryctl/internal/registry"
+)
+
+const Version = "0.1.0-dev"
+
+func Execute(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printUsage(stderr)
+		return 2
+	}
+
+	switch args[0] {
+	case "version":
+		fmt.Fprintf(stdout, "kavryctl %s\n", Version)
+		return 0
+	case "help", "-h", "--help":
+		printUsage(stdout)
+		return 0
+	case "init":
+		return runInit(args[1:], stdout, stderr)
+	case "validate":
+		return runValidate(args[1:], stdout, stderr)
+	case "register":
+		return runRegister(args[1:], stdout, stderr)
+	case "list":
+		return runList(args[1:], stdout, stderr)
+	case "inspect":
+		return runInspect(args[1:], stdout, stderr)
+	default:
+		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
+		printUsage(stderr)
+		return 2
+	}
+}
+
+func runInit(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("init", stderr)
+	homeFlag := fs.String("home", "", "Kavrynt home directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "init does not accept positional arguments")
+		return 2
+	}
+
+	home := registry.Home(*homeFlag)
+	if err := registry.Init(home); err != nil {
+		fmt.Fprintf(stderr, "init failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "initialized registry at %s\n", registry.Path(home))
+	return 0
+}
+
+func runValidate(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("validate", stderr)
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: kavryctl validate <manifest.json>")
+		return 2
+	}
+
+	path := fs.Arg(0)
+	m, err := manifest.Load(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "validation failed: %v\n", err)
+		return 1
+	}
+
+	fmt.Fprintf(stdout, "valid MCP server manifest: %s\n", m.Metadata.Name)
+	return 0
+}
+
+func runRegister(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("register", stderr)
+	homeFlag := fs.String("home", "", "Kavrynt home directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: kavryctl register [--home DIR] <manifest.json>")
+		return 2
+	}
+
+	path := fs.Arg(0)
+	m, err := manifest.Load(path)
+	if err != nil {
+		fmt.Fprintf(stderr, "registration failed: %v\n", err)
+		return 1
+	}
+
+	home := registry.Home(*homeFlag)
+	source, err := filepath.Abs(path)
+	if err != nil {
+		source = path
+	}
+	server, created, err := registry.Register(home, m, source, time.Now())
+	if err != nil {
+		fmt.Fprintf(stderr, "registration failed: %v\n", err)
+		return 1
+	}
+
+	action := "updated"
+	if created {
+		action = "registered"
+	}
+	fmt.Fprintf(stdout, "%s MCP server %s@%s\n", action, server.Manifest.Metadata.Name, server.Manifest.Spec.Version)
+	return 0
+}
+
+func runList(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("list", stderr)
+	homeFlag := fs.String("home", "", "Kavrynt home directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "list does not accept positional arguments")
+		return 2
+	}
+
+	servers, err := registry.List(registry.Home(*homeFlag))
+	if err != nil {
+		fmt.Fprintf(stderr, "list failed: %v\n", err)
+		return 1
+	}
+
+	if len(servers) == 0 {
+		fmt.Fprintln(stdout, "no MCP servers registered")
+		return 0
+	}
+
+	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
+	fmt.Fprintln(tw, "NAME\tVERSION\tTRANSPORT\tUPDATED")
+	for _, server := range servers {
+		fmt.Fprintf(
+			tw,
+			"%s\t%s\t%s\t%s\n",
+			server.Manifest.Metadata.Name,
+			server.Manifest.Spec.Version,
+			server.Manifest.Spec.Transport,
+			server.UpdatedAt.Format(time.RFC3339),
+		)
+	}
+	_ = tw.Flush()
+	return 0
+}
+
+func runInspect(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("inspect", stderr)
+	homeFlag := fs.String("home", "", "Kavrynt home directory")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 1 {
+		fmt.Fprintln(stderr, "usage: kavryctl inspect [--home DIR] <name>")
+		return 2
+	}
+
+	server, err := registry.Inspect(registry.Home(*homeFlag), fs.Arg(0))
+	if err != nil {
+		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
+		return 1
+	}
+
+	data, err := json.MarshalIndent(server, "", "  ")
+	if err != nil {
+		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintln(stdout, string(data))
+	return 0
+}
+
+func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
+	fs := flag.NewFlagSet(name, flag.ContinueOnError)
+	fs.SetOutput(stderr)
+	return fs
+}
+
+func printUsage(w io.Writer) {
+	fmt.Fprint(w, strings.TrimSpace(`
+kavryctl manages Kavrynt local MCP server registration.
+
+Usage:
+  kavryctl version
+  kavryctl init [--home DIR]
+  kavryctl validate <manifest.json>
+  kavryctl register [--home DIR] <manifest.json>
+  kavryctl list [--home DIR]
+  kavryctl inspect [--home DIR] <name>
+
+Environment:
+  KAVRYNT_HOME  Defaults to .kavrynt in the current directory.
+`)+"\n")
+}

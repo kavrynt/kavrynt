@@ -1,0 +1,21 @@
+{
+  "apiVersion": "kavrynt.io/v1alpha1",
+  "kind": "MCPServer",
+  "metadata": {
+    "name": "example-mcp-server",
+    "description": "Example local MCP server manifest",
+    "labels": {
+      "app.kavrynt.io/example": "true"
+    }
+  },
+  "spec": {
+    "version": "0.1.0",
+    "transport": "stdio",
+    "command": "python3",
+    "args": [
+      "-m",
+      "example_mcp_server"
+    ],
+    "environment": {}
+  }
+}
