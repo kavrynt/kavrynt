@@ -1,0 +1,126 @@
+name: QA
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+      - "feature/**"
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go QA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build binary
+        run: |
+          go build \
+            -ldflags="-X github.com/kavrynt/registry/internal/build.Version=0.1.0-ci -X github.com/kavrynt/registry/internal/build.Commit=${GITHUB_SHA} -X github.com/kavrynt/registry/internal/build.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o bin/registry .
+
+      - name: API smoke test
+        run: |
+          ./bin/registry --addr :8080 --data /tmp/kavrynt-registry-ci.json &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for i in {1..20}; do
+            curl -fsS http://localhost:8080/readyz && break
+            sleep 0.5
+          done
+          curl -fsS -X POST http://localhost:8080/v1/servers \
+            -H 'Content-Type: application/json' \
+            --data-binary @examples/mcp-server.json
+          curl -fsS http://localhost:8080/v1/servers/example-mcp-server
+
+  vulnerability:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: true
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-package: ./...
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs:
+      - go
+      - vulnerability
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg VERSION=0.1.0-ci \
+            --build-arg COMMIT=${GITHUB_SHA} \
+            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -t kavrynt/registry:ci .
+
+      - name: Image smoke test
+        run: |
+          docker run --rm -d --name kavrynt-registry-ci -p 8080:8080 kavrynt/registry:ci
+          trap 'docker rm -f kavrynt-registry-ci' EXIT
+          for i in {1..20}; do
+            curl -fsS http://localhost:8080/readyz && break
+            sleep 0.5
+          done
+          curl -fsS -X POST http://localhost:8080/v1/servers \
+            -H 'Content-Type: application/json' \
+            --data-binary @examples/mcp-server.json
+
+  helm:
+    name: Helm QA
+    runs-on: ubuntu-latest
+    needs:
+      - go
+      - vulnerability
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint chart
+        run: helm lint charts/registry
+
+      - name: Render chart
+        run: helm template registry charts/registry
