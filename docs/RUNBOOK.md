@@ -56,12 +56,48 @@ GOCACHE="$PWD/.cache/go-build" go run . init
 GOCACHE="$PWD/.cache/go-build" go run . register examples/mcp-server.json
 GOCACHE="$PWD/.cache/go-build" go run . list
 GOCACHE="$PWD/.cache/go-build" go run . inspect example-mcp-server
+GOCACHE="$PWD/.cache/go-build" go run . unregister example-mcp-server
 ```
 
 Cleanup:
 
 ```bash
 rm -rf /tmp/kavrynt-local
+```
+
+## Remote Registry Workflow
+
+Start Kavrynt Registry from the `registry` repository:
+
+```bash
+cd /Users/ravindrakumar/Desktop/Kavrynt/Github-Code/registry
+GOCACHE="$PWD/.cache/go-build" go run . --addr :8080 --data /tmp/kavrynt-registry.json
+```
+
+In another terminal, use `kavryctl`:
+
+```bash
+cd /Users/ravindrakumar/Desktop/Kavrynt/Github-Code/kavryctl
+export KAVRYNT_REGISTRY_URL=http://localhost:8080
+GOCACHE="$PWD/.cache/go-build" go run . register examples/mcp-server.json
+GOCACHE="$PWD/.cache/go-build" go run . list
+GOCACHE="$PWD/.cache/go-build" go run . inspect example-mcp-server
+GOCACHE="$PWD/.cache/go-build" go run . unregister example-mcp-server
+```
+
+Equivalent explicit form:
+
+```bash
+GOCACHE="$PWD/.cache/go-build" go run . register --registry http://localhost:8080 examples/mcp-server.json
+GOCACHE="$PWD/.cache/go-build" go run . list --registry http://localhost:8080
+GOCACHE="$PWD/.cache/go-build" go run . inspect --registry http://localhost:8080 example-mcp-server
+GOCACHE="$PWD/.cache/go-build" go run . unregister --registry http://localhost:8080 example-mcp-server
+```
+
+Cleanup:
+
+```bash
+rm -f /tmp/kavrynt-registry.json
 ```
 
 ## Docker Build
@@ -142,6 +178,7 @@ It validates:
 - Go vulnerability scanning with `govulncheck`
 - Go binary build
 - CLI smoke test
+- remote Registry client tests
 - Docker image build
 - Helm lint
 - Helm template rendering

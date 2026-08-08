@@ -54,4 +54,15 @@ func TestRegisterCreatesAndUpdatesServer(t *testing.T) {
 	if len(servers) != 1 {
 		t.Fatalf("server count = %d", len(servers))
 	}
+
+	if err := Unregister(home, "example"); err != nil {
+		t.Fatalf("Unregister returned error: %v", err)
+	}
+	servers, err = List(home)
+	if err != nil {
+		t.Fatalf("List after unregister returned error: %v", err)
+	}
+	if len(servers) != 0 {
+		t.Fatalf("server count after unregister = %d", len(servers))
+	}
 }

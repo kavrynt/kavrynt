@@ -4,10 +4,10 @@ This repository contains `kavryctl`, the Kavrynt command-line interface.
 
 Kavrynt is an open-source AI infrastructure platform for running and operating
 AI agents and MCP servers in production. The first `kavryctl` slice manages
-local MCP server manifests and a local file-backed registry. Gateway,
-Kubernetes Operator, remote Registry service, authentication, authorization,
-and policy enforcement are future work unless an approved design says
-otherwise.
+MCP server manifests with both local file-backed registration and remote
+Kavrynt Registry API registration. Gateway, Kubernetes Operator,
+authentication, authorization, and policy enforcement are future work unless an
+approved design says otherwise.
 
 ## Branching Strategy
 
@@ -52,10 +52,11 @@ For every code or infrastructure change:
 - Use explicit errors with enough context for users to act.
 - Validate user input at the boundary.
 - Keep CLI output stable and predictable.
+- Keep local and remote Registry workflows behaviorally aligned.
 - Avoid global mutable state except for constants.
 - Prefer standard library features when they are sufficient.
-- Do not introduce Kubernetes, Gateway, auth, policy, or remote Registry logic
-  until the corresponding product and architecture docs are approved.
+- Do not introduce Kubernetes, Gateway, auth, or policy logic until the
+  corresponding product and architecture docs are approved.
 
 ## Go Standards
 
@@ -96,6 +97,15 @@ GOCACHE="$PWD/.cache/go-build" go test ./...
 GOCACHE="$PWD/.cache/go-build" go vet ./...
 GOCACHE="$PWD/.cache/go-build" go run . version
 GOCACHE="$PWD/.cache/go-build" go run . validate examples/mcp-server.json
+```
+
+Remote Registry smoke, when the Registry service is running:
+
+```bash
+KAVRYNT_REGISTRY_URL=http://localhost:8080 GOCACHE="$PWD/.cache/go-build" go run . register examples/mcp-server.json
+KAVRYNT_REGISTRY_URL=http://localhost:8080 GOCACHE="$PWD/.cache/go-build" go run . list
+KAVRYNT_REGISTRY_URL=http://localhost:8080 GOCACHE="$PWD/.cache/go-build" go run . inspect example-mcp-server
+KAVRYNT_REGISTRY_URL=http://localhost:8080 GOCACHE="$PWD/.cache/go-build" go run . unregister example-mcp-server
 ```
 
 For Docker validation:

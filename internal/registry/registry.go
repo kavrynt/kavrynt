@@ -14,6 +14,8 @@ import (
 
 const FileName = "registry.json"
 
+var ErrNotFound = errors.New("server not found")
+
 type Registry struct {
 	Version int      `json:"version"`
 	Servers []Server `json:"servers"`
@@ -149,7 +151,21 @@ func Inspect(home, name string) (Server, error) {
 			return server, nil
 		}
 	}
-	return Server{}, fmt.Errorf("server %q not found", name)
+	return Server{}, fmt.Errorf("%w: %q", ErrNotFound, name)
+}
+
+func Unregister(home, name string) error {
+	r, err := Load(home)
+	if err != nil {
+		return err
+	}
+	for i, server := range r.Servers {
+		if server.Manifest.Metadata.Name == name {
+			r.Servers = append(r.Servers[:i], r.Servers[i+1:]...)
+			return Save(Path(home), r)
+		}
+	}
+	return fmt.Errorf("%w: %q", ErrNotFound, name)
 }
 
 func sortServers(servers []Server) {
