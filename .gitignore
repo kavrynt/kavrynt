@@ -1,0 +1,15 @@
+# Build output
+/k8s-operator
+/manager
+dist/
+bin/
+.cache/
+coverage.out
+
+# macOS
+.DS_Store
+
+# Logs and temp files
+*.log
+tmp/
+temp/

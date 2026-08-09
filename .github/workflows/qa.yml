@@ -1,0 +1,108 @@
+name: QA
+
+on:
+  pull_request:
+    branches:
+      - develop
+      - main
+  push:
+    branches:
+      - develop
+      - main
+      - "feature/**"
+
+permissions:
+  contents: read
+
+jobs:
+  go:
+    name: Go QA
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Check formatting
+        run: test -z "$(gofmt -l .)"
+
+      - name: Test
+        run: go test ./...
+
+      - name: Vet
+        run: go vet ./...
+
+      - name: Build binary
+        run: |
+          go build \
+            -ldflags="-X github.com/kavrynt/k8s-operator/internal/build.Version=0.1.0-ci -X github.com/kavrynt/k8s-operator/internal/build.Commit=${GITHUB_SHA} -X github.com/kavrynt/k8s-operator/internal/build.BuildDate=$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+            -o bin/manager .
+
+  vulnerability:
+    name: Vulnerability Scan
+    runs-on: ubuntu-latest
+    needs: go
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Go
+        uses: actions/setup-go@v7
+        with:
+          go-version-file: go.mod
+          cache: true
+          cache-dependency-path: go.sum
+
+      - name: Run govulncheck
+        uses: golang/govulncheck-action@v1
+        with:
+          go-package: ./...
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    needs:
+      - go
+      - vulnerability
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Build image
+        run: |
+          docker build \
+            --build-arg VERSION=0.1.0-ci \
+            --build-arg COMMIT=${GITHUB_SHA} \
+            --build-arg BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ) \
+            -t kavrynt/k8s-operator:ci .
+
+      - name: Image smoke test
+        run: docker run --rm kavrynt/k8s-operator:ci --help
+
+  helm:
+    name: Helm QA
+    runs-on: ubuntu-latest
+    needs:
+      - go
+      - vulnerability
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v6
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint chart
+        run: helm lint charts/k8s-operator
+
+      - name: Render chart
+        run: helm template k8s-operator charts/k8s-operator
+
+      - name: Render raw manifests
+        run: kubectl kustomize config
