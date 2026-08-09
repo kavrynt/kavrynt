@@ -1,0 +1,10 @@
+.git
+.github
+.cache
+bin
+dist
+tmp
+temp
+.DS_Store
+*.log
+coverage.out
