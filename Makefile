@@ -65,6 +65,8 @@ docker-build:
 
 .PHONY: helm-lint
 helm-lint:
+	helm dependency build charts/kavrynt
+	helm lint charts/kavrynt
 	helm lint cmd/kavryctl/charts/kavryctl
 	helm lint services/registry/charts/registry
 	helm lint services/gateway/charts/gateway
@@ -72,6 +74,8 @@ helm-lint:
 
 .PHONY: helm-template
 helm-template:
+	helm dependency build charts/kavrynt
+	helm template kavrynt charts/kavrynt --namespace kavrynt-system
 	helm template kavryctl cmd/kavryctl/charts/kavryctl
 	helm template registry services/registry/charts/registry
 	helm template gateway services/gateway/charts/gateway

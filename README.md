@@ -24,6 +24,8 @@ Each component is currently kept as an independent Go module. The root
 .
 ├── cmd/
 │   └── kavryctl/
+├── charts/
+│   └── kavrynt/
 ├── services/
 │   ├── gateway/
 │   └── registry/
@@ -35,6 +37,43 @@ Each component is currently kept as an independent Go module. The root
 ├── go.work
 └── README.md
 ```
+
+## Product Install Experience
+
+Kavrynt should feel like standard Kubernetes platform software. A developer or
+platform engineer installs the control plane into one namespace, then uses
+`kavryctl` and Kubernetes `MCPServer` resources to register MCP servers.
+
+Target release experience:
+
+```bash
+curl -fsSL https://kavrynt.com/install.sh | sh
+
+helm repo add kavrynt https://charts.kavrynt.com
+helm repo update
+helm upgrade --install kavrynt kavrynt/kavrynt \
+  --namespace kavrynt-system \
+  --create-namespace
+
+kubectl get pods -n kavrynt-system
+kavryctl version
+```
+
+Expected control-plane pods:
+
+```text
+kavrynt-registry
+kavrynt-gateway
+kavrynt-operator
+```
+
+Current MVP reality:
+
+- `kavryctl` can be installed from source.
+- Registry, Gateway, and Operator can be installed from this repository with
+  Helm.
+- Public binary releases, a public Helm repository, and stable Docker image tags
+  are the next distribution work items.
 
 ## Local Development
 
@@ -128,11 +167,10 @@ Cleanup:
 kavryctl unregister --registry http://localhost:8080 example-mcp-server
 ```
 
-## Kubernetes Quick Start
+## Kubernetes Quick Start From Source
 
-This path makes Kavrynt feel like normal Kubernetes software: build images,
-load them into Kind, install Helm charts, apply a custom resource, and
-port-forward the APIs.
+This is the current source-based MVP flow. It installs the Kavrynt control plane
+into the `kavrynt-system` namespace using the umbrella Helm chart.
 
 Prerequisites:
 
@@ -159,56 +197,35 @@ kind load docker-image kavrynt/k8s-operator:dev --name kavrynt-dev
 kind load docker-image kavrynt/kavryctl:dev --name kavrynt-dev
 ```
 
-### 3. Install Registry
+### 3. Install Kavrynt Control Plane
 
 ```bash
-helm upgrade --install registry services/registry/charts/registry \
-  --set image.repository=kavrynt/registry \
-  --set image.tag=dev \
-  --set image.pullPolicy=IfNotPresent
+helm dependency build charts/kavrynt
+
+helm upgrade --install kavrynt charts/kavrynt \
+  --namespace kavrynt-system \
+  --create-namespace
 ```
 
 Wait for it:
 
 ```bash
-kubectl rollout status deployment/registry-registry --timeout=120s
-kubectl get pods
-```
-
-### 4. Install Gateway
-
-```bash
-helm upgrade --install gateway services/gateway/charts/gateway \
-  --set image.repository=kavrynt/gateway \
-  --set image.tag=dev \
-  --set image.pullPolicy=IfNotPresent \
-  --set config.registryURL=http://registry-registry.default.svc.cluster.local:8080
-```
-
-Wait for it:
-
-```bash
-kubectl rollout status deployment/gateway-gateway --timeout=120s
-```
-
-### 5. Install Operator
-
-```bash
-helm upgrade --install k8s-operator operator/charts/k8s-operator \
-  --set image.repository=kavrynt/k8s-operator \
-  --set image.tag=dev \
-  --set image.pullPolicy=IfNotPresent \
-  --set config.registryURL=http://registry-registry.default.svc.cluster.local:8080
-```
-
-Wait for it:
-
-```bash
-kubectl rollout status deployment/k8s-operator-k8s-operator --timeout=120s
+kubectl rollout status deployment/kavrynt-registry -n kavrynt-system --timeout=120s
+kubectl rollout status deployment/kavrynt-gateway -n kavrynt-system --timeout=120s
+kubectl rollout status deployment/kavrynt-operator -n kavrynt-system --timeout=120s
+kubectl get pods -n kavrynt-system
+kubectl get svc -n kavrynt-system
 kubectl get crd mcpservers.kavrynt.io
 ```
 
-### 6. Deploy A Temporary Example MCP HTTP Server
+Expected services:
+
+```text
+kavrynt-registry
+kavrynt-gateway
+```
+
+### 4. Deploy A Temporary Example MCP HTTP Server
 
 The MVP Gateway routes to HTTP MCP endpoints registered in Registry. If you do
 not already have an MCP server, deploy a temporary HTTP echo service:
@@ -222,7 +239,7 @@ kubectl expose deployment example-mcp-server --port=8080 --target-port=8080
 kubectl rollout status deployment/example-mcp-server --timeout=120s
 ```
 
-### 7. Register The MCP Server Through Kubernetes
+### 5. Register The MCP Server Through Kubernetes
 
 ```bash
 kubectl apply -f operator/config/samples/kavrynt_v1alpha1_mcpserver.yaml
@@ -233,12 +250,12 @@ kubectl describe mcpserver example-mcp-server
 The Operator watches the `MCPServer` resource and writes the server record into
 Registry.
 
-### 8. Verify Registry And Gateway
+### 6. Verify Registry And Gateway
 
 Port-forward Registry:
 
 ```bash
-kubectl port-forward svc/registry-registry 18081:8080
+kubectl port-forward -n kavrynt-system svc/kavrynt-registry 18081:8080
 ```
 
 In another terminal:
@@ -252,7 +269,7 @@ curl -fsS http://localhost:18081/v1/servers/example-mcp-server
 Port-forward Gateway:
 
 ```bash
-kubectl port-forward svc/gateway-gateway 18080:8080
+kubectl port-forward -n kavrynt-system svc/kavrynt-gateway 18080:8080
 ```
 
 In another terminal:
@@ -270,7 +287,7 @@ Expected result:
 - Gateway lists a route for `example-mcp-server`.
 - Gateway proxies `/mcp/example-mcp-server` to the temporary example service.
 
-### 9. Register Through `kavryctl` Instead Of Operator
+### 7. Register Through `kavryctl` Instead Of Operator
 
 You can also register directly through the Registry API from your laptop:
 
@@ -283,16 +300,15 @@ kavryctl inspect --registry http://localhost:18081 example-mcp-server
 Use `kubectl apply` when you want Kubernetes-native declaration. Use
 `kavryctl register` when you want a CLI-driven workflow.
 
-### 10. Cleanup
+### 8. Cleanup
 
 ```bash
 kubectl delete -f operator/config/samples/kavrynt_v1alpha1_mcpserver.yaml
 kubectl delete service example-mcp-server
 kubectl delete deployment example-mcp-server
 
-helm uninstall k8s-operator
-helm uninstall gateway
-helm uninstall registry
+helm uninstall kavrynt -n kavrynt-system
+kubectl delete namespace kavrynt-system
 
 kind delete cluster --name kavrynt-dev
 ```
@@ -302,15 +318,13 @@ kind delete cluster --name kavrynt-dev
 Today, developers install Kavrynt from source and local images:
 
 - `kavryctl`: installed with `go install ./cmd/kavryctl`
-- Registry: installed into Kubernetes with `services/registry/charts/registry`
-- Gateway: installed into Kubernetes with `services/gateway/charts/gateway`
-- Operator: installed into Kubernetes with `operator/charts/k8s-operator`
+- Registry, Gateway, and Operator: installed together with `charts/kavrynt`
 
 Public release artifacts should come next:
 
 - GitHub Releases for `kavryctl` binaries.
 - Docker Hub images for Registry, Gateway, Operator, and optional `kavryctl`.
-- Published Helm charts or OCI Helm chart packages.
+- Published Helm chart or OCI Helm chart package for `charts/kavrynt`.
 - A one-command local install script after the MVP flow stabilizes.
 
 ## MVP Flow

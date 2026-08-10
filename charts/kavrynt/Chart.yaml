@@ -1,0 +1,17 @@
+apiVersion: v2
+name: kavrynt
+description: Kavrynt MCP infrastructure control plane
+type: application
+version: 0.1.0
+appVersion: 0.1.0-dev
+dependencies:
+  - name: registry
+    version: 0.1.0
+    repository: file://../../services/registry/charts/registry
+  - name: gateway
+    version: 0.1.0
+    repository: file://../../services/gateway/charts/gateway
+  - name: k8s-operator
+    alias: operator
+    version: 0.1.0
+    repository: file://../../operator/charts/k8s-operator

@@ -1,0 +1,12 @@
+dependencies:
+- name: registry
+  repository: file://../../services/registry/charts/registry
+  version: 0.1.0
+- name: gateway
+  repository: file://../../services/gateway/charts/gateway
+  version: 0.1.0
+- name: k8s-operator
+  repository: file://../../operator/charts/k8s-operator
+  version: 0.1.0
+digest: sha256:93ad938f899819b3b1593b7b1cac00dc8913da9d475ac2bc896efcde6742e953
+generated: "2026-08-11T00:44:09.561568+05:30"
