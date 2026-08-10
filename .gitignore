@@ -1,0 +1,33 @@
+.DS_Store
+
+# Local editor and OS files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Build output
+bin/
+dist/
+build/
+coverage.out
+*.test
+
+# Go caches and local work artifacts
+.cache/
+vendor/
+
+# Local runtime state
+*.log
+*.pid
+registry-data/
+.kavrynt/
+
+# Secrets and machine-specific config
+.env
+.env.*
+*.pem
+*.key
+*.crt
+kubeconfig
+*.kubeconfig

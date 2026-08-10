@@ -1,0 +1,95 @@
+name: QA
+
+on:
+  pull_request:
+    branches:
+      - main
+      - develop
+  push:
+    branches:
+      - main
+      - develop
+
+permissions:
+  contents: read
+
+jobs:
+  go-qa:
+    name: Go QA
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        component:
+          - cmd/kavryctl
+          - services/registry
+          - services/gateway
+          - operator
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: "1.23.x"
+          cache: false
+
+      - name: Check formatting
+        working-directory: ${{ matrix.component }}
+        run: |
+          test -z "$(gofmt -l $(find . -name '*.go' -not -path './.cache/*'))"
+
+      - name: Test
+        working-directory: ${{ matrix.component }}
+        run: go test ./...
+
+      - name: Vet
+        working-directory: ${{ matrix.component }}
+        run: go vet ./...
+
+  helm-qa:
+    name: Helm QA
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        chart:
+          - cmd/kavryctl/charts/kavryctl
+          - services/registry/charts/registry
+          - services/gateway/charts/gateway
+          - operator/charts/k8s-operator
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Lint chart
+        run: helm lint "${{ matrix.chart }}"
+
+      - name: Render chart
+        run: helm template "$(basename "${{ matrix.chart }}")" "${{ matrix.chart }}"
+
+  docker-build:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: kavrynt/kavryctl
+            context: cmd/kavryctl
+          - image: kavrynt/registry
+            context: services/registry
+          - image: kavrynt/gateway
+            context: services/gateway
+          - image: kavrynt/k8s-operator
+            context: operator
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Build image
+        run: docker build -t "${{ matrix.image }}:ci" "${{ matrix.context }}"

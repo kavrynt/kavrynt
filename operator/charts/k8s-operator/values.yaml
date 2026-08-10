@@ -1,0 +1,46 @@
+replicaCount: 1
+
+image:
+  repository: kavrynt/k8s-operator
+  tag: dev
+  pullPolicy: IfNotPresent
+
+serviceAccount:
+  create: true
+  name: ""
+
+config:
+  registryURL: "http://registry.default.svc.cluster.local:8080"
+  metricsBindAddress: ":8080"
+  healthProbeBindAddress: ":8081"
+  syncRetryPeriod: "30s"
+  leaderElect: true
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

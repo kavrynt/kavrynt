@@ -1,0 +1,14 @@
+# Build output
+/gateway
+dist/
+bin/
+.cache/
+coverage.out
+
+# macOS
+.DS_Store
+
+# Logs and temp files
+*.log
+tmp/
+temp/
