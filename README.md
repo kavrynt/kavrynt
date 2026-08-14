@@ -1,8 +1,9 @@
 # Kavrynt
 
-Kavrynt is an MCP infrastructure control plane for platform teams. It provides
-the core components needed to register, route, operate, and eventually govern
-MCP servers across local development and Kubernetes environments.
+Kavrynt is a source-available MCP infrastructure control plane for platform
+teams. It provides the core components needed to register, route, operate, and
+eventually govern MCP servers across local development and Kubernetes
+environments.
 
 This repository is the public product monorepo for the Kavrynt MVP.
 
@@ -44,7 +45,7 @@ Kavrynt should feel like standard Kubernetes platform software. A developer or
 platform engineer installs the control plane into one namespace, then uses
 `kavryctl` and Kubernetes `MCPServer` resources to register MCP servers.
 
-Target release experience:
+Target release experience for Linux and macOS:
 
 ```bash
 curl -fsSL https://kavrynt.com/install.sh | sh
@@ -54,6 +55,13 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --create-namespace
 
 kubectl get pods -n kavrynt-system
+kavryctl version
+```
+
+Target release experience for Windows PowerShell:
+
+```powershell
+iwr https://kavrynt.com/install.ps1 -UseB | iex
 kavryctl version
 ```
 
@@ -67,12 +75,12 @@ kavrynt-operator
 
 Current MVP reality:
 
-- `kavryctl` can be installed from source today. Tagged releases publish
-  cross-platform binaries to GitHub Releases.
+- `kavryctl` can be installed from source today. The repository includes release
+  automation for Linux, macOS, and Windows binaries.
 - Registry, Gateway, and Operator images are published on Docker Hub under the
   `kavrynt` organization.
-- The umbrella Helm chart is available in this repository. Tagged releases
-  publish the packaged chart to GHCR as an OCI Helm chart.
+- The umbrella Helm chart is available in this repository. Tagged releases are
+  intended to publish the packaged chart to GHCR as an OCI Helm chart.
 
 Published MVP images:
 
@@ -83,10 +91,10 @@ kavrynt/gateway:dev
 kavrynt/k8s-operator:dev
 ```
 
-The `dev` tags currently point at the latest pushed MVP build from `main`.
-Use commit-pinned tags, such as `2c5da9c`, when you need a reproducible test.
-The published images are currently `linux/amd64`. Apple Silicon users can still
-test on Kind by using the local image development path below.
+The `dev` tags point at the latest pushed MVP build from `main`. Use
+commit-pinned tags, such as `2c5da9c`, when you need a reproducible test. The
+published images are currently `linux/amd64`. Apple Silicon users can still test
+on Kind by using the local image development path below.
 
 ## Local Development
 
@@ -95,7 +103,8 @@ Prerequisites:
 - Go 1.23+
 - Docker, for image builds
 - Helm, for chart validation
-- kubectl and Kind, for local Kubernetes testing
+- kubectl, for Kubernetes testing
+- Kind, only for disposable local cluster testing
 
 Run Go checks across all components:
 
@@ -136,19 +145,25 @@ cd kavrynt
 
 ### 2. Install `kavryctl`
 
-From GitHub Releases on Linux or macOS:
+From GitHub Releases on Linux or macOS after the first release is published:
 
 ```bash
 curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.sh | sh
 ```
 
-From PowerShell on Windows:
+Install a specific release version:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.sh | KAVRYNT_VERSION=v0.1.0 sh
+```
+
+From PowerShell on Windows after the first release is published:
 
 ```powershell
 iwr https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.ps1 -UseB | iex
 ```
 
-From the repository root during local development:
+Current MVP source install from the repository root:
 
 ```bash
 go install ./cmd/kavryctl
@@ -192,31 +207,54 @@ Cleanup:
 kavryctl unregister --registry http://localhost:8080 example-mcp-server
 ```
 
-## Kubernetes Quick Start
+## Install Kavrynt On Kubernetes
 
-This is the minimum Kubernetes MVP flow. It installs the Kavrynt control plane
-into the `kavrynt-system` namespace using the umbrella Helm chart and pulls the
-runtime images from Docker Hub.
+This is the minimum Kubernetes MVP flow. It follows the same shape as common
+Kubernetes platform installs: prepare a cluster, install the control plane with
+Helm, verify the workloads, deploy a sample MCP server, and remove the install
+when finished.
+
+Kavrynt is not limited to Kind. You can use EKS, AKS, GKE, OpenShift,
+self-managed Kubernetes, or any conformant cluster where you have permission to
+install CRDs, RBAC, Deployments, and Services. Use Kind only when you want a
+throwaway local test cluster.
 
 Prerequisites:
 
-- Kind
 - kubectl
 - Helm
 - Git
+- Docker and Kind, only for local testing
 
-Docker is only required if you want to create a local Kind cluster or build
-images yourself.
+Check the tools:
 
-### 1. Create A Kind Cluster
+```bash
+kubectl version --client
+helm version
+git --version
+
+# Local testing only
+docker version
+kind version
+```
+
+### 1. Choose A Kubernetes Cluster
+
+For an existing Kubernetes cluster:
+
+```bash
+kubectl config current-context
+kubectl get nodes
+```
+
+For local testing with Kind:
 
 ```bash
 kind create cluster --name kavrynt-dev
 kubectl cluster-info --context kind-kavrynt-dev
 ```
 
-If you already have a Kubernetes cluster, set your `kubectl` context to that
-cluster and skip this step.
+Expected result: `kubectl get nodes` returns at least one `Ready` node.
 
 ### 2. Clone The Chart Source
 
@@ -226,9 +264,9 @@ cd kavrynt
 ```
 
 The chart dependencies are local file dependencies in this MVP, so the source
-checkout is still required until the Helm chart is published.
+checkout is required until the Helm chart is published as an OCI chart.
 
-### 3. Install Kavrynt Control Plane From Source
+### 3. Install The Kavrynt Control Plane
 
 The default chart values use these Docker Hub images:
 
@@ -248,8 +286,7 @@ helm upgrade --install kavrynt charts/kavrynt \
   --create-namespace
 ```
 
-After a tagged release is published, developers can install the packaged OCI
-chart without cloning the repository:
+Target release command, after the packaged OCI chart is published:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
@@ -288,6 +325,23 @@ kavrynt-gateway
 
 The control plane can be tested with only `kubectl` and `curl`. Install
 `kavryctl` if you also want to test the developer CLI workflow:
+
+Linux and macOS release installer:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.sh | sh
+export PATH="$HOME/.kavrynt/bin:$PATH"
+kavryctl version
+```
+
+Windows PowerShell release installer:
+
+```powershell
+iwr https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.ps1 -UseB | iex
+kavryctl version
+```
+
+Current MVP source install:
 
 ```bash
 go install ./cmd/kavryctl
@@ -407,7 +461,7 @@ Then run the same Helm install command from the Kubernetes quick start.
 ## Current Distribution Model
 
 Today, developers can install Kavrynt from source plus Docker Hub images. Tagged
-releases add binary and chart distribution:
+releases are intended to add binary and chart distribution:
 
 - `kavryctl`: installed with the shell/PowerShell installer or
   `go install ./cmd/kavryctl`
@@ -482,5 +536,12 @@ repository becomes the primary public development location.
 
 ## License
 
-License selection is pending. Do not assume permissive reuse rights until a
-license file is added.
+Kavrynt is licensed under the Elastic License 2.0. See [LICENSE](LICENSE).
+
+This makes the public Kavrynt MVP source-available, not permissively licensed
+open source. You may use, copy, distribute, make available, and modify Kavrynt
+under the license terms, but you may not provide Kavrynt to third parties as a
+hosted or managed service that exposes a substantial set of Kavrynt's features.
+
+For commercial managed-service rights, hosted SaaS/PaaS partnerships, or custom
+enterprise licensing, contact `admin@kavrynt.com`.
