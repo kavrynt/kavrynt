@@ -1,6 +1,6 @@
 # AGENTS.md
 
-This repository is the public Kavrynt product monorepo.
+This repository is the public source-available Kavrynt product monorepo.
 
 Kavrynt is an MCP infrastructure control plane. The MVP contains four product
 components:
@@ -86,7 +86,10 @@ make qa
 
 - Keep private planning documents out of this repository unless they are meant
   for public readers.
-- Keep commercial implementation details out of the open-source tree until the
+- Keep commercial implementation details out of the public source tree until the
   product boundary is intentionally designed.
 - Keep root README, component READMEs, and runbooks contributor-friendly.
-- Add a license only after Kavrynt's open-source/commercial boundary is decided.
+- Kavrynt is licensed under Elastic License 2.0. Do not describe this repository
+  as permissively licensed open source.
+- Public docs should use "source-available" unless a future license change
+  intentionally changes the project boundary.
