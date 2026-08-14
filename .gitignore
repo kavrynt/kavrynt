@@ -9,7 +9,7 @@
 # Build output
 bin/
 dist/
-build/
+/build/
 coverage.out
 *.test
 
