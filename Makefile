@@ -14,6 +14,8 @@ help:
 	@printf "  make docker-build   Build development Docker images\n"
 	@printf "  make helm-lint      Lint Helm charts\n"
 	@printf "  make helm-template  Render Helm charts\n"
+	@printf "  make helm-package   Package the umbrella Helm chart locally\n"
+	@printf "  make release-snapshot  Build local kavryctl release artifacts\n"
 
 .PHONY: qa
 qa: fmt-check test vet helm-lint helm-template
@@ -80,3 +82,13 @@ helm-template:
 	helm template registry services/registry/charts/registry
 	helm template gateway services/gateway/charts/gateway
 	helm template k8s-operator operator/charts/k8s-operator
+
+.PHONY: helm-package
+helm-package:
+	mkdir -p dist/charts
+	helm dependency build charts/kavrynt
+	helm package charts/kavrynt --destination dist/charts
+
+.PHONY: release-snapshot
+release-snapshot:
+	goreleaser release --snapshot --clean

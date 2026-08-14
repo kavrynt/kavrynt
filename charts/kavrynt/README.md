@@ -15,6 +15,15 @@ helm upgrade --install kavrynt charts/kavrynt \
   --create-namespace
 ```
 
+Install from the published OCI chart after a tagged release:
+
+```bash
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version 0.1.0 \
+  --namespace kavrynt-system \
+  --create-namespace
+```
+
 Check the control plane:
 
 ```bash

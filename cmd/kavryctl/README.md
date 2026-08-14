@@ -37,6 +37,26 @@ directory. Override this with `--home DIR` or `KAVRYNT_HOME`.
 Use `--registry URL` or `KAVRYNT_REGISTRY_URL` to use the remote Kavrynt
 Registry API instead.
 
+## Install
+
+From GitHub Releases on Linux or macOS:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.sh | sh
+```
+
+From PowerShell on Windows:
+
+```powershell
+iwr https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.ps1 -UseB | iex
+```
+
+From source:
+
+```bash
+go install ./cmd/kavryctl
+```
+
 ## Quick Start
 
 ```bash
