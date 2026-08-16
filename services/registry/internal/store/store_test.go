@@ -39,6 +39,9 @@ func TestFileStoreUpsertListGetDelete(t *testing.T) {
 	if record.Manifest.Metadata.Name != "example" {
 		t.Fatalf("record name = %q", record.Manifest.Metadata.Name)
 	}
+	if record.ID != "example" {
+		t.Fatalf("record ID = %q", record.ID)
+	}
 
 	m.Spec.Version = "0.2.0"
 	record, created, err = s.Upsert(m, now.Add(time.Hour))
@@ -73,5 +76,49 @@ func TestFileStoreUpsertListGetDelete(t *testing.T) {
 	}
 	if _, err := s.Get("example"); !errors.Is(err, ErrNotFound) {
 		t.Fatalf("Get deleted error = %v", err)
+	}
+}
+
+func TestFileStoreKeepsSameNameInDifferentNamespaces(t *testing.T) {
+	s, err := NewFileStore(filepath.Join(t.TempDir(), "registry.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+
+	for _, namespace := range []string{"development", "production"} {
+		_, created, err := s.Upsert(model.Manifest{
+			APIVersion: model.APIVersion,
+			Kind:       model.Kind,
+			Metadata: model.Metadata{
+				Name:      "payments",
+				Namespace: namespace,
+			},
+			Spec: model.Spec{
+				Version:   "0.1.0",
+				Transport: "http",
+				Endpoint:  "http://payments." + namespace + ".svc.cluster.local:8080/mcp",
+			},
+		}, time.Now())
+		if err != nil || !created {
+			t.Fatalf("Upsert(%s) created = %v, error = %v", namespace, created, err)
+		}
+	}
+
+	servers, err := s.List()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("server count = %d, want 2", len(servers))
+	}
+	if servers[0].ID != "development.payments" || servers[1].ID != "production.payments" {
+		t.Fatalf("server IDs = %q, %q", servers[0].ID, servers[1].ID)
+	}
+
+	if err := s.Delete("development.payments"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.Get("production.payments"); err != nil {
+		t.Fatalf("deleting development server removed production server: %v", err)
 	}
 }

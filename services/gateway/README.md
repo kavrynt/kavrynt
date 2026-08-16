@@ -6,10 +6,14 @@ It syncs registered MCP server metadata from Kavrynt Registry, builds an
 in-memory route table, and proxies requests from:
 
 ```text
-/mcp/<server-name>
+/mcp/<server-id>
 ```
 
 to the registered HTTP endpoint for that server.
+
+Kubernetes-originated routes use the namespace-qualified server ID
+`<namespace>.<name>`, preventing resources with the same name in different
+namespaces from colliding.
 
 ## MVP Scope
 

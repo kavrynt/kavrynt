@@ -34,6 +34,11 @@ func Manifest(m model.Manifest) error {
 		problems = append(problems, "metadata.name must use lowercase DNS-label syntax")
 	}
 
+	namespace := strings.TrimSpace(m.Metadata.Namespace)
+	if namespace != "" && !namePattern.MatchString(namespace) {
+		problems = append(problems, "metadata.namespace must use lowercase DNS-label syntax")
+	}
+
 	if strings.TrimSpace(m.Spec.Version) == "" {
 		problems = append(problems, "spec.version is required")
 	}

@@ -26,9 +26,9 @@ kavryctl version
 kavryctl init [--home DIR]
 kavryctl validate <manifest.json>
 kavryctl register [--home DIR] [--registry URL] <manifest.json>
-kavryctl unregister [--home DIR] [--registry URL] <name>
+kavryctl unregister [--home DIR] [--registry URL] <server-id>
 kavryctl list [--home DIR] [--registry URL]
-kavryctl inspect [--home DIR] [--registry URL] <name>
+kavryctl inspect [--home DIR] [--registry URL] <server-id>
 ```
 
 By default, local state is stored in `.kavrynt/registry.json` under the current

@@ -392,7 +392,7 @@ In another terminal:
 ```bash
 curl -fsS http://localhost:18081/healthz
 curl -fsS http://localhost:18081/v1/servers
-curl -fsS http://localhost:18081/v1/servers/example-mcp-server
+curl -fsS http://localhost:18081/v1/servers/default.example-mcp-server
 ```
 
 Port-forward Gateway:
@@ -407,14 +407,16 @@ In another terminal:
 curl -fsS http://localhost:18080/healthz
 curl -fsS http://localhost:18080/readyz
 curl -fsS http://localhost:18080/v1/routes
-curl -fsS http://localhost:18080/mcp/example-mcp-server
+curl -fsS http://localhost:18080/mcp/default.example-mcp-server
 ```
 
 Expected result:
 
 - Registry returns the `example-mcp-server` record.
 - Gateway lists a route for `example-mcp-server`.
-- Gateway proxies `/mcp/example-mcp-server` to the temporary example service.
+- Gateway proxies `/mcp/default.example-mcp-server` to the temporary example
+  service. Kubernetes-originated server IDs use `<namespace>.<name>` so equal
+  names in different namespaces remain distinct.
 
 ### 8. Register Through `kavryctl` Instead Of Operator
 

@@ -16,6 +16,7 @@ type Manifest struct {
 
 type Metadata struct {
 	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 }
@@ -30,6 +31,7 @@ type Spec struct {
 }
 
 type ServerRecord struct {
+	ID           string    `json:"id"`
 	Manifest     Manifest  `json:"manifest"`
 	RegisteredAt time.Time `json:"registeredAt"`
 	UpdatedAt    time.Time `json:"updatedAt"`
@@ -40,7 +42,9 @@ type ServerList struct {
 }
 
 type Route struct {
+	ID        string `json:"id"`
 	Name      string `json:"name"`
+	Namespace string `json:"namespace,omitempty"`
 	Version   string `json:"version"`
 	Transport string `json:"transport"`
 	Endpoint  string `json:"endpoint"`

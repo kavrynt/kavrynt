@@ -135,7 +135,7 @@ func runRegister(args []string, stdout, stderr io.Writer) int {
 		if created {
 			action = "registered"
 		}
-		fmt.Fprintf(stdout, "%s MCP server %s@%s in Registry %s\n", action, server.Manifest.Metadata.Name, server.Manifest.Spec.Version, registryURL)
+		fmt.Fprintf(stdout, "%s MCP server %s@%s in Registry %s\n", action, server.ID, server.Manifest.Spec.Version, registryURL)
 		return 0
 	}
 
@@ -154,7 +154,7 @@ func runRegister(args []string, stdout, stderr io.Writer) int {
 	if created {
 		action = "registered"
 	}
-	fmt.Fprintf(stdout, "%s MCP server %s@%s\n", action, server.Manifest.Metadata.Name, server.Manifest.Spec.Version)
+	fmt.Fprintf(stdout, "%s MCP server %s@%s\n", action, server.ID, server.Manifest.Spec.Version)
 	return 0
 }
 
@@ -166,7 +166,7 @@ func runUnregister(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl unregister [--home DIR] [--registry URL] <name>")
+		fmt.Fprintln(stderr, "usage: kavryctl unregister [--home DIR] [--registry URL] <server-id>")
 		return 2
 	}
 
@@ -236,7 +236,7 @@ func runList(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintf(
 				tw,
 				"%s\t%s\t%s\t%s\n",
-				server.Manifest.Metadata.Name,
+				server.ID,
 				server.Manifest.Spec.Version,
 				server.Manifest.Spec.Transport,
 				server.UpdatedAt.Format(time.RFC3339),
@@ -263,7 +263,7 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(
 			tw,
 			"%s\t%s\t%s\t%s\n",
-			server.Manifest.Metadata.Name,
+			server.ID,
 			server.Manifest.Spec.Version,
 			server.Manifest.Spec.Transport,
 			server.UpdatedAt.Format(time.RFC3339),
@@ -281,7 +281,7 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl inspect [--home DIR] [--registry URL] <name>")
+		fmt.Fprintln(stderr, "usage: kavryctl inspect [--home DIR] [--registry URL] <server-id>")
 		return 2
 	}
 
@@ -353,9 +353,9 @@ Usage:
   kavryctl init [--home DIR]
   kavryctl validate <manifest.json>
   kavryctl register [--home DIR] [--registry URL] <manifest.json>
-  kavryctl unregister [--home DIR] [--registry URL] <name>
+  kavryctl unregister [--home DIR] [--registry URL] <server-id>
   kavryctl list [--home DIR] [--registry URL]
-  kavryctl inspect [--home DIR] [--registry URL] <name>
+  kavryctl inspect [--home DIR] [--registry URL] <server-id>
 
 Environment:
   KAVRYNT_HOME          Defaults to .kavrynt in the current directory.

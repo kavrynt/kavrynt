@@ -26,6 +26,7 @@ type Manifest struct {
 
 type Metadata struct {
 	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 }
@@ -79,6 +80,11 @@ func Validate(m Manifest) error {
 		problems = append(problems, "metadata.name must use lowercase DNS-label syntax")
 	}
 
+	namespace := strings.TrimSpace(m.Metadata.Namespace)
+	if namespace != "" && !namePattern.MatchString(namespace) {
+		problems = append(problems, "metadata.namespace must use lowercase DNS-label syntax")
+	}
+
 	if strings.TrimSpace(m.Spec.Version) == "" {
 		problems = append(problems, "spec.version is required")
 	}
@@ -105,4 +111,11 @@ func Validate(m Manifest) error {
 	}
 
 	return nil
+}
+
+func ServerID(metadata Metadata) string {
+	if namespace := strings.TrimSpace(metadata.Namespace); namespace != "" {
+		return namespace + "." + strings.TrimSpace(metadata.Name)
+	}
+	return strings.TrimSpace(metadata.Name)
 }

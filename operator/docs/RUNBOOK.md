@@ -49,7 +49,7 @@ kubectl describe mcpserver example-mcp-server
 Verify Registry received the record:
 
 ```bash
-curl -fsS http://localhost:8081/v1/servers/example-mcp-server
+curl -fsS http://localhost:8081/v1/servers/default.example-mcp-server
 ```
 
 ## Helm Install

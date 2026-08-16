@@ -48,7 +48,7 @@ curl -fsS http://localhost:8080/metrics
 
 - `/readyz` returns `200` after Gateway successfully syncs Registry once.
 - `/v1/routes` lists registered MCP servers.
-- `/mcp/<server-name>` proxies to the server's registered HTTP endpoint.
+- `/mcp/<server-id>` proxies to the server's registered HTTP endpoint.
 - `stdio` transports are rejected with `502` in this MVP.
 
 ## Docker
@@ -103,7 +103,7 @@ If `/readyz` returns `503`, check:
 
 If proxy requests return `404`, check:
 
-- the MCP server name in `/mcp/<server-name>` matches `metadata.name`,
+- the server ID in `/mcp/<server-id>` matches the Registry record ID,
 - Gateway has synced recently,
 - `/v1/routes` contains the expected route.
 
