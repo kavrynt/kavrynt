@@ -101,3 +101,17 @@ func TestInvalidRegistryURL(t *testing.T) {
 		t.Fatalf("unexpected stderr: %s", errOut.String())
 	}
 }
+
+func TestReleaseVersion(t *testing.T) {
+	tests := map[string]string{
+		"v1.2.3":    "1.2.3",
+		"1.2.3":     "1.2.3",
+		"0.1.0-dev": "",
+		"unknown":   "",
+	}
+	for input, want := range tests {
+		if got := releaseVersion(input); got != want {
+			t.Errorf("releaseVersion(%q) = %q, want %q", input, got, want)
+		}
+	}
+}

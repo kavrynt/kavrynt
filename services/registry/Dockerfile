@@ -5,8 +5,8 @@ ARG DISTROLESS_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:f5b485ea96
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 ARG VERSION=0.1.0-dev
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown

@@ -1,6 +1,7 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
@@ -12,14 +13,16 @@ import (
 	"time"
 
 	"github.com/kavrynt/kavryctl/internal/manifest"
+	"github.com/kavrynt/kavryctl/internal/platform"
 	"github.com/kavrynt/kavryctl/internal/registry"
 	"github.com/kavrynt/kavryctl/internal/remote"
 )
 
 var (
-	Version   = "0.1.0-dev"
-	Commit    = "unknown"
-	BuildDate = "unknown"
+	Version            = "0.1.0-dev"
+	Commit             = "unknown"
+	BuildDate          = "unknown"
+	newPlatformManager = func() *platform.Manager { return platform.NewManager(nil) }
 )
 
 func Execute(args []string, stdout, stderr io.Writer) int {
@@ -47,11 +50,148 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 		return runList(args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
+	case "install":
+		return runInstall(args[1:], stdout, stderr)
+	case "status":
+		return runStatus(args[1:], stdout, stderr)
+	case "uninstall":
+		return runUninstall(args[1:], stdout, stderr)
+	case "manifest":
+		return runManifest(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printUsage(stderr)
 		return 2
 	}
+}
+
+type stringSliceFlag []string
+
+func (values *stringSliceFlag) String() string { return strings.Join(*values, ",") }
+
+func (values *stringSliceFlag) Set(value string) error {
+	*values = append(*values, value)
+	return nil
+}
+
+func runInstall(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("install", stderr)
+	opts := platform.InstallOptions{Wait: true}
+	addChartFlags(fs, &opts.ChartOptions)
+	fs.BoolVar(&opts.Wait, "wait", true, "Wait until Kavrynt workloads are ready")
+	fs.BoolVar(&opts.DryRun, "dry-run", false, "Render installation actions without applying them")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "install does not accept positional arguments")
+		return 2
+	}
+
+	if err := newPlatformManager().Install(context.Background(), stdout, stderr, opts); err != nil {
+		fmt.Fprintf(stderr, "install failed: %v\n", err)
+		return 1
+	}
+	if !opts.DryRun {
+		fmt.Fprintf(stdout, "Kavrynt is installed in namespace %s.\nRun: kavryctl status --namespace %s\n", opts.Namespace, opts.Namespace)
+	}
+	return 0
+}
+
+func runStatus(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("status", stderr)
+	opts := platform.StatusOptions{Namespace: platform.DefaultNamespace}
+	fs.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	fs.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "status does not accept positional arguments")
+		return 2
+	}
+	if err := newPlatformManager().Status(context.Background(), stdout, stderr, opts); err != nil {
+		fmt.Fprintf(stderr, "status failed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func runUninstall(args []string, stdout, stderr io.Writer) int {
+	fs := newFlagSet("uninstall", stderr)
+	opts := platform.UninstallOptions{
+		ReleaseName: platform.DefaultReleaseName,
+		Namespace:   platform.DefaultNamespace,
+		Timeout:     5 * time.Minute,
+		Wait:        true,
+	}
+	fs.StringVar(&opts.ReleaseName, "release-name", opts.ReleaseName, "Helm release name")
+	fs.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	fs.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "Time to wait for uninstall")
+	fs.BoolVar(&opts.Wait, "wait", opts.Wait, "Wait until resources are removed")
+	fs.BoolVar(&opts.Purge, "purge", false, "Also remove Kavrynt CRDs")
+	fs.BoolVar(&opts.DeleteNamespace, "delete-namespace", false, "Also remove the Kavrynt namespace")
+	if err := fs.Parse(args); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "uninstall does not accept positional arguments")
+		return 2
+	}
+	if err := newPlatformManager().Uninstall(context.Background(), stdout, stderr, opts); err != nil {
+		fmt.Fprintf(stderr, "uninstall failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "Kavrynt was uninstalled from namespace %s.\n", opts.Namespace)
+	return 0
+}
+
+func runManifest(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "generate" {
+		fmt.Fprintln(stderr, "usage: kavryctl manifest generate [flags]")
+		return 2
+	}
+	fs := newFlagSet("manifest generate", stderr)
+	opts := platform.ChartOptions{}
+	addChartFlags(fs, &opts)
+	if err := fs.Parse(args[1:]); err != nil {
+		return 2
+	}
+	if fs.NArg() != 0 {
+		fmt.Fprintln(stderr, "manifest generate does not accept positional arguments")
+		return 2
+	}
+	if err := newPlatformManager().Generate(context.Background(), stdout, stderr, opts); err != nil {
+		fmt.Fprintf(stderr, "manifest generation failed: %v\n", err)
+		return 1
+	}
+	return 0
+}
+
+func addChartFlags(fs *flag.FlagSet, opts *platform.ChartOptions) {
+	opts.ReleaseName = platform.DefaultReleaseName
+	opts.Namespace = platform.DefaultNamespace
+	opts.Chart = platform.DefaultChart
+	opts.Version = releaseVersion(Version)
+	opts.Timeout = 5 * time.Minute
+	fs.StringVar(&opts.ReleaseName, "release-name", opts.ReleaseName, "Helm release name")
+	fs.StringVar(&opts.Namespace, "namespace", opts.Namespace, "Kubernetes namespace")
+	fs.StringVar(&opts.Chart, "chart", opts.Chart, "Helm chart path or OCI reference")
+	fs.StringVar(&opts.Version, "version", opts.Version, "Kavrynt chart and image version")
+	fs.StringVar(&opts.KubeContext, "context", "", "Kubernetes context")
+	fs.Var((*stringSliceFlag)(&opts.ValuesFiles), "values", "Values file (repeatable)")
+	fs.Var((*stringSliceFlag)(&opts.ValuesFiles), "f", "Values file (repeatable shorthand)")
+	fs.Var((*stringSliceFlag)(&opts.SetValues), "set", "Set a Helm value (repeatable)")
+	fs.DurationVar(&opts.Timeout, "timeout", opts.Timeout, "Time to wait for Kubernetes operations")
+}
+
+func releaseVersion(version string) string {
+	version = strings.TrimSpace(strings.TrimPrefix(version, "v"))
+	if version == "" || strings.Contains(version, "dev") || version == "unknown" {
+		return ""
+	}
+	return version
 }
 
 func runInit(args []string, stdout, stderr io.Writer) int {
@@ -346,10 +486,14 @@ func remoteRegistryURL(explicitURL, explicitHome string) (string, error) {
 
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, strings.TrimSpace(`
-kavryctl manages Kavrynt MCP server registration.
+kavryctl installs and manages the Kavrynt MCP control plane.
 
 Usage:
   kavryctl version
+  kavryctl install [--version VERSION] [--values FILE] [--set KEY=VALUE]
+  kavryctl status [--namespace NAMESPACE]
+  kavryctl manifest generate [--version VERSION] [--values FILE]
+  kavryctl uninstall [--purge] [--delete-namespace]
   kavryctl init [--home DIR]
   kavryctl validate <manifest.json>
   kavryctl register [--home DIR] [--registry URL] <manifest.json>
