@@ -38,8 +38,8 @@ func NewHandler(store store.Store, metadata Metadata) http.Handler {
 	mux.HandleFunc("GET /metrics", h.metrics)
 	mux.HandleFunc("GET /v1/servers", h.listServers)
 	mux.HandleFunc("POST /v1/servers", h.upsertServer)
-	mux.HandleFunc("GET /v1/servers/{name}", h.getServer)
-	mux.HandleFunc("DELETE /v1/servers/{name}", h.deleteServer)
+	mux.HandleFunc("GET /v1/servers/{id}", h.getServer)
+	mux.HandleFunc("DELETE /v1/servers/{id}", h.deleteServer)
 	return h.instrument(mux)
 }
 
@@ -108,12 +108,12 @@ func (h *Handler) upsertServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) getServer(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.PathValue("name"))
-	if name == "" {
-		writeError(w, http.StatusBadRequest, errors.New("server name is required"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, errors.New("server id is required"))
 		return
 	}
-	record, err := h.store.Get(name)
+	record, err := h.store.Get(id)
 	if err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)
@@ -126,12 +126,12 @@ func (h *Handler) getServer(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) deleteServer(w http.ResponseWriter, r *http.Request) {
-	name := strings.TrimSpace(r.PathValue("name"))
-	if name == "" {
-		writeError(w, http.StatusBadRequest, errors.New("server name is required"))
+	id := strings.TrimSpace(r.PathValue("id"))
+	if id == "" {
+		writeError(w, http.StatusBadRequest, errors.New("server id is required"))
 		return
 	}
-	if err := h.store.Delete(name); err != nil {
+	if err := h.store.Delete(id); err != nil {
 		if errors.Is(err, store.ErrNotFound) {
 			writeError(w, http.StatusNotFound, err)
 			return

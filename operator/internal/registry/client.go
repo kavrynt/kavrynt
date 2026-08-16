@@ -30,8 +30,18 @@ type Manifest struct {
 
 type Metadata struct {
 	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
+}
+
+func ServerID(namespace, name string) string {
+	namespace = strings.TrimSpace(namespace)
+	name = strings.TrimSpace(name)
+	if namespace != "" {
+		return namespace + "." + name
+	}
+	return name
 }
 
 type Spec struct {

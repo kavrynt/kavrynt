@@ -19,6 +19,7 @@ type Client struct {
 }
 
 type ServerRecord struct {
+	ID           string            `json:"id"`
 	Manifest     manifest.Manifest `json:"manifest"`
 	RegisteredAt time.Time         `json:"registeredAt"`
 	UpdatedAt    time.Time         `json:"updatedAt"`

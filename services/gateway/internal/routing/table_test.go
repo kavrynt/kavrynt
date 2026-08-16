@@ -48,3 +48,30 @@ func TestReplaceBuildsRoutes(t *testing.T) {
 		t.Fatalf("routes not sorted by name: %#v", routes)
 	}
 }
+
+func TestReplaceBuildsNamespaceQualifiedRoutes(t *testing.T) {
+	table := NewTable()
+	table.Replace([]model.ServerRecord{
+		{
+			Manifest: model.Manifest{
+				Metadata: model.Metadata{Name: "payments", Namespace: "development"},
+				Spec:     model.Spec{Version: "0.1.0", Transport: "http", Endpoint: "http://development.test/mcp"},
+			},
+		},
+		{
+			Manifest: model.Manifest{
+				Metadata: model.Metadata{Name: "payments", Namespace: "production"},
+				Spec:     model.Spec{Version: "0.1.0", Transport: "http", Endpoint: "http://production.test/mcp"},
+			},
+		},
+	}, time.Now())
+
+	development, ok := table.Get("development.payments")
+	if !ok || development.Endpoint != "http://development.test/mcp" {
+		t.Fatalf("development route = %#v, exists = %v", development, ok)
+	}
+	production, ok := table.Get("production.payments")
+	if !ok || production.Endpoint != "http://production.test/mcp" {
+		t.Fatalf("production route = %#v, exists = %v", production, ok)
+	}
+}

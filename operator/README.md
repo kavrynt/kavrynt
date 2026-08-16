@@ -25,6 +25,7 @@ Included:
 - `MCPServer` CRD under `kavrynt.io/v1alpha1`.
 - Controller that watches `MCPServer` resources.
 - Registry upsert on create/update.
+- Namespace-qualified Registry identity using `<namespace>.<name>`.
 - Registry delete on resource deletion through a finalizer.
 - Status condition showing Registry sync state.
 - Raw Kubernetes manifests, Helm chart, Dockerfile, GitHub Actions QA, and runbook.

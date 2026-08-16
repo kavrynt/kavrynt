@@ -16,9 +16,14 @@ GET    /version
 GET    /metrics
 POST   /v1/servers
 GET    /v1/servers
-GET    /v1/servers/{name}
-DELETE /v1/servers/{name}
+GET    /v1/servers/{id}
+DELETE /v1/servers/{id}
 ```
+
+A server ID is `metadata.name` for non-Kubernetes registrations and
+`metadata.namespace.metadata.name` for namespace-scoped registrations. For
+example, the Kubernetes resource `default/example-mcp-server` is stored as
+`default.example-mcp-server`.
 
 ## Quick Start
 

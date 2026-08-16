@@ -26,11 +26,20 @@ func (t *Table) Replace(records []model.ServerRecord, syncedAt time.Time) {
 	for _, record := range records {
 		manifest := record.Manifest
 		name := strings.TrimSpace(manifest.Metadata.Name)
-		if name == "" {
+		id := strings.TrimSpace(record.ID)
+		if id == "" {
+			id = name
+			if namespace := strings.TrimSpace(manifest.Metadata.Namespace); namespace != "" {
+				id = namespace + "." + name
+			}
+		}
+		if name == "" || id == "" {
 			continue
 		}
-		routes[name] = model.Route{
+		routes[id] = model.Route{
+			ID:        id,
 			Name:      name,
+			Namespace: strings.TrimSpace(manifest.Metadata.Namespace),
 			Version:   manifest.Spec.Version,
 			Transport: manifest.Spec.Transport,
 			Endpoint:  manifest.Spec.Endpoint,
@@ -53,10 +62,10 @@ func (t *Table) MarkSyncError(err error) {
 	}
 }
 
-func (t *Table) Get(name string) (model.Route, bool) {
+func (t *Table) Get(id string) (model.Route, bool) {
 	t.mu.RLock()
 	defer t.mu.RUnlock()
-	route, ok := t.routes[name]
+	route, ok := t.routes[id]
 	return route, ok
 }
 
@@ -68,7 +77,7 @@ func (t *Table) List() []model.Route {
 		routes = append(routes, route)
 	}
 	sort.Slice(routes, func(i, j int) bool {
-		return routes[i].Name < routes[j].Name
+		return routes[i].ID < routes[j].ID
 	})
 	return routes
 }

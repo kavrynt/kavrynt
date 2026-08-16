@@ -53,9 +53,9 @@ func (s *FileStore) Upsert(m model.Manifest, now time.Time) (model.ServerRecord,
 		return model.ServerRecord{}, false, err
 	}
 
-	name := m.Metadata.Name
+	id := model.ServerID(m.Metadata)
 	for i := range registry.Servers {
-		if registry.Servers[i].Manifest.Metadata.Name == name {
+		if registry.Servers[i].ID == id {
 			registry.Servers[i].Manifest = m
 			registry.Servers[i].UpdatedAt = now.UTC()
 			if err := s.saveLocked(registry); err != nil {
@@ -66,6 +66,7 @@ func (s *FileStore) Upsert(m model.Manifest, now time.Time) (model.ServerRecord,
 	}
 
 	record := model.ServerRecord{
+		ID:           id,
 		Manifest:     m,
 		RegisteredAt: now.UTC(),
 		UpdatedAt:    now.UTC(),
@@ -90,7 +91,7 @@ func (s *FileStore) List() ([]model.ServerRecord, error) {
 	return append([]model.ServerRecord(nil), registry.Servers...), nil
 }
 
-func (s *FileStore) Get(name string) (model.ServerRecord, error) {
+func (s *FileStore) Get(id string) (model.ServerRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -99,14 +100,14 @@ func (s *FileStore) Get(name string) (model.ServerRecord, error) {
 		return model.ServerRecord{}, err
 	}
 	for _, server := range registry.Servers {
-		if server.Manifest.Metadata.Name == name {
+		if server.ID == id {
 			return server, nil
 		}
 	}
 	return model.ServerRecord{}, ErrNotFound
 }
 
-func (s *FileStore) Delete(name string) error {
+func (s *FileStore) Delete(id string) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -115,7 +116,7 @@ func (s *FileStore) Delete(name string) error {
 		return err
 	}
 	for i, server := range registry.Servers {
-		if server.Manifest.Metadata.Name == name {
+		if server.ID == id {
 			registry.Servers = append(registry.Servers[:i], registry.Servers[i+1:]...)
 			return s.saveLocked(registry)
 		}
@@ -158,6 +159,11 @@ func (s *FileStore) loadLocked() (model.Registry, error) {
 	if registry.Servers == nil {
 		registry.Servers = []model.ServerRecord{}
 	}
+	for i := range registry.Servers {
+		if registry.Servers[i].ID == "" {
+			registry.Servers[i].ID = model.ServerID(registry.Servers[i].Manifest.Metadata)
+		}
+	}
 	return registry, nil
 }
 
@@ -195,6 +201,6 @@ func (s *FileStore) saveLocked(registry model.Registry) error {
 
 func sortRecords(records []model.ServerRecord) {
 	sort.Slice(records, func(i, j int) bool {
-		return records[i].Manifest.Metadata.Name < records[j].Manifest.Metadata.Name
+		return records[i].ID < records[j].ID
 	})
 }

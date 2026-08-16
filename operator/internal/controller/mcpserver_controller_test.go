@@ -95,6 +95,9 @@ func TestReconcileRegistersMCPServer(t *testing.T) {
 	if got.Metadata.Name != "demo-mcp" {
 		t.Fatalf("manifest name = %s, want demo-mcp", got.Metadata.Name)
 	}
+	if got.Metadata.Namespace != "default" {
+		t.Fatalf("manifest namespace = %s, want default", got.Metadata.Namespace)
+	}
 	if got.Metadata.Description != "demo server" {
 		t.Fatalf("description = %s, want demo server", got.Metadata.Description)
 	}

@@ -2,11 +2,8 @@
 
 `kavryctl` is the Kavrynt command-line interface.
 
-This first implementation slice focuses on MCP server metadata. It supports
-both local file-backed registration and remote registration through the
-Kavrynt Registry API. It is intentionally small so the product can validate CLI
-shape, manifest validation, and registry semantics before introducing Gateway,
-Kubernetes Operator, or policy enforcement.
+It installs and operates the Kubernetes control plane and manages MCP server
+metadata through local storage or the Kavrynt Registry API.
 
 ## Development Model
 
@@ -23,13 +20,21 @@ Repository coding, branching, and security standards are defined in
 
 ```bash
 kavryctl version
+kavryctl install [--version VERSION] [--values FILE] [--set KEY=VALUE]
+kavryctl status [--namespace NAMESPACE] [--context CONTEXT]
+kavryctl manifest generate [--version VERSION] [--values FILE]
+kavryctl uninstall [--purge] [--delete-namespace]
 kavryctl init [--home DIR]
 kavryctl validate <manifest.json>
 kavryctl register [--home DIR] [--registry URL] <manifest.json>
-kavryctl unregister [--home DIR] [--registry URL] <name>
+kavryctl unregister [--home DIR] [--registry URL] <server-id>
 kavryctl list [--home DIR] [--registry URL]
-kavryctl inspect [--home DIR] [--registry URL] <name>
+kavryctl inspect [--home DIR] [--registry URL] <server-id>
 ```
+
+`kavryctl install` pulls the released OCI chart and installs the matching
+Registry, Gateway, and Operator images. Helm 3 and `kubectl` must be available
+in `PATH` for the current MVP.
 
 By default, local state is stored in `.kavrynt/registry.json` under the current
 directory. Override this with `--home DIR` or `KAVRYNT_HOME`.
@@ -60,14 +65,23 @@ go install ./cmd/kavryctl
 ## Quick Start
 
 ```bash
+kavryctl install
+kavryctl status
+```
+
+Customize or render an installation:
+
+```bash
+kavryctl install --values kavrynt-values.yaml --set gateway.replicaCount=2
+kavryctl manifest generate > kavrynt.yaml
+```
+
+For CLI development:
+
+```bash
 go test ./...
 go run . version
-go run . init
-go run . validate examples/mcp-server.json
-go run . register examples/mcp-server.json
-go run . list
-go run . inspect example-mcp-server
-go run . unregister example-mcp-server
+go run . install --chart ../../../charts/kavrynt
 ```
 
 ## Remote Registry Workflow
@@ -126,6 +140,9 @@ Supported transports in this slice:
 
 In scope:
 
+- version-aligned Kubernetes control-plane installation
+- status and manifest generation
+- safe uninstall and explicit CRD purge
 - local CLI scaffold
 - JSON MCP server manifest validation
 - local registry initialization
@@ -136,8 +153,6 @@ In scope:
 
 Out of scope for this slice:
 
-- Gateway runtime traffic
-- Kubernetes Operator
 - authentication and authorization enforcement
 - policy engine
 - upgrade and rollback execution

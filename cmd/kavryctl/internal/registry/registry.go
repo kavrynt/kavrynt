@@ -22,6 +22,7 @@ type Registry struct {
 }
 
 type Server struct {
+	ID           string            `json:"id"`
 	Manifest     manifest.Manifest `json:"manifest"`
 	Source       string            `json:"source"`
 	RegisteredAt time.Time         `json:"registeredAt"`
@@ -77,6 +78,11 @@ func Load(home string) (Registry, error) {
 	if r.Servers == nil {
 		r.Servers = []Server{}
 	}
+	for i := range r.Servers {
+		if r.Servers[i].ID == "" {
+			r.Servers[i].ID = manifest.ServerID(r.Servers[i].Manifest.Metadata)
+		}
+	}
 
 	return r, nil
 }
@@ -103,9 +109,9 @@ func Register(home string, m manifest.Manifest, source string, now time.Time) (S
 		return Server{}, false, err
 	}
 
-	name := m.Metadata.Name
+	id := manifest.ServerID(m.Metadata)
 	for i := range r.Servers {
-		if r.Servers[i].Manifest.Metadata.Name == name {
+		if r.Servers[i].ID == id {
 			r.Servers[i].Manifest = m
 			r.Servers[i].Source = source
 			r.Servers[i].UpdatedAt = now.UTC()
@@ -117,6 +123,7 @@ func Register(home string, m manifest.Manifest, source string, now time.Time) (S
 	}
 
 	server := Server{
+		ID:           id,
 		Manifest:     m,
 		Source:       source,
 		RegisteredAt: now.UTC(),
@@ -141,35 +148,35 @@ func List(home string) ([]Server, error) {
 	return r.Servers, nil
 }
 
-func Inspect(home, name string) (Server, error) {
+func Inspect(home, id string) (Server, error) {
 	r, err := Load(home)
 	if err != nil {
 		return Server{}, err
 	}
 	for _, server := range r.Servers {
-		if server.Manifest.Metadata.Name == name {
+		if server.ID == id {
 			return server, nil
 		}
 	}
-	return Server{}, fmt.Errorf("%w: %q", ErrNotFound, name)
+	return Server{}, fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
-func Unregister(home, name string) error {
+func Unregister(home, id string) error {
 	r, err := Load(home)
 	if err != nil {
 		return err
 	}
 	for i, server := range r.Servers {
-		if server.Manifest.Metadata.Name == name {
+		if server.ID == id {
 			r.Servers = append(r.Servers[:i], r.Servers[i+1:]...)
 			return Save(Path(home), r)
 		}
 	}
-	return fmt.Errorf("%w: %q", ErrNotFound, name)
+	return fmt.Errorf("%w: %q", ErrNotFound, id)
 }
 
 func sortServers(servers []Server) {
 	sort.Slice(servers, func(i, j int) bool {
-		return servers[i].Manifest.Metadata.Name < servers[j].Manifest.Metadata.Name
+		return servers[i].ID < servers[j].ID
 	})
 }

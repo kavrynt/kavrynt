@@ -66,3 +66,36 @@ func TestRegisterCreatesAndUpdatesServer(t *testing.T) {
 		t.Fatalf("server count after unregister = %d", len(servers))
 	}
 }
+
+func TestRegisterKeepsSameNameInDifferentNamespaces(t *testing.T) {
+	home := t.TempDir()
+	for _, namespace := range []string{"development", "production"} {
+		server, created, err := Register(home, manifest.Manifest{
+			APIVersion: manifest.APIVersion,
+			Kind:       manifest.Kind,
+			Metadata: manifest.Metadata{
+				Name:      "payments",
+				Namespace: namespace,
+			},
+			Spec: manifest.Spec{
+				Version:   "0.1.0",
+				Transport: "stdio",
+				Command:   "payments",
+			},
+		}, namespace+".json", time.Now())
+		if err != nil || !created {
+			t.Fatalf("Register(%s) created = %v, error = %v", namespace, created, err)
+		}
+		if server.ID != namespace+".payments" {
+			t.Fatalf("server ID = %q", server.ID)
+		}
+	}
+
+	servers, err := List(home)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(servers) != 2 {
+		t.Fatalf("server count = %d, want 2", len(servers))
+	}
+}

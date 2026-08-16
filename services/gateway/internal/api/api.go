@@ -144,15 +144,15 @@ func (h *Handler) listRoutes(w http.ResponseWriter, _ *http.Request) {
 }
 
 func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
-	name, suffix, ok := parseMCPPath(r.URL.Path)
+	id, suffix, ok := parseMCPPath(r.URL.Path)
 	if !ok {
 		writeError(w, http.StatusNotFound, errors.New("not found"))
 		return
 	}
 
-	route, exists := h.table.Get(name)
+	route, exists := h.table.Get(id)
 	if !exists {
-		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
+		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", id))
 		return
 	}
 	if route.Transport != "http" {
@@ -173,7 +173,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	copyHeaders(req.Header, r.Header)
 	req.Host = req.URL.Host
-	req.Header.Set("X-Kavrynt-Route", route.Name)
+	req.Header.Set("X-Kavrynt-Route", route.ID)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
 	resp, err := h.client.Do(req)
