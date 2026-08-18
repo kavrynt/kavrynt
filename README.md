@@ -82,9 +82,36 @@ docker run --rm -p 8080:8080 \
   kavrynt/gateway:dev
 ```
 
+## Private GHCR Image
+
+Kavrynt private release images are published to GitHub Container Registry:
+
+```text
+ghcr.io/kavrynt/gateway:<tag>
+```
+
+For local publishing, authenticate with a classic GitHub token that has
+`write:packages`:
+
+```bash
+export CR_PAT=<classic-token-with-write-packages>
+echo "$CR_PAT" | docker login ghcr.io -u <github-username> --password-stdin
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg VERSION=0.1.0-beta \
+  --build-arg COMMIT="$(git rev-parse HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t ghcr.io/kavrynt/gateway:0.1.0-beta \
+  -t ghcr.io/kavrynt/gateway:beta \
+  --push .
+```
+
+The package is private by default on first publish. Link it to this private
+repository and inherit repository permissions from the package settings.
+
 ## Helm
 
 ```bash
 helm install gateway charts/gateway \
-  --set config.registryURL=http://registry.default.svc.cluster.local:8080
+  --set config.registryURL=http://registry.default.svc.cluster.local:8080 \
+  --set imagePullSecrets[0].name=ghcr-kavrynt
 ```

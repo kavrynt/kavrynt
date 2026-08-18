@@ -3,8 +3,8 @@
 This repository contains Kavrynt Gateway, the MVP data-plane entry point for
 routing client MCP traffic to HTTP MCP servers registered in Kavrynt Registry.
 
-Kavrynt is an open-source AI infrastructure platform for running and operating
-AI agents and MCP servers in production. Gateway is one of the four MVP
+Kavrynt is a private commercial AI infrastructure platform for running and
+operating AI agents and MCP servers in production. Gateway is one of the four MVP
 components:
 
 - kavryctl
@@ -118,4 +118,14 @@ docker build -t kavrynt/gateway:dev .
 docker run --rm -p 8080:8080 \
   -e KAVRYNT_REGISTRY_URL=http://host.docker.internal:8081 \
   kavrynt/gateway:dev
+```
+
+GHCR:
+
+```bash
+export CR_PAT=<classic-token-with-write-packages>
+echo "$CR_PAT" | docker login ghcr.io -u <github-username> --password-stdin
+docker buildx build --platform linux/amd64,linux/arm64 \
+  -t ghcr.io/kavrynt/gateway:beta \
+  --push .
 ```

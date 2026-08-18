@@ -1,9 +1,11 @@
 replicaCount: 1
 
 image:
-  repository: kavrynt/gateway
-  tag: dev
+  repository: ghcr.io/kavrynt/gateway
+  tag: beta
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 service:
   type: ClusterIP
