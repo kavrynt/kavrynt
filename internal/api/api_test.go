@@ -2,6 +2,7 @@ package api
 
 import (
 	"bytes"
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -10,6 +11,34 @@ import (
 
 	"github.com/kavrynt/registry/internal/store"
 )
+
+func TestListServersReturnsEmptyArray(t *testing.T) {
+	fileStore, err := store.NewFileStore(filepath.Join(t.TempDir(), "registry.json"))
+	if err != nil {
+		t.Fatalf("NewFileStore returned error: %v", err)
+	}
+	handler := NewHandler(fileStore, Metadata{})
+
+	req := httptest.NewRequest(http.MethodGet, "/v1/servers", nil)
+	rec := httptest.NewRecorder()
+	handler.ServeHTTP(rec, req)
+	if rec.Code != http.StatusOK {
+		t.Fatalf("GET list status = %d", rec.Code)
+	}
+
+	var body struct {
+		Servers []any `json:"servers"`
+	}
+	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
+		t.Fatalf("GET list JSON = %v, body = %s", err, rec.Body.String())
+	}
+	if body.Servers == nil {
+		t.Fatalf("GET list returned nil servers: %s", rec.Body.String())
+	}
+	if len(body.Servers) != 0 {
+		t.Fatalf("GET list server count = %d", len(body.Servers))
+	}
+}
 
 func TestServerLifecycleAPI(t *testing.T) {
 	fileStore, err := store.NewFileStore(filepath.Join(t.TempDir(), "registry.json"))

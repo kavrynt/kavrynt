@@ -15,6 +15,14 @@ func TestFileStoreUpsertListGetDelete(t *testing.T) {
 		t.Fatalf("NewFileStore returned error: %v", err)
 	}
 
+	servers, err := s.List()
+	if err != nil {
+		t.Fatalf("initial List returned error: %v", err)
+	}
+	if servers == nil {
+		t.Fatal("initial List returned nil slice")
+	}
+
 	m := model.Manifest{
 		APIVersion: model.APIVersion,
 		Kind:       model.Kind,
@@ -52,7 +60,7 @@ func TestFileStoreUpsertListGetDelete(t *testing.T) {
 		t.Fatalf("record version = %q", record.Manifest.Spec.Version)
 	}
 
-	servers, err := s.List()
+	servers, err = s.List()
 	if err != nil {
 		t.Fatalf("List returned error: %v", err)
 	}

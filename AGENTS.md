@@ -4,9 +4,9 @@ This repository contains Kavrynt Registry, the control-plane source of truth
 for MCP server metadata, versions, lifecycle state, and future policy
 references.
 
-Kavrynt is an open-source AI infrastructure platform for running and operating
-AI agents and MCP servers in production. Registry is one of the four MVP
-components:
+Kavrynt is a private commercial AI infrastructure platform for running and
+operating AI agents and MCP servers in production. Registry is one of the four
+MVP components:
 
 - kavryctl
 - Registry

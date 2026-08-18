@@ -87,7 +87,7 @@ func (s *FileStore) List() ([]model.ServerRecord, error) {
 		return nil, err
 	}
 	sortRecords(registry.Servers)
-	return append([]model.ServerRecord(nil), registry.Servers...), nil
+	return append([]model.ServerRecord{}, registry.Servers...), nil
 }
 
 func (s *FileStore) Get(name string) (model.ServerRecord, error) {
