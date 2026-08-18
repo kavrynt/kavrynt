@@ -33,11 +33,10 @@ ARG BUILD_DATE=unknown
 LABEL org.opencontainers.image.title="registry" \
       org.opencontainers.image.description="Kavrynt Registry service" \
       org.opencontainers.image.url="https://kavrynt.com" \
-      org.opencontainers.image.source="https://github.com/kavrynt/registry" \
       org.opencontainers.image.version="${VERSION}" \
       org.opencontainers.image.revision="${COMMIT}" \
       org.opencontainers.image.created="${BUILD_DATE}" \
-      org.opencontainers.image.licenses="Apache-2.0"
+      org.opencontainers.image.vendor="Kavrynt"
 
 COPY --from=build /out/registry /usr/local/bin/registry
 COPY --from=build --chown=nonroot:nonroot /out/data /data
