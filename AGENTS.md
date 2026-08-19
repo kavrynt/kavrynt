@@ -118,6 +118,6 @@ kubectl kustomize config
 Docker:
 
 ```bash
-docker build -t ghcr.io/kavrynt/k8s-operator:beta-01 -t kavrynt/k8s-operator:beta-01 .
-docker run --rm ghcr.io/kavrynt/k8s-operator:beta-01 --help
+docker build -t ghcr.io/kavrynt/operator:beta-01 -t kavrynt/operator:beta-01 .
+docker run --rm ghcr.io/kavrynt/operator:beta-01 --help
 ```

@@ -80,8 +80,8 @@ kubectl kustomize config
 Private beta images use GitHub Container Registry and Docker Hub:
 
 ```text
-ghcr.io/kavrynt/k8s-operator:beta-01
-kavrynt/k8s-operator:beta-01
+ghcr.io/kavrynt/operator:beta-01
+kavrynt/operator:beta-01
 ```
 
 Build locally:
@@ -91,8 +91,8 @@ docker buildx build --platform linux/amd64,linux/arm64 \
   --build-arg VERSION=0.1.0-beta.1 \
   --build-arg COMMIT="$(git rev-parse HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -t ghcr.io/kavrynt/k8s-operator:beta-01 \
-  -t kavrynt/k8s-operator:beta-01 .
+  -t ghcr.io/kavrynt/operator:beta-01 \
+  -t kavrynt/operator:beta-01 .
 ```
 
 Clusters pulling private GHCR images need an image pull secret named in Helm via

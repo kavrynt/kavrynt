@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: ghcr.io/kavrynt/k8s-operator:beta-01
+          image: ghcr.io/kavrynt/operator:beta-01
           imagePullPolicy: IfNotPresent
           args:
             - --registry-url
