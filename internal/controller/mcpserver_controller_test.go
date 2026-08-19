@@ -11,6 +11,7 @@ import (
 
 	kavryntv1alpha1 "github.com/kavrynt/k8s-operator/api/v1alpha1"
 	"github.com/kavrynt/k8s-operator/internal/registry"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -108,6 +109,22 @@ func TestReconcileRegistersMCPServer(t *testing.T) {
 	}
 	if !containsFinalizer(updated.Finalizers, FinalizerName) {
 		t.Fatalf("missing finalizer: %#v", updated.Finalizers)
+	}
+	if updated.Status.ObservedGeneration != updated.Generation {
+		t.Fatalf("observedGeneration = %d, want %d", updated.Status.ObservedGeneration, updated.Generation)
+	}
+	if updated.Status.RegistrySyncedAt == nil {
+		t.Fatal("registrySyncedAt is nil")
+	}
+	if updated.Status.RegistryError != "" {
+		t.Fatalf("registryError = %q, want empty", updated.Status.RegistryError)
+	}
+	condition := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionRegistered)
+	if condition == nil {
+		t.Fatalf("missing %s condition", kavryntv1alpha1.ConditionRegistered)
+	}
+	if condition.Status != metav1.ConditionTrue {
+		t.Fatalf("condition status = %s, want True", condition.Status)
 	}
 }
 

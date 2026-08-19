@@ -1,9 +1,11 @@
 replicaCount: 1
 
 image:
-  repository: kavrynt/k8s-operator
-  tag: dev
+  repository: ghcr.io/kavrynt/k8s-operator
+  tag: beta-01
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 serviceAccount:
   create: true

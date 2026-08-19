@@ -13,6 +13,31 @@ helm template k8s-operator charts/k8s-operator
 kubectl kustomize config
 ```
 
+## Private Image
+
+Build a private beta image locally:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg VERSION=0.1.0-beta.1 \
+  --build-arg COMMIT="$(git rev-parse HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t ghcr.io/kavrynt/k8s-operator:beta-01 \
+  -t kavrynt/k8s-operator:beta-01 .
+```
+
+Create a private GHCR pull secret before installing the Operator:
+
+```bash
+kubectl create namespace kavrynt-system --dry-run=client -o yaml | kubectl apply -f -
+kubectl create secret docker-registry ghcr-kavrynt \
+  --docker-server=ghcr.io \
+  --docker-username=<github-username> \
+  --docker-password="$CR_PAT" \
+  --docker-email=<email> \
+  --namespace kavrynt-system
+```
+
 ## Local Cluster Flow
 
 Start Registry:
@@ -58,7 +83,8 @@ curl -fsS http://localhost:8081/v1/servers/example-mcp-server
 helm install k8s-operator charts/k8s-operator \
   --namespace kavrynt-system \
   --create-namespace \
-  --set config.registryURL=http://registry.default.svc.cluster.local:8080
+  --set config.registryURL=http://registry.default.svc.cluster.local:8080 \
+  --set 'imagePullSecrets[0].name=ghcr-kavrynt'
 ```
 
 Check:
