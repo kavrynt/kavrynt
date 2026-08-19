@@ -3,6 +3,9 @@
 Kavrynt Kubernetes Operator reconciles Kubernetes `MCPServer` custom resources
 into Kavrynt Registry records.
 
+Kavrynt is an umbrella for infrastructure products. This repository is part of
+the Kavrynt MCP Control Plane alongside `kavryctl`, Gateway, and Registry.
+
 This gives client engineers a Kubernetes-native workflow:
 
 ```text
@@ -71,6 +74,29 @@ helm lint charts/k8s-operator
 helm template k8s-operator charts/k8s-operator
 kubectl kustomize config
 ```
+
+## Image
+
+Private beta images use GitHub Container Registry and Docker Hub:
+
+```text
+ghcr.io/kavrynt/k8s-operator:beta-01
+kavrynt/k8s-operator:beta-01
+```
+
+Build locally:
+
+```bash
+docker buildx build --platform linux/amd64,linux/arm64 \
+  --build-arg VERSION=0.1.0-beta.1 \
+  --build-arg COMMIT="$(git rev-parse HEAD)" \
+  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
+  -t ghcr.io/kavrynt/k8s-operator:beta-01 \
+  -t kavrynt/k8s-operator:beta-01 .
+```
+
+Clusters pulling private GHCR images need an image pull secret named in Helm via
+`imagePullSecrets[0].name`.
 
 ## Run Locally Against A Cluster
 

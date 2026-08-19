@@ -24,6 +24,12 @@ func TestUpsertPostsManifest(t *testing.T) {
 			if req.URL.String() != "http://registry.test/v1/servers" {
 				t.Fatalf("url = %s", req.URL.String())
 			}
+			if req.Header.Get("Accept") != "application/json" {
+				t.Fatalf("Accept = %q, want application/json", req.Header.Get("Accept"))
+			}
+			if req.Header.Get("User-Agent") != UserAgent {
+				t.Fatalf("User-Agent = %q, want %s", req.Header.Get("User-Agent"), UserAgent)
+			}
 			var manifest Manifest
 			if err := json.NewDecoder(req.Body).Decode(&manifest); err != nil {
 				t.Fatal(err)
@@ -64,6 +70,12 @@ func TestDeleteTreatsNotFoundAsSuccess(t *testing.T) {
 			}
 			if req.URL.String() != "http://registry.test/v1/servers/demo-mcp" {
 				t.Fatalf("url = %s", req.URL.String())
+			}
+			if req.Header.Get("Accept") != "application/json" {
+				t.Fatalf("Accept = %q, want application/json", req.Header.Get("Accept"))
+			}
+			if req.Header.Get("User-Agent") != UserAgent {
+				t.Fatalf("User-Agent = %q, want %s", req.Header.Get("User-Agent"), UserAgent)
 			}
 			return &http.Response{
 				StatusCode: http.StatusNotFound,

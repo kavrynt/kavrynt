@@ -4,8 +4,9 @@ This repository contains Kavrynt Kubernetes Operator, the Kubernetes-native
 control-plane component that reconciles `MCPServer` custom resources into
 Kavrynt Registry records.
 
-Kavrynt is an open-source AI infrastructure platform for running and operating
-AI agents and MCP servers in production. The Operator is one of the four MVP
+Kavrynt is an umbrella for commercial infrastructure products. The current focus
+is the Kavrynt MCP Control Plane for running and operating AI agents and MCP
+servers in Kubernetes. The Operator is one of the four MCP Control Plane
 components:
 
 - kavryctl
@@ -117,6 +118,6 @@ kubectl kustomize config
 Docker:
 
 ```bash
-docker build -t kavrynt/k8s-operator:dev .
-docker run --rm kavrynt/k8s-operator:dev --help
+docker build -t ghcr.io/kavrynt/k8s-operator:beta-01 -t kavrynt/k8s-operator:beta-01 .
+docker run --rm ghcr.io/kavrynt/k8s-operator:beta-01 --help
 ```

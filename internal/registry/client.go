@@ -14,6 +14,7 @@ import (
 const (
 	APIVersion = "kavrynt.io/v1alpha1"
 	Kind       = "MCPServer"
+	UserAgent  = "kavrynt-k8s-operator"
 )
 
 type Client struct {
@@ -68,6 +69,8 @@ func (c *Client) Upsert(ctx context.Context, manifest Manifest) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := c.client.Do(req)
 	if err != nil {
@@ -86,6 +89,8 @@ func (c *Client) Delete(ctx context.Context, name string) error {
 	if err != nil {
 		return err
 	}
+	req.Header.Set("Accept", "application/json")
+	req.Header.Set("User-Agent", UserAgent)
 
 	resp, err := c.client.Do(req)
 	if err != nil {

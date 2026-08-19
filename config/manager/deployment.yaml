@@ -19,13 +19,17 @@ spec:
     spec:
       serviceAccountName: kavrynt-k8s-operator
       automountServiceAccountToken: true
+      imagePullSecrets:
+        - name: ghcr-kavrynt
       securityContext:
         runAsNonRoot: true
+        runAsUser: 65532
+        runAsGroup: 65532
         seccompProfile:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: kavrynt/k8s-operator:dev
+          image: ghcr.io/kavrynt/k8s-operator:beta-01
           imagePullPolicy: IfNotPresent
           args:
             - --registry-url
@@ -51,6 +55,8 @@ spec:
                 - ALL
             readOnlyRootFilesystem: true
             runAsNonRoot: true
+            runAsUser: 65532
+            runAsGroup: 65532
           resources:
             requests:
               cpu: 25m

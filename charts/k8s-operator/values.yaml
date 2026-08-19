@@ -1,9 +1,11 @@
 replicaCount: 1
 
 image:
-  repository: kavrynt/k8s-operator
-  tag: dev
+  repository: ghcr.io/kavrynt/k8s-operator
+  tag: beta-01
   pullPolicy: IfNotPresent
+
+imagePullSecrets: []
 
 serviceAccount:
   create: true
@@ -18,6 +20,8 @@ config:
 
 podSecurityContext:
   runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
   seccompProfile:
     type: RuntimeDefault
 
@@ -28,6 +32,8 @@ securityContext:
       - ALL
   readOnlyRootFilesystem: true
   runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
 
 resources:
   requests:

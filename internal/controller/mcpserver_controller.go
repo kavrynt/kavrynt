@@ -7,6 +7,7 @@ import (
 	kavryntv1alpha1 "github.com/kavrynt/k8s-operator/api/v1alpha1"
 	"github.com/kavrynt/k8s-operator/internal/registry"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -98,16 +99,14 @@ func (r *MCPServerReconciler) updateStatus(ctx context.Context, key types.Namesp
 		latest.Status.RegistryError = message
 	}
 	latest.Status.ObservedGeneration = latest.Generation
-	latest.Status.Conditions = []metav1.Condition{
-		{
-			Type:               kavryntv1alpha1.ConditionRegistered,
-			Status:             conditionStatus,
-			ObservedGeneration: latest.Generation,
-			LastTransitionTime: now,
-			Reason:             reason,
-			Message:            message,
-		},
-	}
+	apimeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
+		Type:               kavryntv1alpha1.ConditionRegistered,
+		Status:             conditionStatus,
+		ObservedGeneration: latest.Generation,
+		LastTransitionTime: now,
+		Reason:             reason,
+		Message:            message,
+	})
 
 	return r.Status().Update(ctx, &latest)
 }

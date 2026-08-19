@@ -17,6 +17,10 @@ spec:
     spec:
       serviceAccountName: {{ include "k8s-operator.serviceAccountName" . }}
       automountServiceAccountToken: true
+      {{- with .Values.imagePullSecrets }}
+      imagePullSecrets:
+        {{- toYaml . | nindent 8 }}
+      {{- end }}
       securityContext:
         {{- toYaml .Values.podSecurityContext | nindent 8 }}
       containers:
