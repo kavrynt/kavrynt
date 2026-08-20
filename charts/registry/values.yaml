@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: kavrynt/registry
-  tag: dev
+  tag: 0.0.1-beta
   pullPolicy: IfNotPresent
 
 service:
