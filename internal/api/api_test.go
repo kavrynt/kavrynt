@@ -143,6 +143,26 @@ func TestProxyRejectsUnsupportedTransport(t *testing.T) {
 	}
 }
 
+func TestBuildTargetURLRejectsUnsafeEndpoints(t *testing.T) {
+	tests := []struct {
+		name     string
+		endpoint string
+	}{
+		{name: "relative", endpoint: "/mcp"},
+		{name: "unsupported scheme", endpoint: "file:///etc/passwd"},
+		{name: "embedded credentials", endpoint: "http://user:secret@example.test/mcp"},
+		{name: "fragment", endpoint: "http://example.test/mcp#section"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			if _, err := buildTargetURL(tt.endpoint, "", ""); err == nil {
+				t.Fatalf("buildTargetURL(%q) returned nil error", tt.endpoint)
+			}
+		})
+	}
+}
+
 func newTestHandler(t *testing.T, registryTransport http.RoundTripper, proxyTransport http.RoundTripper) *Handler {
 	t.Helper()
 	registryClient, err := registry.NewClient("http://registry.test", &http.Client{Transport: registryTransport})
