@@ -426,6 +426,9 @@ The canonical runtime repositories are intentionally independently buildable:
 Repository-specific engineering and contribution rules are documented in
 [`AGENTS.md`](AGENTS.md).
 
+The coordinated beta publication process is documented in
+[`docs/RELEASE-0.0.1-BETA.md`](docs/RELEASE-0.0.1-BETA.md).
+
 ## Repository model
 
 This private repository owns the umbrella Helm chart, coordinated release

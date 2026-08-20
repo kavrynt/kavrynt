@@ -1,100 +1,69 @@
-name: QA
+name: Canonical Runtime QA
 
 on:
   pull_request:
-    branches:
-      - main
-      - develop
+    branches: [develop, main]
   push:
-    branches:
-      - main
-      - develop
+    branches: [develop, main, "feature/**"]
 
 permissions:
   contents: read
 
+concurrency:
+  group: qa-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
-  go-qa:
-    name: Go QA
+  qa:
+    name: Canonical Repositories and Umbrella Chart
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        component:
-          - cmd/kavryctl
-          - services/registry
-          - services/gateway
-          - operator
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout integration repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          path: kavrynt
+
+      - name: Checkout kavryctl
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/kavryctl
+          ref: develop
+          path: kavryctl
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Registry
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/registry
+          ref: develop
+          path: registry
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Gateway
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/gateway
+          ref: develop
+          path: gateway
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Operator
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/operator
+          ref: develop
+          path: k8s-operator
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
       - name: Set up Go
-        uses: actions/setup-go@v5
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          go-version: "1.23.x"
+          go-version: "1.26.x"
           cache: false
 
-      - name: Check formatting
-        working-directory: ${{ matrix.component }}
-        run: |
-          test -z "$(gofmt -l $(find . -name '*.go' -not -path './.cache/*'))"
-
-      - name: Test
-        working-directory: ${{ matrix.component }}
-        run: go test ./...
-
-      - name: Vet
-        working-directory: ${{ matrix.component }}
-        run: go vet ./...
-
-  helm-qa:
-    name: Helm QA
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        chart:
-          - charts/kavrynt
-          - cmd/kavryctl/charts/kavryctl
-          - services/registry/charts/registry
-          - services/gateway/charts/gateway
-          - operator/charts/k8s-operator
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
-      - name: Build chart dependencies
-        if: matrix.chart == 'charts/kavrynt'
-        run: helm dependency build charts/kavrynt
-
-      - name: Lint chart
-        run: helm lint "${{ matrix.chart }}"
-
-      - name: Render chart
-        run: helm template "$(basename "${{ matrix.chart }}")" "${{ matrix.chart }}"
-
-  docker-build:
-    name: Docker Build
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - image: kavrynt/kavryctl
-            context: cmd/kavryctl
-          - image: kavrynt/registry
-            context: services/registry
-          - image: kavrynt/gateway
-            context: services/gateway
-          - image: kavrynt/k8s-operator
-            context: operator
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build image
-        run: docker build -t "${{ matrix.image }}:ci" "${{ matrix.context }}"
+      - name: Run canonical QA
+        working-directory: kavrynt
+        run: make qa

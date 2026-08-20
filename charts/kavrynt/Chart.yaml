@@ -6,12 +6,12 @@ version: 0.0.1-beta
 appVersion: 0.0.1-beta
 dependencies:
   - name: registry
-    version: 0.1.0
+    version: 0.0.1-beta
     repository: file://../../../registry/charts/registry
   - name: gateway
-    version: 0.1.0
+    version: 0.0.1-beta
     repository: file://../../../gateway/charts/gateway
   - name: k8s-operator
     alias: operator
-    version: 0.1.0
+    version: 0.0.1-beta
     repository: file://../../../k8s-operator/charts/k8s-operator
