@@ -43,7 +43,7 @@ func Path(home string) string {
 }
 
 func Init(home string) error {
-	if err := os.MkdirAll(home, 0o755); err != nil {
+	if err := os.MkdirAll(home, 0o700); err != nil {
 		return fmt.Errorf("create kavrynt home: %w", err)
 	}
 
@@ -59,6 +59,7 @@ func Init(home string) error {
 
 func Load(home string) (Registry, error) {
 	path := Path(home)
+	// #nosec G304 -- path is derived from the user-selected Kavrynt home directory.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
@@ -87,7 +88,7 @@ func Save(path string, r Registry) error {
 		return fmt.Errorf("encode registry: %w", err)
 	}
 	data = append(data, '\n')
-	if err := os.WriteFile(path, data, 0o644); err != nil {
+	if err := os.WriteFile(path, data, 0o600); err != nil {
 		return fmt.Errorf("write registry: %w", err)
 	}
 	return nil
