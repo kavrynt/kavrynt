@@ -1,8 +1,8 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/kavrynt/gateway
-  tag: beta
+  repository: kavrynt/gateway
+  tag: 0.0.1-beta
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

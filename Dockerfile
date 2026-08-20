@@ -1,24 +1,26 @@
 # syntax=docker/dockerfile:1
 
-FROM golang:1.23-alpine AS build
+FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS build
 
-ARG VERSION=0.1.0-dev
+ARG VERSION=0.0.1-beta
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
-ARG TARGETOS=linux
-ARG TARGETARCH=amd64
+ARG TARGETOS
+ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod ./
-RUN go mod download
+RUN --mount=type=cache,target=/go/pkg/mod go mod download
 COPY . .
-RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
+RUN --mount=type=cache,target=/root/.cache/go-build \
+    --mount=type=cache,target=/go/pkg/mod \
+    CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
     -ldflags="-s -w -X github.com/kavrynt/gateway/internal/build.Version=${VERSION} -X github.com/kavrynt/gateway/internal/build.Commit=${COMMIT} -X github.com/kavrynt/gateway/internal/build.BuildDate=${BUILD_DATE}" \
     -o /out/gateway .
 
-FROM gcr.io/distroless/static-debian12:nonroot
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
 
-ARG VERSION=0.1.0-dev
+ARG VERSION=0.0.1-beta
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 

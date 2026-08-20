@@ -176,6 +176,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Kavrynt-Route", route.Name)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
+	// #nosec G704 -- buildTargetURL restricts Registry-provided targets to validated HTTP(S) URLs.
 	resp, err := h.client.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
@@ -210,6 +211,15 @@ func buildTargetURL(endpoint, suffix, rawQuery string) (string, error) {
 	parsed, err := url.Parse(endpoint)
 	if err != nil || parsed.Scheme == "" || parsed.Host == "" {
 		return "", fmt.Errorf("route endpoint must be an absolute URL")
+	}
+	if parsed.Scheme != "http" && parsed.Scheme != "https" {
+		return "", fmt.Errorf("route endpoint scheme must be http or https")
+	}
+	if parsed.User != nil {
+		return "", fmt.Errorf("route endpoint must not contain user information")
+	}
+	if parsed.Fragment != "" {
+		return "", fmt.Errorf("route endpoint must not contain a fragment")
 	}
 	if suffix != "" {
 		parsed.Path = strings.TrimRight(parsed.Path, "/") + suffix
