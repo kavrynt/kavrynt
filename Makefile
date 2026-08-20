@@ -1,21 +1,32 @@
 SHELL := /bin/bash
 
-COMPONENTS := cmd/kavryctl services/registry services/gateway operator
-GOCACHE_DIR := $(CURDIR)/.cache/go-build
+RUNTIME_ROOT ?= ..
+KAVRYCTL_DIR ?= $(RUNTIME_ROOT)/kavryctl
+REGISTRY_DIR ?= $(RUNTIME_ROOT)/registry
+GATEWAY_DIR ?= $(RUNTIME_ROOT)/gateway
+OPERATOR_DIR ?= $(RUNTIME_ROOT)/k8s-operator
+GOCACHE_DIR ?= $(CURDIR)/.cache/go-build
+LOCAL_VERSION ?= 0.0.1-beta-local
+
+COMPONENTS := $(KAVRYCTL_DIR) $(REGISTRY_DIR) $(GATEWAY_DIR) $(OPERATOR_DIR)
+CHARTS := \
+	$(KAVRYCTL_DIR)/charts/kavryctl \
+	$(REGISTRY_DIR)/charts/registry \
+	$(GATEWAY_DIR)/charts/gateway \
+	$(OPERATOR_DIR)/charts/k8s-operator
 
 .PHONY: help
 help:
-	@printf "Kavrynt monorepo targets:\n"
-	@printf "  make qa             Run format check, tests, vet, and Helm rendering\n"
-	@printf "  make fmt-check      Check Go formatting\n"
-	@printf "  make fmt            Format Go files\n"
-	@printf "  make test           Run Go tests for every component\n"
-	@printf "  make vet            Run go vet for every component\n"
-	@printf "  make docker-build   Build development Docker images\n"
-	@printf "  make helm-lint      Lint Helm charts\n"
-	@printf "  make helm-template  Render Helm charts\n"
-	@printf "  make helm-package   Package the umbrella Helm chart locally\n"
-	@printf "  make release-snapshot  Build local kavryctl release artifacts\n"
+	@printf "Kavrynt integration targets:\n"
+	@printf "  make qa             Validate canonical runtime repositories and charts\n"
+	@printf "  make fmt-check      Check canonical Go formatting\n"
+	@printf "  make test           Run canonical runtime unit tests\n"
+	@printf "  make vet            Run canonical runtime go vet checks\n"
+	@printf "  make docker-build   Build coordinated local runtime images\n"
+	@printf "  make helm-deps      Build umbrella chart dependencies\n"
+	@printf "  make helm-lint      Lint component and umbrella charts\n"
+	@printf "  make helm-template  Render the umbrella chart\n"
+	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
 
 .PHONY: qa
 qa: fmt-check test vet helm-lint helm-template
@@ -35,13 +46,6 @@ fmt-check:
 	done; \
 	exit $$failed
 
-.PHONY: fmt
-fmt:
-	@for component in $(COMPONENTS); do \
-		files=$$(find "$$component" -name '*.go' -not -path '*/.cache/*'); \
-		if [ -n "$$files" ]; then gofmt -w $$files; fi; \
-	done
-
 .PHONY: test
 test:
 	@mkdir -p "$(GOCACHE_DIR)"
@@ -60,35 +64,34 @@ vet:
 
 .PHONY: docker-build
 docker-build:
-	docker build -t kavrynt/kavryctl:dev ./cmd/kavryctl
-	docker build -t kavrynt/registry:dev ./services/registry
-	docker build -t kavrynt/gateway:dev ./services/gateway
-	docker build -t kavrynt/k8s-operator:dev ./operator
+	docker build -t kavrynt/registry:$(LOCAL_VERSION) "$(REGISTRY_DIR)"
+	docker build -t kavrynt/gateway:$(LOCAL_VERSION) "$(GATEWAY_DIR)"
+	docker build -t kavrynt/operator:$(LOCAL_VERSION) "$(OPERATOR_DIR)"
+	docker build -t kavrynt/e2e-mcp-server:$(LOCAL_VERSION) test/e2e/mcp-server
+
+.PHONY: helm-deps
+helm-deps:
+	helm dependency build --skip-refresh charts/kavrynt
 
 .PHONY: helm-lint
-helm-lint:
-	helm dependency build charts/kavrynt
+helm-lint: helm-deps
+	@for chart in $(CHARTS); do helm lint "$$chart"; done
 	helm lint charts/kavrynt
-	helm lint cmd/kavryctl/charts/kavryctl
-	helm lint services/registry/charts/registry
-	helm lint services/gateway/charts/gateway
-	helm lint operator/charts/k8s-operator
 
 .PHONY: helm-template
-helm-template:
-	helm dependency build charts/kavrynt
+helm-template: helm-deps
 	helm template kavrynt charts/kavrynt --namespace kavrynt-system
-	helm template kavryctl cmd/kavryctl/charts/kavryctl
-	helm template registry services/registry/charts/registry
-	helm template gateway services/gateway/charts/gateway
-	helm template k8s-operator operator/charts/k8s-operator
 
 .PHONY: helm-package
-helm-package:
+helm-package: helm-deps
 	mkdir -p dist/charts
-	helm dependency build charts/kavrynt
 	helm package charts/kavrynt --destination dist/charts
 
-.PHONY: release-snapshot
-release-snapshot:
-	goreleaser release --snapshot --clean
+.PHONY: e2e-kind
+e2e-kind:
+	KAVRYCTL_REPO="$(KAVRYCTL_DIR)" \
+	REGISTRY_REPO="$(REGISTRY_DIR)" \
+	GATEWAY_REPO="$(GATEWAY_DIR)" \
+	OPERATOR_REPO="$(OPERATOR_DIR)" \
+	LOCAL_VERSION="$(LOCAL_VERSION)" \
+	./scripts/e2e-kind.sh

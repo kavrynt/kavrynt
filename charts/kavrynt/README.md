@@ -19,7 +19,7 @@ Install from the published OCI chart after a tagged release:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 0.1.0 \
+  --version 0.0.1-beta \
   --namespace kavrynt-system \
   --create-namespace
 ```

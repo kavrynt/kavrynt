@@ -1,0 +1,71 @@
+name: Alpha-0 Kind E2E
+
+on:
+  workflow_dispatch:
+  pull_request:
+    branches:
+      - develop
+      - main
+    paths:
+      - ".github/workflows/e2e-kind.yml"
+      - "charts/kavrynt/**"
+      - "scripts/e2e-kind.sh"
+      - "test/e2e/**"
+
+permissions:
+  contents: read
+
+jobs:
+  e2e:
+    name: Canonical Runtime Integration
+    runs-on: ubuntu-latest
+    timeout-minutes: 25
+    steps:
+      - name: Checkout integration repository
+        uses: actions/checkout@v6
+        with:
+          path: kavrynt
+
+      - name: Checkout kavryctl
+        uses: actions/checkout@v6
+        with:
+          repository: kavrynt/kavryctl
+          ref: main
+          path: kavryctl
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Registry
+        uses: actions/checkout@v6
+        with:
+          repository: kavrynt/registry
+          ref: main
+          path: registry
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Gateway
+        uses: actions/checkout@v6
+        with:
+          repository: kavrynt/gateway
+          ref: main
+          path: gateway
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Operator
+        uses: actions/checkout@v6
+        with:
+          repository: kavrynt/operator
+          ref: main
+          path: k8s-operator
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@v4
+
+      - name: Install Kind
+        uses: helm/kind-action@v1
+        with:
+          install_only: true
+
+      - name: Run Alpha-0 workflow
+        working-directory: kavrynt
+        run: make e2e-kind
