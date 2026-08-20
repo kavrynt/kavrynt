@@ -132,7 +132,7 @@ func (s *FileStore) Count() (int, error) {
 }
 
 func (s *FileStore) init() error {
-	if err := os.MkdirAll(filepath.Dir(s.path), 0o755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(s.path), 0o700); err != nil {
 		return fmt.Errorf("create store directory: %w", err)
 	}
 	if _, err := os.Stat(s.path); err == nil {
@@ -184,7 +184,7 @@ func (s *FileStore) saveLocked(registry model.Registry) error {
 	if err := tmp.Close(); err != nil {
 		return fmt.Errorf("close temp registry: %w", err)
 	}
-	if err := os.Chmod(tmpPath, 0o644); err != nil {
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return fmt.Errorf("chmod temp registry: %w", err)
 	}
 	if err := os.Rename(tmpPath, s.path); err != nil {
