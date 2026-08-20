@@ -2,12 +2,37 @@ package store
 
 import (
 	"errors"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/kavrynt/registry/internal/model"
 )
+
+func TestFileStoreUsesPrivatePermissions(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "registry-data")
+	path := filepath.Join(directory, "registry.json")
+	if _, err := NewFileStore(path); err != nil {
+		t.Fatalf("NewFileStore returned error: %v", err)
+	}
+
+	directoryInfo, err := os.Stat(directory)
+	if err != nil {
+		t.Fatalf("stat registry directory: %v", err)
+	}
+	if permissions := directoryInfo.Mode().Perm(); permissions&0o077 != 0 {
+		t.Fatalf("registry directory permissions = %04o, want owner-only", permissions)
+	}
+
+	fileInfo, err := os.Stat(path)
+	if err != nil {
+		t.Fatalf("stat registry file: %v", err)
+	}
+	if permissions := fileInfo.Mode().Perm(); permissions&0o077 != 0 {
+		t.Fatalf("registry file permissions = %04o, want owner-only", permissions)
+	}
+}
 
 func TestFileStoreUpsertListGetDelete(t *testing.T) {
 	s, err := NewFileStore(filepath.Join(t.TempDir(), "registry.json"))
