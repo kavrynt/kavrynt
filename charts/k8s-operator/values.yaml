@@ -1,8 +1,8 @@
 replicaCount: 1
 
 image:
-  repository: ghcr.io/kavrynt/operator
-  tag: beta-01
+  repository: kavrynt/operator
+  tag: 0.0.1-beta
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
