@@ -1,7 +1,13 @@
 # Kavrynt
 
 [![QA](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml/badge.svg)](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml)
-[![License: ELv2](https://img.shields.io/badge/license-Elastic%20License%202.0-blue)](LICENSE)
+
+> [!IMPORTANT]
+> This is the private integration and coordinated release repository for the
+> commercial Kavrynt MCP Control Plane. Canonical runtime source lives in the
+> separate private `kavryctl`, `registry`, `gateway`, and `operator`
+> repositories. The component source directories retained here are frozen
+> legacy snapshots and are not release sources.
 
 Kavrynt is a Kubernetes-native control plane for registering, discovering, and
 routing Model Context Protocol (MCP) servers.
@@ -73,20 +79,20 @@ registers and routes to endpoints that already exist.
 
 | Component | Responsibility |
 | --- | --- |
-| [kavryctl](cmd/kavryctl) | Validate manifests and manage local or remote Registry records |
-| [Registry](services/registry) | Store MCP server metadata and expose the Registry API |
-| [Gateway](services/gateway) | Synchronize Registry state and proxy HTTP MCP requests |
-| [Operator](operator) | Reconcile Kubernetes `MCPServer` resources into Registry |
+| `kavryctl` | Validate manifests and manage local or remote Registry records |
+| `registry` | Store MCP server metadata and expose the Registry API |
+| `gateway` | Synchronize Registry state and proxy HTTP MCP requests |
+| `operator` | Reconcile Kubernetes `MCPServer` resources into Registry |
 
-Each component is an independent Go module and container. The root [`go.work`](go.work)
-connects the modules for repository development, and the umbrella Helm chart
-installs the Kubernetes control plane.
+Each component is owned by an independent private repository. This integration
+repository consumes their Helm charts and builds their source only for
+coordinated local validation. The retained root `go.work` and component
+directories belong to the frozen legacy snapshot.
 
 The current MVP supports:
 
 - Kubernetes-native `MCPServer` registration;
 - direct registration with kavryctl and the Registry API;
-- namespace-qualified server identities;
 - periodic Gateway synchronization from Registry;
 - HTTP request proxying through `/mcp/<server-id>`;
 - health, readiness, version, metrics, and route inspection endpoints.
@@ -304,12 +310,12 @@ Important values:
 | Value | Default | Purpose |
 | --- | --- | --- |
 | `registry.image.repository` | `kavrynt/registry` | Registry container repository |
-| `registry.image.tag` | `dev` | Registry image tag |
+| `registry.image.tag` | `0.0.1-beta` | Registry image tag |
 | `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
-| `gateway.image.tag` | `dev` | Gateway image tag |
+| `gateway.image.tag` | `0.0.1-beta` | Gateway image tag |
 | `gateway.config.registryURL` | In-cluster Registry service | Registry synchronization endpoint |
-| `operator.image.repository` | `kavrynt/k8s-operator` | Operator container repository |
-| `operator.image.tag` | `dev` | Operator image tag |
+| `operator.image.repository` | `kavrynt/operator` | Operator container repository |
+| `operator.image.tag` | `0.0.1-beta` | Operator image tag |
 | `operator.config.registryURL` | In-cluster Registry service | Operator reconciliation endpoint |
 
 Review [`charts/kavrynt/values.yaml`](charts/kavrynt/values.yaml) and each
@@ -374,7 +380,8 @@ the current release is not production-security complete:
 - Registry uses a local JSON file on an `emptyDir` volume by default; Registry
   data is lost if its pod is replaced.
 - Registry and Gateway are single-replica by default.
-- Audit, policy, approval, and usage services are not part of the public MVP.
+- Audit, policy, approval, and usage services are not part of the current
+  runtime beta.
 
 Keep Registry and Gateway as internal `ClusterIP` services, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
@@ -404,16 +411,16 @@ make fmt-check
 make docker-build
 make helm-lint
 make helm-template
-make release-snapshot
+make e2e-kind
 ```
 
-The four modules are intentionally independently buildable:
+The canonical runtime repositories are intentionally independently buildable:
 
 ```text
-cmd/kavryctl
-services/registry
-services/gateway
-operator
+../kavryctl
+../registry
+../gateway
+../k8s-operator
 ```
 
 Repository-specific engineering and contribution rules are documented in
@@ -421,20 +428,14 @@ Repository-specific engineering and contribution rules are documented in
 
 ## Repository model
 
-This repository is the main public Kavrynt product repository. It owns:
+This private repository owns the umbrella Helm chart, coordinated release
+versions, executable integration tests, and trial runbooks. Runtime code,
+component charts, QA, and component releases are owned by the separate private
+`kavryctl`, `registry`, `gateway`, and `operator` repositories.
+`kavrynt-cloud` owns the commercial hosted control plane.
 
-- the four core runtime components;
-- Kubernetes APIs and controllers;
-- Helm installation artifacts;
-- release automation;
-- executable samples and component runbooks.
-
-Following the separation used by established Kubernetes projects such as
-Istio, Kavrynt may later move community governance and the versioned product
-website into dedicated public repositories. Until those repositories exist,
-this README and the component documentation in this repository are the public
-source of truth. The private `kavrynt-cloud` repository is not part of the
-self-hosted runtime distribution.
+The duplicated component directories in this repository are frozen migration
+history. They are not the source for runtime releases.
 
 ## Roadmap
 
@@ -451,7 +452,7 @@ The next product milestones are:
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this
-public runtime repository.
+runtime integration repository.
 
 ## Project status
 
@@ -462,13 +463,8 @@ Use [GitHub issues](https://github.com/kavrynt/kavrynt/issues) for reproducible
 bugs and feature requests. Please include the Kavrynt version, Kubernetes
 version, installation method, relevant manifests, and sanitized logs.
 
-## License
+## Commercial status
 
-Kavrynt is source-available under the [Elastic License 2.0](LICENSE).
-
-You may use, copy, distribute, make available, and modify Kavrynt under the
-license terms, but you may not provide Kavrynt to third parties as a hosted or
-managed service that exposes a substantial set of Kavrynt's features.
-
-Commercial managed-service rights and the hosted Kavrynt Cloud product are
-licensed separately.
+Kavrynt is private commercial software. Trial access is provided through
+approved prerelease images, client binaries, Helm charts, and runbooks under
+the applicable Kavrynt commercial terms.

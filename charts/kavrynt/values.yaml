@@ -2,14 +2,14 @@ registry:
   fullnameOverride: kavrynt-registry
   image:
     repository: kavrynt/registry
-    tag: dev
+    tag: 0.0.1-beta
     pullPolicy: IfNotPresent
 
 gateway:
   fullnameOverride: kavrynt-gateway
   image:
     repository: kavrynt/gateway
-    tag: dev
+    tag: 0.0.1-beta
     pullPolicy: IfNotPresent
   config:
     registryURL: http://kavrynt-registry.kavrynt-system.svc.cluster.local:8080
@@ -17,8 +17,8 @@ gateway:
 operator:
   fullnameOverride: kavrynt-operator
   image:
-    repository: kavrynt/k8s-operator
-    tag: dev
+    repository: kavrynt/operator
+    tag: 0.0.1-beta
     pullPolicy: IfNotPresent
   config:
     registryURL: http://kavrynt-registry.kavrynt-system.svc.cluster.local:8080
