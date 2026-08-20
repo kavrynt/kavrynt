@@ -1,6 +1,6 @@
 image:
   repository: kavrynt/kavryctl
-  tag: dev
+  tag: 0.0.1-beta
   pullPolicy: IfNotPresent
 
 job:

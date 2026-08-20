@@ -40,6 +40,7 @@ type Spec struct {
 }
 
 func Load(path string) (Manifest, error) {
+	// #nosec G304 -- reading the explicit manifest path is the command's purpose.
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return Manifest{}, fmt.Errorf("read manifest: %w", err)
