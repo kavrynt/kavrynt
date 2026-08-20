@@ -1,6 +1,7 @@
 package registry
 
 import (
+	"os"
 	"testing"
 	"time"
 
@@ -64,5 +65,30 @@ func TestRegisterCreatesAndUpdatesServer(t *testing.T) {
 	}
 	if len(servers) != 0 {
 		t.Fatalf("server count after unregister = %d", len(servers))
+	}
+}
+
+func TestRegistryUsesPrivatePermissions(t *testing.T) {
+	parent := t.TempDir()
+	home := parent + "/state"
+
+	if err := Init(home); err != nil {
+		t.Fatalf("Init returned error: %v", err)
+	}
+
+	homeInfo, err := os.Stat(home)
+	if err != nil {
+		t.Fatalf("stat home: %v", err)
+	}
+	if got := homeInfo.Mode().Perm(); got != 0o700 {
+		t.Fatalf("home permissions = %o, want 700", got)
+	}
+
+	fileInfo, err := os.Stat(Path(home))
+	if err != nil {
+		t.Fatalf("stat registry: %v", err)
+	}
+	if got := fileInfo.Mode().Perm(); got != 0o600 {
+		t.Fatalf("registry permissions = %o, want 600", got)
 	}
 }

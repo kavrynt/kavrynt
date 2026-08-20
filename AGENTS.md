@@ -2,12 +2,13 @@
 
 This repository contains `kavryctl`, the Kavrynt command-line interface.
 
-Kavrynt is an open-source AI infrastructure platform for running and operating
-AI agents and MCP servers in production. The first `kavryctl` slice manages
+Kavrynt is a private commercial platform for running and operating AI agents
+and MCP servers in production. The first `kavryctl` slice manages
 MCP server manifests with both local file-backed registration and remote
 Kavrynt Registry API registration. Gateway, Kubernetes Operator,
-authentication, authorization, and policy enforcement are future work unless an
-approved design says otherwise.
+authentication, authorization, and policy enforcement are future work unless
+an approved design says otherwise. Do not describe this repository or the
+Kavrynt runtime as open source.
 
 ## Branching Strategy
 
