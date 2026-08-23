@@ -1,22 +1,25 @@
-name: Canonical Runtime QA
+name: Alpha-0 Kind E2E
 
 on:
+  workflow_dispatch:
   pull_request:
-    branches: [develop, main]
-  push:
-    branches: [develop, main, "feature/**"]
+    branches:
+      - develop
+      - main
+    paths:
+      - ".github/workflows/e2e-kind.yml"
+      - "charts/kavrynt/**"
+      - "scripts/e2e-kind.sh"
+      - "test/e2e/**"
 
 permissions:
   contents: read
 
-concurrency:
-  group: qa-${{ github.workflow }}-${{ github.ref }}
-  cancel-in-progress: true
-
 jobs:
-  qa:
-    name: Canonical Repositories and Umbrella Chart
+  e2e:
+    name: Canonical Runtime Integration
     runs-on: ubuntu-latest
+    timeout-minutes: 25
     steps:
       - name: Checkout integration repository
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
@@ -27,7 +30,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/kavryctl
-          ref: develop
+          ref: main
           path: kavryctl
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
@@ -35,7 +38,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/registry
-          ref: develop
+          ref: main
           path: registry
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
@@ -43,7 +46,7 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/gateway
-          ref: develop
+          ref: main
           path: gateway
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
@@ -51,19 +54,18 @@ jobs:
         uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/operator
-          ref: develop
+          ref: main
           path: k8s-operator
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Set up Go
-        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
-        with:
-          go-version: "1.26.x"
-          cache: false
 
       - name: Set up Helm
         uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
-      - name: Run canonical QA
+      - name: Install Kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
+        with:
+          install_only: true
+
+      - name: Run Alpha-0 workflow
         working-directory: kavrynt
-        run: make qa
+        run: make e2e-kind

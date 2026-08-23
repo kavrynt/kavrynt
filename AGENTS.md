@@ -1,95 +1,82 @@
 # AGENTS.md
 
-This repository is the public source-available Kavrynt product monorepo.
+This is the private Kavrynt integration and release repository for the
+Kubernetes-native MCP Control Plane.
 
-Kavrynt is an MCP infrastructure control plane. The MVP contains four product
-components:
+## Repository Ownership
 
-- `cmd/kavryctl`: developer and operator CLI.
-- `services/registry`: Registry API and MCP server metadata source of truth.
-- `services/gateway`: runtime gateway for MCP traffic.
-- `operator`: Kubernetes operator for `MCPServer` custom resources.
+Canonical runtime source lives in separate sibling repositories:
 
-## Repository Strategy
+- `../kavryctl`: developer and platform CLI.
+- `../registry`: MCP server metadata API and source of truth.
+- `../gateway`: MCP runtime routing and proxying.
+- `../k8s-operator`: Kubernetes `MCPServer` reconciliation.
 
-Use this repository as the primary development location for the public MVP.
-Treat the older private component repositories as pre-monorepo sources after the
-monorepo is reviewed and published.
+This repository owns only cross-component concerns:
 
-Keep each component independently buildable until there is a clear reason to
-collapse the Go modules into one root module.
+- the umbrella Helm chart,
+- local and CI end-to-end workflows,
+- coordinated version manifests,
+- trial installation and validation runbooks.
 
-## Branching Strategy
+The existing `cmd/`, `services/`, and `operator/` trees are frozen legacy
+snapshots. Do not implement new runtime behavior there. Port any behavior that
+must be retained into the canonical sibling repository with tests, then remove
+the duplicate only through a separately reviewed migration.
 
-Use lightweight GitFlow:
+## Product Boundary
 
-- `main`: production-ready release baseline.
-- `develop`: latest integrated MVP development.
-- `feature/<branch-name>`: larger or riskier feature work when isolation is
-  useful.
-- `release/<version>`: release stabilization when needed.
-- `hotfix/<branch-name>`: urgent production fixes from `main`.
+Kavrynt is a private commercial product. Do not describe this repository or
+the runtime source as open source or source-available. Trial users consume
+approved alpha or beta images, client binaries, Helm charts, and runbooks; they
+do not receive source repository access by default.
 
-Rules:
+## Branching
 
-1. Default normal MVP integration work to `develop`.
-2. Do not force-push shared branches.
-3. Keep changes scoped to one clear intent.
-4. Run local validation before asking for review.
-5. Do not commit secrets, local state, generated caches, or machine-specific
-   files.
-6. Do not push unless the user explicitly asks in the current turn.
+Use GitFlow:
 
-## Coding Principles
+- `main`: validated release baseline.
+- `develop`: integrated development.
+- `feature/<short-kebab-case-name>`: scoped feature work.
+- `release/<version>`: release stabilization when required.
+- `hotfix/<short-kebab-case-name>`: urgent production fixes.
 
-- Prefer simple, dependency-light Go until requirements justify additional
-  dependencies.
-- Keep component boundaries clear: CLI should not own server runtime behavior,
-  Registry should not proxy traffic, Gateway should not become the source of
-  truth, and Operator should not own hosted product behavior.
-- Validate all input at API, CLI, and Kubernetes boundaries.
-- Keep behavior testable without Docker, Kubernetes, or network access where
-  possible.
-- Use explicit errors that give users an action they can take.
-- Keep docs and runbooks aligned with behavior changes.
+Never force-push shared branches. Preserve user changes and inspect repository
+status before editing. Commit or push only when the user explicitly requests
+it.
 
-## Go Standards
+## Integration Standards
 
-- Run `gofmt` on changed Go files.
-- Run `go test ./...` inside each changed module.
-- Run `go vet ./...` inside each changed module.
-- Prefer table-driven tests when multiple cases share structure.
-- Use `t.TempDir()` for filesystem tests.
-- Avoid tests that depend on global machine state.
+- Keep runtime repositories independently buildable and releasable.
+- Pin the exact component versions used by each coordinated release.
+- Treat Kubernetes manifests, MCP payloads, Registry data, and Gateway traffic
+  as untrusted input.
+- Use non-root containers, least-privilege RBAC, and no embedded credentials.
+- Do not claim authentication, tenant isolation, policy, audit, or SaaS
+  controls exist until they are implemented and tested.
+- Keep the Kind workflow disposable and isolated from the user's current
+  Kubernetes context.
+- On macOS and Apple Silicon, build images locally and load them into Kind.
+- Prefer port-forwarding over NodePort for local verification.
 
-Root validation:
+## Required Validation
+
+Run the canonical runtime QA:
 
 ```bash
 make qa
 ```
 
-## Security Standards
+Run the complete local product flow:
 
-- Never commit secrets, tokens, kubeconfigs, private keys, or credentials.
-- Do not log secret values.
-- Treat manifests, API requests, and Kubernetes custom resources as untrusted
-  input.
-- Use non-root containers.
-- Use least-privilege Kubernetes RBAC.
-- Disable Kubernetes service account token automount unless a workload needs it.
-- Pin Docker base images by digest before release-grade builds.
-- Add OCI image labels before release-grade builds.
-- Do not claim auth, RBAC, policy, audit, or hosted commercial controls exist
-  until they are implemented and tested.
+```bash
+make e2e-kind
+```
 
-## Public Repository Hygiene
+The end-to-end workflow must verify:
 
-- Keep private planning documents out of this repository unless they are meant
-  for public readers.
-- Keep commercial implementation details out of the public source tree until the
-  product boundary is intentionally designed.
-- Keep root README, component READMEs, and runbooks contributor-friendly.
-- Kavrynt is licensed under Elastic License 2.0. Do not describe this repository
-  as permissively licensed open source.
-- Public docs should use "source-available" unless a future license change
-  intentionally changes the project boundary.
+1. Registry, Gateway, and Operator become ready.
+2. Applying an `MCPServer` produces a successful `Registered` condition.
+3. Registry and Gateway expose the expected server identity.
+4. A JSON-RPC `tools/list` call succeeds through Gateway.
+5. Deleting the `MCPServer` removes Registry and Gateway state.

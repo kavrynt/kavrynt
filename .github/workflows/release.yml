@@ -1,150 +1,90 @@
-name: Release
+name: Release Umbrella Chart
 
 on:
   push:
     tags:
-      - "v*.*.*"
-  workflow_dispatch:
-    inputs:
-      tag:
-        description: "Release tag to publish, for example v0.1.0"
-        required: true
-        type: string
+      - "v*"
 
 permissions:
-  contents: write
+  contents: read
   packages: write
 
 jobs:
-  images:
-    name: Publish ${{ matrix.name }} image
+  chart:
+    name: Package Canonical Runtime Chart
     runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: Registry
-            image: registry
-            context: services/registry
-          - name: Gateway
-            image: gateway
-            context: services/gateway
-          - name: Operator
-            image: k8s-operator
-            context: operator
+    environment: release
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-
-      - name: Calculate release version
-        id: version
-        shell: bash
-        run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
-          else
-            tag="${GITHUB_REF_NAME}"
-          fi
-          echo "version=${tag#v}" >> "${GITHUB_OUTPUT}"
-          echo "commit=${GITHUB_SHA}" >> "${GITHUB_OUTPUT}"
-          echo "build_date=$(date -u +'%Y-%m-%dT%H:%M:%SZ')" >> "${GITHUB_OUTPUT}"
-
-      - name: Set up QEMU
-        uses: docker/setup-qemu-action@v3
-
-      - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@v3
-
-      - name: Login to GHCR
-        uses: docker/login-action@v3
-        with:
-          registry: ghcr.io
-          username: ${{ github.actor }}
-          password: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Build and push image
-        uses: docker/build-push-action@v6
-        with:
-          context: ${{ matrix.context }}
-          push: true
-          platforms: linux/amd64,linux/arm64
-          tags: ghcr.io/kavrynt/${{ matrix.image }}:${{ steps.version.outputs.version }}
-          build-args: |
-            VERSION=${{ steps.version.outputs.version }}
-            COMMIT=${{ steps.version.outputs.commit }}
-            BUILD_DATE=${{ steps.version.outputs.build_date }}
-
-  kavryctl:
-    name: Release kavryctl
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
+      - name: Checkout integration repository
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           fetch-depth: 0
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
+          path: kavrynt
 
-      - name: Set up Go
-        uses: actions/setup-go@v5
-        with:
-          go-version: "1.23.x"
-          cache: false
-
-      - name: Run GoReleaser
-        uses: goreleaser/goreleaser-action@v6
-        with:
-          distribution: goreleaser
-          version: "~> v2"
-          args: release --clean
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-  helm-chart:
-    name: Publish Helm chart
-    runs-on: ubuntu-latest
-    needs:
-      - images
-      - kavryctl
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-        with:
-          ref: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.ref }}
-
-      - name: Set up Helm
-        uses: azure/setup-helm@v4
-
-      - name: Calculate release version
-        id: version
+      - name: Validate release tag
+        working-directory: kavrynt
         shell: bash
         run: |
-          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
-            tag="${{ inputs.tag }}"
-          else
-            tag="${GITHUB_REF_NAME}"
+          version="${GITHUB_REF_NAME#v}"
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+-(alpha|beta)(\.[0-9]+)?$ ]]; then
+            echo "Unsupported prerelease version: $version" >&2
+            exit 1
           fi
-          version="${tag#v}"
-          echo "tag=${tag}" >> "${GITHUB_OUTPUT}"
-          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          git fetch origin main
+          git merge-base --is-ancestor "$GITHUB_SHA" origin/main
+          echo "VERSION=$version" >> "$GITHUB_ENV"
 
-      - name: Build chart dependencies
-        run: helm dependency build charts/kavrynt
+      - name: Checkout kavryctl release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/kavryctl
+          ref: ${{ github.ref_name }}
+          path: kavryctl
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
-      - name: Lint chart
-        run: helm lint charts/kavrynt
+      - name: Checkout Registry release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/registry
+          ref: ${{ github.ref_name }}
+          path: registry
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
-      - name: Package chart
+      - name: Checkout Gateway release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/gateway
+          ref: ${{ github.ref_name }}
+          path: gateway
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Checkout Operator release
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+        with:
+          repository: kavrynt/operator
+          ref: ${{ github.ref_name }}
+          path: k8s-operator
+          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+
+      - name: Set up Helm
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+
+      - name: Build and lint chart
+        working-directory: kavrynt
         run: |
+          helm dependency build --skip-refresh charts/kavrynt
+          helm lint charts/kavrynt
+          helm template kavrynt charts/kavrynt --namespace kavrynt-system >/dev/null
           mkdir -p dist/charts
           helm package charts/kavrynt \
-            --version "${{ steps.version.outputs.version }}" \
-            --app-version "${{ steps.version.outputs.version }}" \
+            --version "$VERSION" \
+            --app-version "$VERSION" \
             --destination dist/charts
 
       - name: Login to GHCR
+        working-directory: kavrynt
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
-      - name: Push chart to GHCR
-        run: helm push "dist/charts/kavrynt-${{ steps.version.outputs.version }}.tgz" oci://ghcr.io/kavrynt/charts
+      - name: Publish chart
+        working-directory: kavrynt
+        run: helm push "dist/charts/kavrynt-${VERSION}.tgz" oci://ghcr.io/kavrynt/charts

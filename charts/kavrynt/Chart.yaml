@@ -1,17 +1,17 @@
 apiVersion: v2
 name: kavrynt
-description: Kavrynt MCP infrastructure control plane
+description: Private Kavrynt MCP Control Plane integration chart
 type: application
-version: 0.1.0
-appVersion: 0.1.0-dev
+version: 0.0.1-beta
+appVersion: 0.0.1-beta
 dependencies:
   - name: registry
-    version: 0.1.0
-    repository: file://../../services/registry/charts/registry
+    version: 0.0.1-beta
+    repository: file://../../../registry/charts/registry
   - name: gateway
-    version: 0.1.0
-    repository: file://../../services/gateway/charts/gateway
+    version: 0.0.1-beta
+    repository: file://../../../gateway/charts/gateway
   - name: k8s-operator
     alias: operator
-    version: 0.1.0
-    repository: file://../../operator/charts/k8s-operator
+    version: 0.0.1-beta
+    repository: file://../../../k8s-operator/charts/k8s-operator
