@@ -1,12 +1,12 @@
 dependencies:
 - name: registry
   repository: file://../../../registry/charts/registry
-  version: 0.1.0
+  version: 0.0.1-beta
 - name: gateway
   repository: file://../../../gateway/charts/gateway
-  version: 0.1.0
+  version: 0.0.1-beta
 - name: k8s-operator
   repository: file://../../../k8s-operator/charts/k8s-operator
-  version: 0.1.0
-digest: sha256:184f6da3d0655f60bdf2adf2074dfe1ba56add6f19d1629df5e43cdbe3e502e4
-generated: "2026-08-21T00:19:24.013894+05:30"
+  version: 0.0.1-beta
+digest: sha256:fb489f43ee8e9070fc5e5ecf688720c967f4fa40712ef6a870aef7a551b1b3e8
+generated: "2026-08-21T00:52:45.708412+05:30"

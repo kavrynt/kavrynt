@@ -22,12 +22,12 @@ jobs:
     timeout-minutes: 25
     steps:
       - name: Checkout integration repository
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           path: kavrynt
 
       - name: Checkout kavryctl
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/kavryctl
           ref: main
@@ -35,7 +35,7 @@ jobs:
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
       - name: Checkout Registry
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/registry
           ref: main
@@ -43,7 +43,7 @@ jobs:
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
       - name: Checkout Gateway
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/gateway
           ref: main
@@ -51,7 +51,7 @@ jobs:
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
       - name: Checkout Operator
-        uses: actions/checkout@v6
+        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
         with:
           repository: kavrynt/operator
           ref: main
@@ -59,10 +59,10 @@ jobs:
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
       - name: Set up Helm
-        uses: azure/setup-helm@v4
+        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
 
       - name: Install Kind
-        uses: helm/kind-action@v1
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
         with:
           install_only: true
 
