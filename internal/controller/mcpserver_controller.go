@@ -68,7 +68,7 @@ func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, server *kavry
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.RegistryClient.Delete(ctx, server.Name); err != nil {
+	if err := r.RegistryClient.Delete(ctx, registryName(server)); err != nil {
 		_ = r.updateStatus(ctx, types.NamespacedName{Name: server.Name, Namespace: server.Namespace}, false, err.Error())
 		return ctrl.Result{RequeueAfter: r.requeueAfter()}, nil
 	}
@@ -129,7 +129,7 @@ func manifestFromServer(server *kavryntv1alpha1.MCPServer) registry.Manifest {
 		APIVersion: registry.APIVersion,
 		Kind:       registry.Kind,
 		Metadata: registry.Metadata{
-			Name:        server.Name,
+			Name:        registryName(server),
 			Description: server.Annotations["kavrynt.io/description"],
 			Labels:      server.Labels,
 		},
@@ -142,4 +142,11 @@ func manifestFromServer(server *kavryntv1alpha1.MCPServer) registry.Manifest {
 			Environment: server.Spec.Environment,
 		},
 	}
+}
+
+func registryName(server *kavryntv1alpha1.MCPServer) string {
+	if server.Namespace == "" {
+		return server.Name
+	}
+	return server.Namespace + "." + server.Name
 }
