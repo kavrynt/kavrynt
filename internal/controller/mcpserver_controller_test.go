@@ -93,8 +93,8 @@ func TestReconcileRegistersMCPServer(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	if got.Metadata.Name != "demo-mcp" {
-		t.Fatalf("manifest name = %s, want demo-mcp", got.Metadata.Name)
+	if got.Metadata.Name != "default.demo-mcp" {
+		t.Fatalf("manifest name = %s, want default.demo-mcp", got.Metadata.Name)
 	}
 	if got.Metadata.Description != "demo server" {
 		t.Fatalf("description = %s, want demo server", got.Metadata.Description)
@@ -150,6 +150,19 @@ func TestManifestFromServer(t *testing.T) {
 	}
 	if manifest.Spec.Command != "demo" {
 		t.Fatalf("command = %s", manifest.Spec.Command)
+	}
+}
+
+func TestRegistryNameQualifiesKubernetesNamespace(t *testing.T) {
+	server := &kavryntv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{
+			Name:      "demo-mcp",
+			Namespace: "team-a",
+		},
+	}
+
+	if got := registryName(server); got != "team-a.demo-mcp" {
+		t.Fatalf("registryName = %q, want team-a.demo-mcp", got)
 	}
 }
 
