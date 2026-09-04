@@ -97,11 +97,10 @@ For local publishing, authenticate with a classic GitHub token that has
 export CR_PAT=<classic-token-with-write-packages>
 echo "$CR_PAT" | docker login ghcr.io -u <github-username> --password-stdin
 docker buildx build --platform linux/amd64,linux/arm64 \
-  --build-arg VERSION=0.1.0-beta \
+  --build-arg VERSION=0.0.1-beta.1 \
   --build-arg COMMIT="$(git rev-parse HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -t ghcr.io/kavrynt/gateway:0.1.0-beta \
-  -t ghcr.io/kavrynt/gateway:beta \
+  -t ghcr.io/kavrynt/gateway:0.0.1-beta.1 \
   --push .
 ```
 
