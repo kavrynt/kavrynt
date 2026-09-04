@@ -4,6 +4,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -11,6 +12,10 @@ import (
 )
 
 func TestFileStoreUsesPrivatePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits through os.FileMode")
+	}
+
 	directory := filepath.Join(t.TempDir(), "registry-data")
 	path := filepath.Join(directory, "registry.json")
 	if _, err := NewFileStore(path); err != nil {
