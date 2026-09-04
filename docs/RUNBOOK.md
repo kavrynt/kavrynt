@@ -19,11 +19,11 @@ Build a private beta image locally:
 
 ```bash
 docker buildx build --platform linux/amd64,linux/arm64 \
-  --build-arg VERSION=0.1.0-beta.1 \
+  --build-arg VERSION=0.0.1-beta.1 \
   --build-arg COMMIT="$(git rev-parse HEAD)" \
   --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -t ghcr.io/kavrynt/operator:beta-01 \
-  -t kavrynt/operator:beta-01 .
+  -t ghcr.io/kavrynt/operator:0.0.1-beta.1 \
+  -t docker.io/kavrynt/operator:0.0.1-beta.1 .
 ```
 
 Create a private GHCR pull secret before installing the Operator:
@@ -50,7 +50,7 @@ go run . --addr :8081 --data /tmp/kavrynt-registry-operator.json
 Apply the CRD and RBAC:
 
 ```bash
-cd ../k8s-operator
+cd ../operator
 kubectl apply -f config/crd/bases/kavrynt.io_mcpservers.yaml
 kubectl apply -f config/rbac/service_account.yaml
 kubectl apply -f config/rbac/role.yaml
