@@ -15,7 +15,7 @@ const (
 	Kind       = "MCPServer"
 )
 
-var namePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+var namePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`)
 
 type Manifest struct {
 	APIVersion string   `json:"apiVersion"`
@@ -77,7 +77,7 @@ func Validate(m Manifest) error {
 	if name == "" {
 		problems = append(problems, "metadata.name is required")
 	} else if !namePattern.MatchString(name) {
-		problems = append(problems, "metadata.name must use lowercase DNS-label syntax")
+		problems = append(problems, "metadata.name must use lowercase DNS-subdomain syntax")
 	}
 
 	if strings.TrimSpace(m.Spec.Version) == "" {
