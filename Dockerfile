@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-FROM --platform=$BUILDPLATFORM golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468 AS build
+FROM --platform=$BUILDPLATFORM golang:1.27-alpine@sha256:4c9fe60190a2a3350ddc51de80d0224b8a6698d12bdfc999fee45ea9d6c46dbc AS build
 
 ARG VERSION=0.0.1-beta.1
 ARG COMMIT=unknown
@@ -18,7 +18,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
     -ldflags="-s -w -X github.com/kavrynt/k8s-operator/internal/build.Version=${VERSION} -X github.com/kavrynt/k8s-operator/internal/build.Commit=${COMMIT} -X github.com/kavrynt/k8s-operator/internal/build.BuildDate=${BUILD_DATE}" \
     -o /out/manager .
 
-FROM gcr.io/distroless/static-debian12:nonroot@sha256:1b7b9f0f0e0a1d2155f531db587cc48ec26aaf97ab64364225f5bf18a054e66a
+FROM gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 ARG VERSION=0.0.1-beta.1
 ARG COMMIT=unknown
