@@ -10,7 +10,7 @@ import (
 	"github.com/kavrynt/registry/internal/model"
 )
 
-var namePattern = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?$`)
+var namePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`)
 
 func Manifest(m model.Manifest) error {
 	var problems []string
@@ -31,7 +31,7 @@ func Manifest(m model.Manifest) error {
 	if name == "" {
 		problems = append(problems, "metadata.name is required")
 	} else if !namePattern.MatchString(name) {
-		problems = append(problems, "metadata.name must use lowercase DNS-label syntax")
+		problems = append(problems, "metadata.name must use lowercase DNS-subdomain syntax")
 	}
 
 	if strings.TrimSpace(m.Spec.Version) == "" {
