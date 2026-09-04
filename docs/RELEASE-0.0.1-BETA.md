@@ -72,7 +72,7 @@ cosign verify \
 
 Download `kavryctl` from the private GitHub Release. Assets follow the naming
 contract `kavryctl_<version>_<os>_<arch>.<archive>`. Verify `SHA256SUMS` with
-its `.sig` and `.pem` files before installation.
+its `SHA256SUMS.sigstore.json` Sigstore bundle before installation.
 
 After publication, the same released-artifact validation can be repeated
 locally:
