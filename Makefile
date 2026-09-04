@@ -4,9 +4,9 @@ RUNTIME_ROOT ?= ..
 KAVRYCTL_DIR ?= $(RUNTIME_ROOT)/kavryctl
 REGISTRY_DIR ?= $(RUNTIME_ROOT)/registry
 GATEWAY_DIR ?= $(RUNTIME_ROOT)/gateway
-OPERATOR_DIR ?= $(RUNTIME_ROOT)/k8s-operator
+OPERATOR_DIR ?= $(RUNTIME_ROOT)/operator
 GOCACHE_DIR ?= $(CURDIR)/.cache/go-build
-LOCAL_VERSION ?= 0.0.1-beta-local
+LOCAL_VERSION ?= 0.0.1-beta.1-local
 
 COMPONENTS := $(KAVRYCTL_DIR) $(REGISTRY_DIR) $(GATEWAY_DIR) $(OPERATOR_DIR)
 CHARTS := \
@@ -27,22 +27,29 @@ help:
 	@printf "  make helm-lint      Lint component and umbrella charts\n"
 	@printf "  make helm-template  Render the umbrella chart\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
+	@printf "  make e2e-release    Validate a published chart and runtime images\n"
 
 .PHONY: qa
-qa: fmt-check test vet helm-lint helm-template
+qa: release-contract fmt-check test vet helm-lint helm-template
+
+.PHONY: release-contract
+release-contract:
+	bash ./scripts/verify-release-contract.sh
 
 .PHONY: fmt-check
 fmt-check:
 	@failed=0; \
+	tmp_dir=$$(mktemp -d); \
+	trap 'rm -rf "$$tmp_dir"' EXIT; \
 	for component in $(COMPONENTS); do \
 		files=$$(find "$$component" -name '*.go' -not -path '*/.cache/*'); \
-		if [ -n "$$files" ]; then \
-			unformatted=$$(gofmt -l $$files); \
-			if [ -n "$$unformatted" ]; then \
-				printf "Unformatted Go files in %s:\n%s\n" "$$component" "$$unformatted"; \
+		for file in $$files; do \
+			sed 's/\r$$//' "$$file" >"$$tmp_dir/input.go"; \
+			if [ -n "$$(gofmt -l "$$tmp_dir/input.go")" ]; then \
+				printf "Unformatted Go file: %s\n" "$$file"; \
 				failed=1; \
 			fi; \
-		fi; \
+		done; \
 	done; \
 	exit $$failed
 
@@ -95,3 +102,8 @@ e2e-kind:
 	OPERATOR_REPO="$(OPERATOR_DIR)" \
 	LOCAL_VERSION="$(LOCAL_VERSION)" \
 	./scripts/e2e-kind.sh
+
+.PHONY: e2e-release
+e2e-release:
+	RELEASE_VERSION="$(RELEASE_VERSION)" \
+	bash ./scripts/e2e-release.sh

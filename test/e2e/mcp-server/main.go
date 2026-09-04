@@ -102,7 +102,7 @@ func resultFor(method string) (any, bool) {
 			},
 			"serverInfo": map[string]string{
 				"name":    "kavrynt-alpha0",
-				"version": "0.0.1-beta",
+				"version": "0.0.1-beta.1",
 			},
 		}, true
 	case "tools/list":

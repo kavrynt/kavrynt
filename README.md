@@ -112,54 +112,47 @@ supports HTTP endpoints only.
 Kavrynt can run on managed or self-managed conformant Kubernetes clusters,
 including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 
-### Install kavryctl
-
-Linux or macOS:
-
-```bash
-curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.sh | sh
-export PATH="$HOME/.kavrynt/bin:$PATH"
-```
-
-Windows PowerShell:
-
-```powershell
-iwr https://raw.githubusercontent.com/kavrynt/kavrynt/main/scripts/install.ps1 -UseB | iex
-```
-
 ### Install the control plane
 
 ```bash
-kavryctl install
+export KAVRYNT_VERSION=0.0.1-beta.1
+
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version "$KAVRYNT_VERSION" \
+  --namespace kavrynt-system \
+  --create-namespace
 ```
 
-The command pulls the OCI Helm chart for the `kavryctl` release and installs
-the matching versioned Registry, Gateway, and Operator images from GHCR. The
-default release is `kavrynt` in the `kavrynt-system` namespace.
+The command pulls the versioned OCI Helm chart and installs the matching
+Registry, Gateway, and Operator images. Authenticate Helm to GHCR first when
+the chart package is private. The default release is `kavrynt` in the
+`kavrynt-system` namespace.
 
 Use a values file or repeatable `--set` flags to customize the installation:
 
 ```bash
-kavryctl install --values kavrynt-values.yaml
-kavryctl install --set gateway.replicaCount=2
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version "$KAVRYNT_VERSION" \
+  --namespace kavrynt-system \
+  --create-namespace \
+  --values kavrynt-values.yaml \
+  --set gateway.replicaCount=2
 ```
 
-Render the same release as Kubernetes YAML for review or GitOps:
+For source development, build the chart dependencies and install the local
+umbrella chart:
 
 ```bash
-kavryctl manifest generate > kavrynt.yaml
-```
-
-For source development, point the CLI at the local umbrella chart:
-
-```bash
-go run ./cmd/kavryctl install --chart charts/kavrynt
+helm dependency build --skip-refresh charts/kavrynt
+helm upgrade --install kavrynt charts/kavrynt \
+  --namespace kavrynt-system \
+  --create-namespace
 ```
 
 ### Verify the installation
 
 ```bash
-kavryctl status
+helm status kavrynt --namespace kavrynt-system
 
 kubectl rollout status deployment/kavrynt-registry \
   --namespace kavrynt-system --timeout=120s
@@ -265,23 +258,25 @@ kubectl delete deployment example-mcp-server
 ## Use kavryctl
 
 kavryctl supports both local file-backed development and a remote Registry.
+The current canonical CLI does not install or upgrade the Kubernetes control
+plane; Helm owns that release path.
 
 The same CLI also validates and manages MCP server registrations. Install it
 from source when developing locally:
 
 ```bash
-go install ./cmd/kavryctl
+go install ../kavryctl
 kavryctl version
 ```
 
 Validate and register a manifest against the in-cluster Registry port-forward:
 
 ```bash
-kavryctl validate cmd/kavryctl/examples/mcp-server.json
+kavryctl validate ../kavryctl/examples/mcp-server.json
 
 kavryctl register \
   --registry http://localhost:18081 \
-  cmd/kavryctl/examples/mcp-server.json
+  ../kavryctl/examples/mcp-server.json
 
 kavryctl list --registry http://localhost:18081
 kavryctl inspect --registry http://localhost:18081 example-mcp-server
@@ -291,15 +286,17 @@ kavryctl unregister --registry http://localhost:18081 example-mcp-server
 For local-only workflows, omit `--registry`. State is stored in
 `.kavrynt/registry.json` by default.
 
-See the [kavryctl documentation](cmd/kavryctl/README.md) for all available
+See the canonical `kavryctl` repository documentation for all available
 commands.
 
 ## Configuration
 
-Override component settings through `kavryctl`:
+Override component settings through Helm:
 
 ```bash
-kavryctl install \
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version "$KAVRYNT_VERSION" \
+  --namespace kavrynt-system \
   --set registry.image.tag=<version> \
   --set gateway.image.tag=<version> \
   --set operator.image.tag=<version>
@@ -310,12 +307,12 @@ Important values:
 | Value | Default | Purpose |
 | --- | --- | --- |
 | `registry.image.repository` | `kavrynt/registry` | Registry container repository |
-| `registry.image.tag` | `0.0.1-beta` | Registry image tag |
+| `registry.image.tag` | `0.0.1-beta.1` | Registry image tag |
 | `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
-| `gateway.image.tag` | `0.0.1-beta` | Gateway image tag |
+| `gateway.image.tag` | `0.0.1-beta.1` | Gateway image tag |
 | `gateway.config.registryURL` | In-cluster Registry service | Registry synchronization endpoint |
 | `operator.image.repository` | `kavrynt/operator` | Operator container repository |
-| `operator.image.tag` | `0.0.1-beta` | Operator image tag |
+| `operator.image.tag` | `0.0.1-beta.1` | Operator image tag |
 | `operator.config.registryURL` | In-cluster Registry service | Operator reconciliation endpoint |
 
 Review [`charts/kavrynt/values.yaml`](charts/kavrynt/values.yaml) and each
@@ -357,14 +354,15 @@ Component runbooks:
 ### Uninstall
 
 ```bash
-kavryctl uninstall
+helm uninstall kavrynt --namespace kavrynt-system
 ```
 
-This keeps the `MCPServer` CRD and its custom resources. After confirming that
-cluster-scoped data can be removed, purge the CRD and namespace as well:
+Helm keeps the `MCPServer` CRD and its custom resources. After confirming that
+cluster-scoped data can be removed, delete the CRD and namespace explicitly:
 
 ```bash
-kavryctl uninstall --purge --delete-namespace
+kubectl delete crd mcpservers.kavrynt.io
+kubectl delete namespace kavrynt-system
 ```
 
 ## Current security and durability boundaries
@@ -420,7 +418,7 @@ The canonical runtime repositories are intentionally independently buildable:
 ../kavryctl
 ../registry
 ../gateway
-../k8s-operator
+../operator
 ```
 
 Repository-specific engineering and contribution rules are documented in
