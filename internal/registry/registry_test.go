@@ -2,6 +2,7 @@ package registry
 
 import (
 	"os"
+	"runtime"
 	"testing"
 	"time"
 
@@ -69,6 +70,10 @@ func TestRegisterCreatesAndUpdatesServer(t *testing.T) {
 }
 
 func TestRegistryUsesPrivatePermissions(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows does not expose Unix permission bits through os.FileMode")
+	}
+
 	parent := t.TempDir()
 	home := parent + "/state"
 

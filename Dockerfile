@@ -7,7 +7,7 @@ FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS build
 
 ARG TARGETOS
 ARG TARGETARCH
-ARG VERSION=0.0.1-beta
+ARG VERSION=0.0.1-beta.1
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
@@ -25,7 +25,7 @@ RUN --mount=type=cache,target=/root/.cache/go-build \
 
 FROM ${DISTROLESS_IMAGE}
 
-ARG VERSION=0.0.1-beta
+ARG VERSION=0.0.1-beta.1
 ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
