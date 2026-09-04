@@ -12,8 +12,8 @@ one MCP Control Plane.
 - Go
 - curl
 - jq
-- the sibling repositories `kavryctl`, `registry`, `gateway`, and
-  `k8s-operator` under the same parent directory as this repository
+- the sibling repositories `kavryctl`, `registry`, `gateway`, and `operator`
+  under the same parent directory as this repository
 
 ## Run
 
@@ -64,3 +64,16 @@ KIND_CLUSTER_NAME=kavrynt-alpha0-2 make e2e-kind
 The integration workflow checks out the four private runtime repositories.
 Configure the organization secret `KAVRYNT_REPO_TOKEN` with read-only access
 to those repositories before enabling pull-request enforcement.
+
+## Published Release Validation
+
+After the immutable component images and OCI chart exist, validate the actual
+artifacts rather than rebuilding the runtime from source:
+
+```bash
+make e2e-release RELEASE_VERSION=0.0.1-beta.1
+```
+
+This pulls the versioned Registry, Gateway, and Operator images from Docker
+Hub, installs the matching chart from GHCR, exercises `tools/list` through the
+Gateway, and verifies cleanup after deleting the `MCPServer`.

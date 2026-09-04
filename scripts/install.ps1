@@ -5,13 +5,13 @@ param(
 )
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = "latest"
+    $Version = "v0.0.1-beta.1"
 }
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Join-Path $HOME ".kavrynt\bin"
 }
 if ([string]::IsNullOrWhiteSpace($Repo)) {
-    $Repo = "kavrynt/kavrynt"
+    $Repo = "kavrynt/kavryctl"
 }
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
@@ -20,27 +20,21 @@ $arch = switch ($env:PROCESSOR_ARCHITECTURE) {
     default { throw "unsupported architecture: $env:PROCESSOR_ARCHITECTURE" }
 }
 
-if ($arch -eq "arm64") {
-    throw "windows arm64 binaries are not published yet"
-}
-
-$archive = "kavryctl_windows_${arch}.zip"
-if ($Version -eq "latest") {
-    $baseUrl = "https://github.com/$Repo/releases/latest/download"
-} else {
-    $baseUrl = "https://github.com/$Repo/releases/download/$Version"
-}
+$releaseVersion = $Version.TrimStart("v")
+$archiveDir = "kavryctl_${releaseVersion}_windows_${arch}"
+$archive = "$archiveDir.zip"
+$baseUrl = "https://github.com/$Repo/releases/download/$Version"
 
 $tmpDir = Join-Path ([System.IO.Path]::GetTempPath()) ("kavryctl-" + [System.Guid]::NewGuid())
 New-Item -ItemType Directory -Path $tmpDir | Out-Null
 
 try {
     $archivePath = Join-Path $tmpDir $archive
-    $checksumsPath = Join-Path $tmpDir "checksums.txt"
+    $checksumsPath = Join-Path $tmpDir "SHA256SUMS"
 
     Write-Host "Downloading $archive from $Repo..."
     Invoke-WebRequest -Uri "$baseUrl/$archive" -OutFile $archivePath
-    Invoke-WebRequest -Uri "$baseUrl/checksums.txt" -OutFile $checksumsPath
+    Invoke-WebRequest -Uri "$baseUrl/SHA256SUMS" -OutFile $checksumsPath
 
     $line = Get-Content $checksumsPath | Where-Object { $_ -match "\s$([regex]::Escape($archive))$" } | Select-Object -First 1
     if (-not $line) {
@@ -54,7 +48,7 @@ try {
 
     Expand-Archive -Path $archivePath -DestinationPath $tmpDir -Force
     New-Item -ItemType Directory -Path $InstallDir -Force | Out-Null
-    Copy-Item -Path (Join-Path $tmpDir "kavryctl.exe") -Destination (Join-Path $InstallDir "kavryctl.exe") -Force
+    Copy-Item -Path (Join-Path $tmpDir "$archiveDir\kavryctl.exe") -Destination (Join-Path $InstallDir "kavryctl.exe") -Force
 
     Write-Host "Installed kavryctl to $InstallDir\kavryctl.exe"
     if (($env:PATH -split ";") -notcontains $InstallDir) {

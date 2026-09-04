@@ -1,8 +1,8 @@
 #!/usr/bin/env sh
 set -eu
 
-REPO="${KAVRYNT_REPO:-kavrynt/kavrynt}"
-VERSION="${KAVRYNT_VERSION:-latest}"
+REPO="${KAVRYNT_REPO:-kavrynt/kavryctl}"
+RELEASE_TAG="${KAVRYNT_VERSION:-v0.0.1-beta.1}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.kavrynt/bin}"
 
 log() {
@@ -64,23 +64,20 @@ need_cmd grep
 
 os="$(detect_os)"
 arch="$(detect_arch)"
-archive="kavryctl_${os}_${arch}.tar.gz"
-
-if [ "$VERSION" = "latest" ]; then
-  base_url="https://github.com/${REPO}/releases/latest/download"
-else
-  base_url="https://github.com/${REPO}/releases/download/${VERSION}"
-fi
+version="${RELEASE_TAG#v}"
+archive_dir="kavryctl_${version}_${os}_${arch}"
+archive="${archive_dir}.tar.gz"
+base_url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}"
 
 tmp_dir="$(mktemp -d)"
 trap 'rm -rf "$tmp_dir"' EXIT INT TERM
 
 archive_path="${tmp_dir}/${archive}"
-checksums_path="${tmp_dir}/checksums.txt"
+checksums_path="${tmp_dir}/SHA256SUMS"
 
 log "Downloading ${archive} from ${REPO}..."
 download "${base_url}/${archive}" "$archive_path"
-download "${base_url}/checksums.txt" "$checksums_path"
+download "${base_url}/SHA256SUMS" "$checksums_path"
 
 expected="$(awk -v file="$archive" '$2 == file {print $1}' "$checksums_path")"
 [ -n "$expected" ] || fail "checksum for ${archive} not found"
@@ -89,8 +86,8 @@ actual="$(sha256_file "$archive_path")"
 [ "$actual" = "$expected" ] || fail "checksum mismatch for ${archive}"
 
 mkdir -p "$INSTALL_DIR"
-tar -xzf "$archive_path" -C "$tmp_dir" kavryctl
-install -m 0755 "${tmp_dir}/kavryctl" "${INSTALL_DIR}/kavryctl"
+tar -xzf "$archive_path" -C "$tmp_dir" "${archive_dir}/kavryctl"
+install -m 0755 "${tmp_dir}/${archive_dir}/kavryctl" "${INSTALL_DIR}/kavryctl"
 
 log "Installed kavryctl to ${INSTALL_DIR}/kavryctl"
 case ":$PATH:" in

@@ -55,7 +55,7 @@ jobs:
         with:
           repository: kavrynt/operator
           ref: main
-          path: k8s-operator
+          path: operator
           token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
 
       - name: Set up Helm

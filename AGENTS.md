@@ -10,7 +10,7 @@ Canonical runtime source lives in separate sibling repositories:
 - `../kavryctl`: developer and platform CLI.
 - `../registry`: MCP server metadata API and source of truth.
 - `../gateway`: MCP runtime routing and proxying.
-- `../k8s-operator`: Kubernetes `MCPServer` reconciliation.
+- `../operator`: Kubernetes `MCPServer` reconciliation.
 
 This repository owns only cross-component concerns:
 
