@@ -19,10 +19,13 @@ Install from the published OCI chart after a tagged release:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 0.0.1-beta \
+  --version 0.0.1-beta.1 \
   --namespace kavrynt-system \
   --create-namespace
 ```
+
+Authenticate with `helm registry login ghcr.io` first when the chart package
+is private.
 
 Check the control plane:
 

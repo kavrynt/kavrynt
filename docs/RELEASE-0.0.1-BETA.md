@@ -1,4 +1,4 @@
-# 0.0.1 Beta Release Runbook
+# 0.0.1 Beta.1 Release Runbook
 
 Kavrynt runtime releases are built from the canonical private repositories.
 The integration repository publishes only the umbrella Helm chart.
@@ -38,33 +38,54 @@ before merge, prevent force pushes, and require pull requests for `main`.
 
 ## Release Order
 
-1. Merge each tested runtime feature branch into `develop`.
-2. Confirm `Secure QA` passes on every `develop` branch.
-3. Merge `develop` into `main` and confirm `Secure QA` passes again.
-4. Create the annotated tag `v0.0.1-beta` on each canonical runtime `main`.
-5. Wait for all three image workflows and the `kavryctl` binary workflow.
-6. Verify both registries expose AMD64 and ARM64 manifests.
-7. Create `v0.0.1-beta` on the integration repository `main` to publish the
-   umbrella chart from the exact component tags.
-8. Run the Kind workflow against the released version before announcing it.
+1. Run `make qa` and `make e2e-kind` from the integration repository against
+   the four canonical sibling repositories.
+2. Merge each tested runtime feature branch into `develop`.
+3. Confirm `Secure QA` passes on every `develop` branch.
+4. Merge `develop` into `main` and confirm `Secure QA` passes again.
+5. Create the annotated tag `v0.0.1-beta.1` on each canonical runtime `main`.
+6. Wait for all three image workflows and the `kavryctl` binary workflow.
+7. Verify both registries expose AMD64 and ARM64 manifests and that Cosign
+   verification succeeds.
+8. Create `v0.0.1-beta.1` on the integration repository `main`. Its release
+   workflow verifies the component images, publishes the umbrella chart, and
+   runs the published-artifact Kind test.
+9. Confirm the release workflow ends with the following message before
+   announcing the beta:
+
+   ```text
+   published release 0.0.1-beta.1 end-to-end workflow passed
+   ```
 
 ## Verification
 
 ```bash
-docker buildx imagetools inspect docker.io/kavrynt/registry:0.0.1-beta
-docker buildx imagetools inspect docker.io/kavrynt/gateway:0.0.1-beta
-docker buildx imagetools inspect docker.io/kavrynt/operator:0.0.1-beta
+docker buildx imagetools inspect docker.io/kavrynt/registry:0.0.1-beta.1
+docker buildx imagetools inspect docker.io/kavrynt/gateway:0.0.1-beta.1
+docker buildx imagetools inspect docker.io/kavrynt/operator:0.0.1-beta.1
 
 cosign verify \
-  --certificate-identity-regexp='https://github.com/kavrynt/.+/.github/workflows/release.yml@refs/tags/v0.0.1-beta' \
+  --certificate-identity-regexp='https://github.com/kavrynt/.+/.github/workflows/release.yml@refs/tags/v0.0.1-beta.1' \
   --certificate-oidc-issuer='https://token.actions.githubusercontent.com' \
-  docker.io/kavrynt/registry:0.0.1-beta
+  docker.io/kavrynt/registry:0.0.1-beta.1
 ```
 
-Download `kavryctl` from the private GitHub Release and verify `SHA256SUMS`
-with its `.sig` and `.pem` files before installation.
+Download `kavryctl` from the private GitHub Release. Assets follow the naming
+contract `kavryctl_<version>_<os>_<arch>.<archive>`. Verify `SHA256SUMS` with
+its `SHA256SUMS.sigstore.json` Sigstore bundle before installation.
+
+After publication, the same released-artifact validation can be repeated
+locally:
+
+```bash
+make e2e-release RELEASE_VERSION=0.0.1-beta.1
+```
+
+This pulls `registry`, `gateway`, and `operator` from Docker Hub and installs
+the matching OCI chart from GHCR. It does not build runtime components from
+source.
 
 ## Failure Rule
 
-Do not move or reuse `v0.0.1-beta`. If any artifact is incorrect, fix the
-source and publish the next prerelease tag, for example `v0.0.1-beta.1`.
+Do not move or reuse `v0.0.1-beta` or `v0.0.1-beta.1`. If any beta.1 artifact
+is incorrect, fix the source and publish `v0.0.1-beta.2`.

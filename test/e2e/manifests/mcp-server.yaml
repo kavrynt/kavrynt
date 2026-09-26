@@ -73,6 +73,6 @@ metadata:
   name: example-mcp-server
   namespace: kavrynt-e2e
 spec:
-  version: 0.0.1-beta
+  version: 0.0.1-beta.1
   transport: http
   endpoint: http://example-mcp-server.kavrynt-e2e.svc.cluster.local:8080
