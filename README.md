@@ -178,7 +178,7 @@ routing; it is not a full MCP implementation.
 ```bash
 kubectl create deployment example-mcp-server \
   --image=hashicorp/http-echo:1.0 \
-  -- -listen=:8080 -text='{"mock":true,"service":"example-mcp-server"}'
+  -- /http-echo -listen=:8080 -text='{"mock":true,"service":"example-mcp-server"}'
 
 kubectl expose deployment example-mcp-server \
   --port=8080 \
