@@ -1,0 +1,14 @@
+.git
+.github
+.cache
+.kavrynt
+bin
+dist
+tmp
+temp
+*.log
+.DS_Store
+README.md
+AGENTS.md
+docs
+charts
