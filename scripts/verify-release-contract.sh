@@ -2,7 +2,6 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME_ROOT="${RUNTIME_ROOT:-${ROOT_DIR}/..}"
 
 fail() {
   printf 'error: %s\n' "$*" >&2
@@ -16,7 +15,7 @@ chart_field() {
 }
 
 UMBRELLA_CHART="${ROOT_DIR}/charts/kavrynt/Chart.yaml"
-KAVRYCTL_RELEASE_WORKFLOW="${RUNTIME_ROOT}/kavryctl/.github/workflows/release.yml"
+KAVRYCTL_RELEASE_WORKFLOW="${ROOT_DIR}/.github/workflows/release.yml"
 VERSION="$(chart_field "${UMBRELLA_CHART}" version)"
 APP_VERSION="$(chart_field "${UMBRELLA_CHART}" appVersion)"
 
@@ -25,10 +24,10 @@ APP_VERSION="$(chart_field "${UMBRELLA_CHART}" appVersion)"
 
 for component in registry gateway operator; do
   case "${component}" in
-    operator) chart="${RUNTIME_ROOT}/operator/charts/k8s-operator/Chart.yaml" ;;
-    *) chart="${RUNTIME_ROOT}/${component}/charts/${component}/Chart.yaml" ;;
+    operator) chart="${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/Chart.yaml" ;;
+    *) chart="${ROOT_DIR}/charts/kavrynt/charts/${component}/Chart.yaml" ;;
   esac
-  [ -f "${chart}" ] || fail "canonical ${component} chart not found: ${chart}"
+  [ -f "${chart}" ] || fail "${component} subchart not found: ${chart}"
   [ "$(chart_field "${chart}" version)" = "${VERSION}" ] ||
     fail "${component} chart version does not match ${VERSION}"
   [ "$(chart_field "${chart}" appVersion)" = "${VERSION}" ] ||
@@ -43,17 +42,17 @@ for component in registry gateway operator; do
     fail "umbrella values do not use kavrynt/${component}"
 done
 
-grep --quiet --fixed-strings 'kavrynt/kavryctl' "${ROOT_DIR}/scripts/install.sh" ||
-  fail "Unix installer does not target the canonical kavryctl release"
-grep --quiet --fixed-strings 'kavrynt/kavryctl' "${ROOT_DIR}/scripts/install.ps1" ||
-  fail "PowerShell installer does not target the canonical kavryctl release"
+grep --quiet --fixed-strings 'kavrynt/kavrynt' "${ROOT_DIR}/scripts/install.sh" ||
+  fail "Unix installer does not target the kavrynt release repository"
+grep --quiet --fixed-strings 'kavrynt/kavrynt' "${ROOT_DIR}/scripts/install.ps1" ||
+  fail "PowerShell installer does not target the kavrynt release repository"
 grep --quiet --fixed-strings "v${VERSION}" "${ROOT_DIR}/scripts/install.sh" ||
   fail "Unix installer version does not match ${VERSION}"
 grep --quiet --fixed-strings "v${VERSION}" "${ROOT_DIR}/scripts/install.ps1" ||
   fail "PowerShell installer version does not match ${VERSION}"
 
 [ -f "${KAVRYCTL_RELEASE_WORKFLOW}" ] ||
-  fail "canonical kavryctl release workflow not found"
+  fail "release workflow not found"
 grep --quiet --fixed-strings 'name="kavryctl_${version}_${GOOS}_${GOARCH}"' "${KAVRYCTL_RELEASE_WORKFLOW}" ||
   fail "kavryctl release archive naming contract changed"
 grep --quiet --fixed-strings 'archive_dir="kavryctl_${version}_${os}_${arch}"' "${ROOT_DIR}/scripts/install.sh" ||

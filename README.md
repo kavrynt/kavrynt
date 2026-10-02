@@ -3,11 +3,10 @@
 [![QA](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml/badge.svg)](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml)
 
 > [!IMPORTANT]
-> This is the private integration and coordinated release repository for the
-> commercial Kavrynt MCP Control Plane. Canonical runtime source lives in the
-> separate private `kavryctl`, `registry`, `gateway`, and `operator`
-> repositories. The component source directories retained here are frozen
-> legacy snapshots and are not release sources.
+> This is the private source and release repository for the commercial Kavrynt
+> MCP Control Plane runtime: `kavryctl`, Gateway, Operator, Registry, the
+> `MCPServer` CRD, and the Helm chart. See
+> [ADR-0001](docs/ADR-0001-Runtime-Monorepo.md).
 
 Kavrynt is a Kubernetes-native control plane for registering, discovering, and
 routing Model Context Protocol (MCP) servers.
@@ -84,10 +83,9 @@ registers and routes to endpoints that already exist.
 | `gateway` | Synchronize Registry state and proxy HTTP MCP requests |
 | `operator` | Reconcile Kubernetes `MCPServer` resources into Registry |
 
-Each component is owned by an independent private repository. This integration
-repository consumes their Helm charts and builds their source only for
-coordinated local validation. The retained root `go.work` and component
-directories belong to the frozen legacy snapshot.
+All components live in this repository, build from one Go module, and are
+released together under one version. The Registry is scheduled for removal in
+`0.0.2-beta.1` ([ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md)).
 
 The current MVP supports:
 
@@ -265,18 +263,18 @@ The same CLI also validates and manages MCP server registrations. Install it
 from source when developing locally:
 
 ```bash
-go install ../kavryctl
+go install ./cmd/kavryctl
 kavryctl version
 ```
 
 Validate and register a manifest against the in-cluster Registry port-forward:
 
 ```bash
-kavryctl validate ../kavryctl/examples/mcp-server.json
+kavryctl validate examples/kavryctl/mcp-server.json
 
 kavryctl register \
   --registry http://localhost:18081 \
-  ../kavryctl/examples/mcp-server.json
+  examples/kavryctl/mcp-server.json
 
 kavryctl list --registry http://localhost:18081
 kavryctl inspect --registry http://localhost:18081 example-mcp-server
@@ -286,8 +284,8 @@ kavryctl unregister --registry http://localhost:18081 example-mcp-server
 For local-only workflows, omit `--registry`. State is stored in
 `.kavrynt/registry.json` by default.
 
-See the canonical `kavryctl` repository documentation for all available
-commands.
+See [docs/components/kavryctl](docs/components/kavryctl/README.md) for all
+available commands.
 
 ## Configuration
 
@@ -346,10 +344,10 @@ kubectl logs --namespace kavrynt-system deployment/kavrynt-gateway
 
 Component runbooks:
 
-- [kavryctl runbook](cmd/kavryctl/docs/RUNBOOK.md)
-- [Registry runbook](services/registry/docs/RUNBOOK.md)
-- [Gateway runbook](services/gateway/docs/RUNBOOK.md)
-- [Operator runbook](operator/docs/RUNBOOK.md)
+- [kavryctl runbook](docs/components/kavryctl/RUNBOOK.md)
+- [Registry runbook](docs/components/registry/RUNBOOK.md)
+- [Gateway runbook](docs/components/gateway/RUNBOOK.md)
+- [Operator runbook](docs/components/operator/RUNBOOK.md)
 
 ### Uninstall
 
@@ -388,9 +386,9 @@ access, and do not expose this MVP directly to untrusted networks.
 
 Prerequisites:
 
-- Go 1.23+
+- Go 1.26+
 - Docker
-- Helm 3
+- Helm 3.x or 4.x
 - `kubectl`
 - Kind for disposable Kubernetes testing
 
@@ -405,20 +403,28 @@ Useful targets:
 ```bash
 make test
 make vet
+make lint
+make sast
+make vulncheck
 make fmt-check
+make build
 make docker-build
 make helm-lint
 make helm-template
 make e2e-kind
 ```
 
-The canonical runtime repositories are intentionally independently buildable:
+Repository layout:
 
 ```text
-../kavryctl
-../registry
-../gateway
-../operator
+api/v1alpha1/        MCPServer CRD Go types
+cmd/<component>/     entry points: kavryctl, gateway, operator, registry
+internal/<component>/ component packages
+build/Dockerfile     all runtime images (--target gateway|operator|registry)
+charts/kavrynt/      the Helm chart, with vendored component subcharts
+config/              generated CRD and RBAC manifests
+test/e2e/            Kind end-to-end tests
+docs/                ADRs, runbooks, component docs
 ```
 
 Repository-specific engineering and contribution rules are documented in
@@ -429,21 +435,20 @@ The coordinated beta publication process is documented in
 
 ## Repository model
 
-This private repository owns the umbrella Helm chart, coordinated release
-versions, executable integration tests, and trial runbooks. Runtime code,
-component charts, QA, and component releases are owned by the separate private
-`kavryctl`, `registry`, `gateway`, and `operator` repositories.
-`kavrynt-cloud` owns the commercial hosted control plane.
-
-The duplicated component directories in this repository are frozen migration
-history. They are not the source for runtime releases.
+This private repository owns all customer runtime code, the Helm chart, QA,
+releases, integration tests, and trial runbooks. The former `kavryctl`,
+`registry`, `gateway`, and `operator` repositories are archived; their history
+is imported here. `kavrynt-cloud` owns the commercial hosted control plane, and
+`kavrynt-platform` owns Azure infrastructure.
 
 ## Roadmap
 
 The next product milestones are:
 
-1. durable Registry storage and upgrade-safe migrations;
-2. Registry and Gateway authentication;
+1. remove the in-cluster Registry in favour of the `MCPServer` API
+   ([ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md));
+2. Gateway authentication and no token passthrough
+   ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 3. MCP Streamable HTTP and protocol-aware routing;
 4. policy decisions and tool-level authorization;
 5. audit and usage events;
@@ -453,7 +458,7 @@ The next product milestones are:
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this
-runtime integration repository.
+runtime repository.
 
 ## Project status
 

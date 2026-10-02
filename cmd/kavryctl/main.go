@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/kavrynt/kavryctl/internal/cli"
+	"github.com/kavrynt/kavrynt/internal/kavryctl/cli"
 )
 
 func main() {

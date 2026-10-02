@@ -1,10 +1,11 @@
-name: Canonical Runtime QA
+name: Secure QA
 
 on:
   pull_request:
     branches: [develop, main]
   push:
     branches: [develop, main, "feature/**"]
+  workflow_dispatch:
 
 permissions:
   contents: read
@@ -13,57 +14,192 @@ concurrency:
   group: qa-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+env:
+  STATICCHECK_VERSION: v0.8.0
+  GOSEC_VERSION: v2.28.0
+  GOVULNCHECK_VERSION: v1.7.0
+
 jobs:
-  qa:
-    name: Canonical Repositories and Umbrella Chart
+  go:
+    name: Go QA and SAST
     runs-on: ubuntu-latest
     steps:
-      - name: Checkout integration repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          path: kavrynt
-
-      - name: Checkout kavryctl
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/kavryctl
-          ref: develop
-          path: kavryctl
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Checkout Registry
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/registry
-          ref: develop
-          path: registry
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Checkout Gateway
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/gateway
-          ref: develop
-          path: gateway
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Checkout Operator
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/operator
-          ref: develop
-          path: operator
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Go
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
-          cache: false
+          cache: true
+
+      - name: Download dependencies
+        run: go mod download
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Unit tests with race detector
+        run: go test -race -coverprofile=coverage.out ./...
+
+      - name: Vet
+        run: make vet
+
+      - name: Staticcheck
+        run: make lint STATICCHECK_VERSION=${STATICCHECK_VERSION}
+
+      - name: Gosec
+        run: make sast GOSEC_VERSION=${GOSEC_VERSION}
+
+      - name: Govulncheck
+        run: make vulncheck GOVULNCHECK_VERSION=${GOVULNCHECK_VERSION}
+
+      - name: Build binaries
+        run: make build
+
+      - name: Binary smoke tests
+        run: |
+          ./bin/kavryctl version
+          ./bin/gateway --help
+          ./bin/operator --help
+
+      - name: Registry API smoke test
+        run: |
+          ./bin/registry --addr :8080 --data "${{ runner.temp }}/kavrynt-registry-ci.json" &
+          pid=$!
+          trap 'kill $pid' EXIT
+          for i in {1..20}; do
+            curl -fsS http://localhost:8080/readyz && break
+            sleep 0.5
+          done
+          curl -fsS -X POST http://localhost:8080/v1/servers \
+            -H 'Content-Type: application/json' \
+            --data-binary @examples/registry/mcp-server.json
+          curl -fsS http://localhost:8080/v1/servers/example-mcp-server
+
+  source-scan:
+    name: Trivy Source Scan
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Scan source and configuration
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: fs
+          scan-ref: .
+          scanners: vuln,secret,misconfig
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+
+  helm:
+    name: Helm and Release Contract
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
 
       - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
 
-      - name: Run canonical QA
-        working-directory: kavrynt
-        run: make qa
+      - name: Verify release contract
+        run: make release-contract
+
+      - name: Lint chart
+        run: make helm-lint
+
+      - name: Render chart
+        run: make helm-template
+
+  image:
+    name: Image ${{ matrix.image }} and Trivy
+    runs-on: ubuntu-latest
+    needs: [go, source-scan, helm]
+    strategy:
+      fail-fast: false
+      matrix:
+        image: [gateway, operator, registry]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build OCI image archive
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: build/Dockerfile
+          target: ${{ matrix.image }}
+          platforms: linux/amd64,linux/arm64
+          push: false
+          outputs: type=oci,dest=${{ runner.temp }}/image.tar
+          build-args: |
+            VERSION=0.0.0-ci
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=1970-01-01T00:00:00Z
+          tags: kavrynt/${{ matrix.image }}:ci
+          provenance: false
+          sbom: false
+
+      - name: Extract OCI layout
+        run: |
+          mkdir -p "${{ runner.temp }}/image"
+          tar -xf "${{ runner.temp }}/image.tar" -C "${{ runner.temp }}/image"
+
+      - name: Scan AMD64 image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/amd64
+        with:
+          scan-type: image
+          input: ${{ runner.temp }}/image
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+
+      - name: Scan ARM64 image
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        env:
+          TRIVY_PLATFORM: linux/arm64
+        with:
+          scan-type: image
+          input: ${{ runner.temp }}/image
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+
+  e2e:
+    name: Kind End-to-End
+    runs-on: ubuntu-latest
+    needs: [go, helm]
+    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    timeout-minutes: 25
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install Kind
+        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
+        with:
+          install_only: true
+
+      - name: Run end-to-end workflow
+        run: make e2e-kind
