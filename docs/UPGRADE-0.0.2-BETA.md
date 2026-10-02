@@ -21,6 +21,7 @@ resources keep working and keep their Gateway routes.
 | `kavryctl` | local file or Registry URL (`--home`, `--registry`) | kubeconfig (`--context`, `-n`, `-A`); `init` removed |
 | Chart values | `registry.*`, `*.config.registryURL`, `gateway.config.syncInterval`, `operator.config.syncRetryPeriod` | removed; new `gateway.config.watchNamespaces`, `gateway.rbac.create` |
 | Endpoint validation | none at admission | absolute `http`/`https` URL without credentials |
+| Credential headers | forwarded to MCP servers | `Authorization`, `Cookie`, `Proxy-Authorization` never forwarded; upstream `Set-Cookie` dropped |
 
 ## Prerequisites
 
@@ -82,6 +83,7 @@ curl -fsS http://127.0.0.1:18080/v1/routes
 | `Ready=False`, reason `InvalidSpec` | Spec failed validation | `kubectl describe mcpserver <name>` shows the message; fix the spec |
 | `MCPServer` delete hangs | Old operator still running or CRD not upgraded | Confirm the operator image is `0.0.2-beta.1`; it removes the legacy finalizer on reconcile |
 | Gateway `/readyz` returns 503 | `MCPServer` cache not synced | Check `kubectl -n kavrynt-system logs deploy/kavrynt-gateway` for RBAC errors; `gateway.rbac.create` must be `true` unless you supply RBAC |
+| MCP server stops receiving a caller token | No token passthrough (ADR-0003) | Give the MCP server its own credentials; per-upstream token exchange is planned |
 | `kavryctl: unknown command "init"` | Local Registry mode removed | Use `kavryctl register -n <ns> <manifest>` against a cluster |
 
 ## Rollback

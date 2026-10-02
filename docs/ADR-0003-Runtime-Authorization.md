@@ -2,8 +2,8 @@
 
 ## Status
 
-Accepted (2026-10-02). Design only; nothing in this ADR is implemented in
-`0.0.1-beta.1`.
+Accepted (2026-10-02). Implemented so far: no token passthrough (header
+stripping) for `0.0.2-beta.1`. Everything else in this ADR is design only.
 
 Plane 4 of `kavrynt-cloud/docs/ADR-0006-Identity-Planes.md`. Threats are
 tracked in `kavrynt-cloud/docs/THREAT-0001-System-Threat-Model.md`.
@@ -98,8 +98,8 @@ strong as this enforcement.
 - `0.0.2-beta.1` removes the registry (ADR-0002); authentication and policy
   ship in a later beta. Customer documentation keeps stating that the gateway
   is unauthenticated until then.
-- Header stripping (no passthrough) is a small, separable fix and should land
-  before authentication.
+- Header stripping (no passthrough) landed first, for `0.0.2-beta.1`, and is
+  covered by unit and Kind end-to-end tests.
 - The gateway gains dependencies on a JWT/JWKS library and OPA; both must pass
   govulncheck and Trivy gates.
 - Version `1.0.0-beta.1` is reserved for when authentication, policy, and audit

@@ -208,6 +208,17 @@ MCP_RESPONSE="$(curl --fail --silent --show-error \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
 
+log "verifying the Gateway does not forward caller credentials"
+FORWARDED="$(curl --fail --silent --show-error \
+  --header 'Authorization: Bearer caller-token' \
+  --header 'Cookie: session=caller' \
+  --header 'X-Kavrynt-Probe: kept' \
+  "http://127.0.0.1:18080/mcp/${SERVER_ID}/debug/headers")"
+printf '%s' "${FORWARDED}" | jq --exit-status '
+  (has("Authorization") | not) and (has("Cookie") | not) and
+  (.["X-Kavrynt-Probe"] == ["kept"])' >/dev/null ||
+  fail "Gateway forwarded caller credentials upstream: ${FORWARDED}"
+
 log "registering a second route with kavryctl"
 cat >"${TEMP_DIR}/kavryctl-server.yaml" <<MANIFEST
 apiVersion: kavrynt.io/v1alpha1

@@ -12,9 +12,13 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   appended to the endpoint URL.
 - Endpoints are restricted to absolute `http`/`https` URLs without credentials
   or fragments.
-- Not implemented: authentication, policy, audit, header stripping. The
-  Gateway currently forwards client headers, including `Authorization`,
-  upstream. See ADR-0003.
+- No token passthrough: `Authorization`, `Cookie`, and `Proxy-Authorization`
+  are always removed before forwarding, along with hop-by-hop headers and
+  headers named in `Connection`. Upstream `Set-Cookie` is dropped because
+  every route shares the Gateway origin. Extra headers can be stripped with
+  `--strip-request-headers`.
+- Not implemented: authentication, policy, audit, token exchange. See
+  ADR-0003.
 
 ## Endpoints
 
@@ -23,7 +27,7 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 | `GET /healthz` | Liveness |
 | `GET /readyz` | `200` after the `MCPServer` cache has synced once |
 | `GET /version` | Build metadata |
-| `GET /metrics` | Request, proxy, and route-sync counters (Prometheus text) |
+| `GET /metrics` | Request, proxy, stripped-credential, and route-sync counters (Prometheus text) |
 | `GET /v1/routes` | Current route table |
 | `* /mcp/<route>/...` | Proxied MCP traffic |
 
@@ -33,6 +37,7 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 | --- | --- | --- |
 | `--addr` | `:8080` | Listen address |
 | `--watch-namespaces` | all | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
+| `--strip-request-headers` | none | Extra headers never forwarded (`KAVRYNT_STRIP_REQUEST_HEADERS`) |
 | `--request-timeout` | `30s` | Upstream request timeout |
 | `--shutdown-timeout` | `10s` | Graceful shutdown timeout |
 

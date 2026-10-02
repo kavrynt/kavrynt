@@ -22,6 +22,7 @@ import (
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	watchNamespaces := flag.String("watch-namespaces", getenv("KAVRYNT_WATCH_NAMESPACES", ""), "Comma-separated namespaces to watch for MCPServer resources (empty watches all)")
+	stripHeaders := flag.String("strip-request-headers", getenv("KAVRYNT_STRIP_REQUEST_HEADERS", ""), "Comma-separated extra request headers never forwarded upstream (Authorization, Cookie, and Proxy-Authorization are always removed)")
 	requestTimeout := flag.Duration("request-timeout", 30*time.Second, "Outbound request timeout")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	flag.Usage = func() {
@@ -35,7 +36,7 @@ func main() {
 		slog.Error("load Kubernetes configuration", "error", err)
 		os.Exit(1)
 	}
-	namespaces := splitNamespaces(*watchNamespaces)
+	namespaces := splitList(*watchNamespaces)
 	routeCache, err := kube.NewCache(cfg, namespaces)
 	if err != nil {
 		slog.Error("create MCPServer cache", "error", err)
@@ -48,6 +49,7 @@ func main() {
 		Commit:    build.Commit,
 		BuildDate: build.BuildDate,
 	})
+	handler.StripRequestHeaders(splitList(*stripHeaders)...)
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -90,14 +92,14 @@ func main() {
 	os.Exit(exitCode)
 }
 
-func splitNamespaces(value string) []string {
-	var namespaces []string
-	for _, namespace := range strings.Split(value, ",") {
-		if namespace = strings.TrimSpace(namespace); namespace != "" {
-			namespaces = append(namespaces, namespace)
+func splitList(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
 		}
 	}
-	return namespaces
+	return items
 }
 
 func getenv(key, fallback string) string {

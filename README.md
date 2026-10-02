@@ -339,8 +339,9 @@ capabilities, read-only root filesystems, and limited Kubernetes RBAC. However,
 the current release is not production-security complete:
 
 - Gateway does not authenticate clients.
-- Gateway forwards client request headers, including `Authorization`, to the
-  upstream MCP server (planned fix: ADR-0003).
+- Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
+  to MCP servers, and drops upstream `Set-Cookie`. It does not yet exchange
+  tokens for upstream servers (ADR-0003).
 - Gateway does not yet enforce actor, tool, or policy authorization.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
   else.
