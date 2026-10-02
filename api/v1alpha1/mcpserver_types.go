@@ -8,7 +8,22 @@ import (
 const (
 	MCPServerKind = "MCPServer"
 
-	ConditionRegistered = "Registered"
+	// ConditionAccepted reports whether the spec passed validation.
+	ConditionAccepted = "Accepted"
+	// ConditionReady reports whether the Gateway can route to the server.
+	ConditionReady = "Ready"
+
+	ReasonValid                = "Valid"
+	ReasonInvalidSpec          = "InvalidSpec"
+	ReasonRoutable             = "Routable"
+	ReasonUnsupportedTransport = "UnsupportedTransport"
+
+	// DescriptionAnnotation holds an optional human-readable description.
+	DescriptionAnnotation = "kavrynt.io/description"
+
+	// LegacyRegistryFinalizer was added by operators up to 0.0.1-beta.1 to
+	// clean up the in-cluster Registry. It is removed on reconcile.
+	LegacyRegistryFinalizer = "mcpservers.kavrynt.io/registry-sync"
 )
 
 type MCPServerSpec struct {
@@ -22,8 +37,6 @@ type MCPServerSpec struct {
 
 type MCPServerStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
-	RegistrySyncedAt   *metav1.Time       `json:"registrySyncedAt,omitempty"`
-	RegistryError      string             `json:"registryError,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
 }
 
@@ -58,9 +71,6 @@ func (in *MCPServer) DeepCopyObject() runtime.Object {
 			out.Spec.Environment[key] = value
 		}
 	}
-	if in.Status.RegistrySyncedAt != nil {
-		out.Status.RegistrySyncedAt = in.Status.RegistrySyncedAt.DeepCopy()
-	}
 	if in.Status.Conditions != nil {
 		out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	}
@@ -81,4 +91,12 @@ func (in *MCPServerList) DeepCopyObject() runtime.Object {
 		}
 	}
 	return out
+}
+
+// RouteName is the stable Gateway route identifier: <namespace>.<name>.
+func (in *MCPServer) RouteName() string {
+	if in.Namespace == "" {
+		return in.Name
+	}
+	return in.Namespace + "." + in.Name
 }

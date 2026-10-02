@@ -1,109 +1,83 @@
+// Package manifest loads MCPServer resources from YAML or JSON files.
 package manifest
 
 import (
-	"encoding/json"
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
-	"regexp"
 	"strings"
+
+	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"sigs.k8s.io/yaml"
 )
 
-const (
-	APIVersion = "kavrynt.io/v1alpha1"
-	Kind       = "MCPServer"
-)
-
-var namePattern = regexp.MustCompile(`^[a-z0-9](?:[-a-z0-9]*[a-z0-9])?(?:\.[a-z0-9](?:[-a-z0-9]*[a-z0-9])?)*$`)
-
-type Manifest struct {
-	APIVersion string   `json:"apiVersion"`
-	Kind       string   `json:"kind"`
-	Metadata   Metadata `json:"metadata"`
-	Spec       Spec     `json:"spec"`
+// document mirrors an MCPServer and accepts the legacy metadata.description
+// field used by manifests written for the removed Registry.
+type document struct {
+	APIVersion string                        `json:"apiVersion"`
+	Kind       string                        `json:"kind"`
+	Metadata   metadata                      `json:"metadata"`
+	Spec       kavryntv1alpha1.MCPServerSpec `json:"spec"`
 }
 
-type Metadata struct {
+type metadata struct {
 	Name        string            `json:"name"`
+	Namespace   string            `json:"namespace,omitempty"`
 	Description string            `json:"description,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
+	Annotations map[string]string `json:"annotations,omitempty"`
 }
 
-type Spec struct {
-	Version     string            `json:"version"`
-	Transport   string            `json:"transport"`
-	Command     string            `json:"command,omitempty"`
-	Args        []string          `json:"args,omitempty"`
-	Endpoint    string            `json:"endpoint,omitempty"`
-	Environment map[string]string `json:"environment,omitempty"`
-}
-
-func Load(path string) (Manifest, error) {
+// Load reads, parses, and validates one MCPServer manifest.
+func Load(path string) (*kavryntv1alpha1.MCPServer, error) {
 	// #nosec G304 -- reading the explicit manifest path is the command's purpose.
 	data, err := os.ReadFile(path)
 	if err != nil {
-		return Manifest{}, fmt.Errorf("read manifest: %w", err)
+		return nil, fmt.Errorf("read manifest: %w", err)
 	}
-
-	var m Manifest
-	if err := json.Unmarshal(data, &m); err != nil {
-		return Manifest{}, fmt.Errorf("parse manifest JSON: %w", err)
-	}
-
-	if err := Validate(m); err != nil {
-		return Manifest{}, err
-	}
-
-	return m, nil
+	return Parse(data)
 }
 
-func Validate(m Manifest) error {
+// Parse decodes and validates one MCPServer manifest in YAML or JSON.
+func Parse(data []byte) (*kavryntv1alpha1.MCPServer, error) {
+	var doc document
+	if err := yaml.UnmarshalStrict(data, &doc); err != nil {
+		return nil, fmt.Errorf("parse manifest: %w", err)
+	}
+
 	var problems []string
-
-	if strings.TrimSpace(m.APIVersion) == "" {
-		problems = append(problems, "apiVersion is required")
-	} else if m.APIVersion != APIVersion {
-		problems = append(problems, fmt.Sprintf("apiVersion must be %q", APIVersion))
+	if doc.APIVersion != kavryntv1alpha1.GroupVersion.String() {
+		problems = append(problems, fmt.Sprintf("apiVersion must be %q", kavryntv1alpha1.GroupVersion.String()))
+	}
+	if doc.Kind != kavryntv1alpha1.MCPServerKind {
+		problems = append(problems, fmt.Sprintf("kind must be %q", kavryntv1alpha1.MCPServerKind))
 	}
 
-	if strings.TrimSpace(m.Kind) == "" {
-		problems = append(problems, "kind is required")
-	} else if m.Kind != Kind {
-		problems = append(problems, fmt.Sprintf("kind must be %q", Kind))
+	server := &kavryntv1alpha1.MCPServer{
+		TypeMeta: metav1.TypeMeta{APIVersion: doc.APIVersion, Kind: doc.Kind},
+		ObjectMeta: metav1.ObjectMeta{
+			Name:        doc.Metadata.Name,
+			Namespace:   doc.Metadata.Namespace,
+			Labels:      doc.Metadata.Labels,
+			Annotations: doc.Metadata.Annotations,
+		},
+		Spec: doc.Spec,
 	}
-
-	name := strings.TrimSpace(m.Metadata.Name)
-	if name == "" {
-		problems = append(problems, "metadata.name is required")
-	} else if !namePattern.MatchString(name) {
-		problems = append(problems, "metadata.name must use lowercase DNS-subdomain syntax")
-	}
-
-	if strings.TrimSpace(m.Spec.Version) == "" {
-		problems = append(problems, "spec.version is required")
-	}
-
-	switch strings.TrimSpace(m.Spec.Transport) {
-	case "":
-		problems = append(problems, "spec.transport is required")
-	case "stdio":
-		if strings.TrimSpace(m.Spec.Command) == "" {
-			problems = append(problems, "spec.command is required when spec.transport is stdio")
+	if description := strings.TrimSpace(doc.Metadata.Description); description != "" {
+		if server.Annotations == nil {
+			server.Annotations = map[string]string{}
 		}
-	case "http":
-		if strings.TrimSpace(m.Spec.Endpoint) == "" {
-			problems = append(problems, "spec.endpoint is required when spec.transport is http")
-		} else if _, err := url.ParseRequestURI(m.Spec.Endpoint); err != nil {
-			problems = append(problems, "spec.endpoint must be a valid URI")
+		if _, exists := server.Annotations[kavryntv1alpha1.DescriptionAnnotation]; !exists {
+			server.Annotations[kavryntv1alpha1.DescriptionAnnotation] = description
 		}
-	default:
-		problems = append(problems, "spec.transport must be one of: stdio, http")
 	}
 
+	if err := server.Validate(); err != nil {
+		problems = append(problems, err.Error())
+	}
 	if len(problems) > 0 {
-		return errors.New("invalid manifest: " + strings.Join(problems, "; "))
+		return nil, errors.New("invalid manifest: " + strings.Join(problems, "; "))
 	}
-
-	return nil
+	return server, nil
 }

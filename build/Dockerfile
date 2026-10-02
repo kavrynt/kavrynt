@@ -1,7 +1,7 @@
 # syntax=docker/dockerfile:1.7
 #
 # Builds every Kavrynt runtime image from the repository root.
-# Select the image with --target: gateway, operator, or registry.
+# Select the image with --target: gateway or operator.
 
 ARG GO_IMAGE=golang:1.26-alpine@sha256:28d89ee9cc0ff9fec75c82ca201e6bf7fdf9a679d4b7b24dfa04f2bb766bb468
 ARG DISTROLESS_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
@@ -26,14 +26,13 @@ ARG BUILD_DATE=unknown
 RUN --mount=type=cache,target=/root/.cache/go-build \
     --mount=type=cache,target=/go/pkg/mod \
     set -eu; \
-    for component in gateway operator registry; do \
+    for component in gateway operator; do \
       pkg="github.com/kavrynt/kavrynt/internal/${component}/build"; \
       CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} go build \
         -trimpath \
         -ldflags="-s -w -X ${pkg}.Version=${VERSION} -X ${pkg}.Commit=${COMMIT} -X ${pkg}.BuildDate=${BUILD_DATE}" \
         -o "/out/${component}" "./cmd/${component}"; \
-    done; \
-    mkdir -p /out/data
+    done
 
 FROM ${DISTROLESS_IMAGE} AS runtime-base
 
@@ -66,15 +65,3 @@ LABEL org.opencontainers.image.title="k8s-operator" \
 
 COPY --from=build /out/operator /usr/local/bin/manager
 ENTRYPOINT ["/usr/local/bin/manager"]
-
-FROM runtime-base AS registry
-
-LABEL org.opencontainers.image.title="registry" \
-      org.opencontainers.image.description="Kavrynt Registry service"
-
-COPY --from=build /out/registry /usr/local/bin/registry
-COPY --from=build --chown=nonroot:nonroot /out/data /data
-WORKDIR /data
-EXPOSE 8080
-ENTRYPOINT ["/usr/local/bin/registry"]
-CMD ["--addr", ":8080", "--data", "/data/registry.json"]

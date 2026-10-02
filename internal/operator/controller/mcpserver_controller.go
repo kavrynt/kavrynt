@@ -5,25 +5,25 @@ import (
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
-	"github.com/kavrynt/kavrynt/internal/operator/registry"
+	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
-	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
 	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
-const FinalizerName = "mcpservers.kavrynt.io/registry-sync"
+const conflictRetryDelay = time.Second
 
+// MCPServerReconciler validates MCPServer resources and reports whether the
+// Gateway can route to them. The Kubernetes API is the source of truth; the
+// Gateway watches the same resources directly.
 type MCPServerReconciler struct {
 	client.Client
-	Scheme         *runtime.Scheme
-	RegistryClient *registry.Client
-	RequeueAfter   time.Duration
+	Scheme *runtime.Scheme
 }
 
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -31,122 +31,81 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 
 	var server kavryntv1alpha1.MCPServer
 	if err := r.Get(ctx, req.NamespacedName, &server); err != nil {
-		if apierrors.IsNotFound(err) {
-			return ctrl.Result{}, nil
-		}
-		return ctrl.Result{}, err
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 
-	if !server.ObjectMeta.DeletionTimestamp.IsZero() {
-		return r.reconcileDelete(ctx, &server)
-	}
-
-	if controllerutil.AddFinalizer(&server, FinalizerName) {
+	// Releases up to 0.0.1-beta.1 added a finalizer to clean up the removed
+	// Registry. Drop it so deletes and upgrades never hang on it.
+	if controllerutil.RemoveFinalizer(&server, kavryntv1alpha1.LegacyRegistryFinalizer) {
 		if err := r.Update(ctx, &server); err != nil {
-			return ctrl.Result{}, err
+			return ctrl.Result{}, client.IgnoreNotFound(err)
 		}
+		logger.Info("removed legacy registry finalizer", "mcpserver", req.NamespacedName)
 	}
 
-	manifest := manifestFromServer(&server)
-	if err := r.RegistryClient.Upsert(ctx, manifest); err != nil {
-		logger.Error(err, "failed to sync MCPServer to Registry", "name", server.Name, "namespace", server.Namespace)
-		if statusErr := r.updateStatus(ctx, req.NamespacedName, false, err.Error()); statusErr != nil {
-			return ctrl.Result{}, statusErr
-		}
-		return ctrl.Result{RequeueAfter: r.requeueAfter()}, nil
-	}
-
-	if err := r.updateStatus(ctx, req.NamespacedName, true, ""); err != nil {
-		return ctrl.Result{}, err
-	}
-
-	return ctrl.Result{}, nil
-}
-
-func (r *MCPServerReconciler) reconcileDelete(ctx context.Context, server *kavryntv1alpha1.MCPServer) (ctrl.Result, error) {
-	if !controllerutil.ContainsFinalizer(server, FinalizerName) {
+	if !server.DeletionTimestamp.IsZero() {
 		return ctrl.Result{}, nil
 	}
 
-	if err := r.RegistryClient.Delete(ctx, registryName(server)); err != nil {
-		_ = r.updateStatus(ctx, types.NamespacedName{Name: server.Name, Namespace: server.Namespace}, false, err.Error())
-		return ctrl.Result{RequeueAfter: r.requeueAfter()}, nil
+	status := desiredStatus(&server)
+	if equality.Semantic.DeepEqual(server.Status, status) {
+		return ctrl.Result{}, nil
 	}
-
-	controllerutil.RemoveFinalizer(server, FinalizerName)
-	if err := r.Update(ctx, server); err != nil {
-		return ctrl.Result{}, err
+	server.Status = status
+	if err := r.Status().Update(ctx, &server); err != nil {
+		if apierrors.IsConflict(err) {
+			// Another writer updated the object; retry on the newer version.
+			return ctrl.Result{RequeueAfter: conflictRetryDelay}, nil
+		}
+		return ctrl.Result{}, client.IgnoreNotFound(err)
 	}
 	return ctrl.Result{}, nil
 }
 
-func (r *MCPServerReconciler) updateStatus(ctx context.Context, key types.NamespacedName, registered bool, message string) error {
-	var latest kavryntv1alpha1.MCPServer
-	if err := r.Get(ctx, key, &latest); err != nil {
-		return err
+func desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerStatus {
+	status := kavryntv1alpha1.MCPServerStatus{
+		ObservedGeneration: server.Generation,
+		Conditions:         append([]metav1.Condition(nil), server.Status.Conditions...),
+	}
+	// The Registered condition belonged to the removed Registry integration.
+	apimeta.RemoveStatusCondition(&status.Conditions, "Registered")
+
+	accepted := metav1.Condition{
+		Type:               kavryntv1alpha1.ConditionAccepted,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: server.Generation,
+		Reason:             kavryntv1alpha1.ReasonValid,
+		Message:            "MCPServer spec is valid",
+	}
+	ready := metav1.Condition{
+		Type:               kavryntv1alpha1.ConditionReady,
+		Status:             metav1.ConditionTrue,
+		ObservedGeneration: server.Generation,
+		Reason:             kavryntv1alpha1.ReasonRoutable,
+		Message:            "Gateway routes /mcp/" + server.RouteName(),
 	}
 
-	now := metav1.Now()
-	conditionStatus := metav1.ConditionFalse
-	reason := "RegistrySyncFailed"
-	if registered {
-		conditionStatus = metav1.ConditionTrue
-		reason = "RegistrySynced"
-		message = "MCPServer is synced to Kavrynt Registry"
-		latest.Status.RegistrySyncedAt = &now
-		latest.Status.RegistryError = ""
-	} else {
-		latest.Status.RegistryError = message
+	switch err := server.Validate(); {
+	case err != nil:
+		accepted.Status = metav1.ConditionFalse
+		accepted.Reason = kavryntv1alpha1.ReasonInvalidSpec
+		accepted.Message = err.Error()
+		ready.Status = metav1.ConditionFalse
+		ready.Reason = kavryntv1alpha1.ReasonInvalidSpec
+		ready.Message = "MCPServer spec is invalid"
+	case server.Spec.Transport != "http":
+		ready.Status = metav1.ConditionFalse
+		ready.Reason = kavryntv1alpha1.ReasonUnsupportedTransport
+		ready.Message = "Gateway routes only the http transport"
 	}
-	latest.Status.ObservedGeneration = latest.Generation
-	apimeta.SetStatusCondition(&latest.Status.Conditions, metav1.Condition{
-		Type:               kavryntv1alpha1.ConditionRegistered,
-		Status:             conditionStatus,
-		ObservedGeneration: latest.Generation,
-		LastTransitionTime: now,
-		Reason:             reason,
-		Message:            message,
-	})
 
-	return r.Status().Update(ctx, &latest)
-}
-
-func (r *MCPServerReconciler) requeueAfter() time.Duration {
-	if r.RequeueAfter <= 0 {
-		return 30 * time.Second
-	}
-	return r.RequeueAfter
+	apimeta.SetStatusCondition(&status.Conditions, accepted)
+	apimeta.SetStatusCondition(&status.Conditions, ready)
+	return status
 }
 
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
 	return ctrl.NewControllerManagedBy(mgr).
 		For(&kavryntv1alpha1.MCPServer{}).
 		Complete(r)
-}
-
-func manifestFromServer(server *kavryntv1alpha1.MCPServer) registry.Manifest {
-	return registry.Manifest{
-		APIVersion: registry.APIVersion,
-		Kind:       registry.Kind,
-		Metadata: registry.Metadata{
-			Name:        registryName(server),
-			Description: server.Annotations["kavrynt.io/description"],
-			Labels:      server.Labels,
-		},
-		Spec: registry.Spec{
-			Version:     server.Spec.Version,
-			Transport:   server.Spec.Transport,
-			Command:     server.Spec.Command,
-			Args:        server.Spec.Args,
-			Endpoint:    server.Spec.Endpoint,
-			Environment: server.Spec.Environment,
-		},
-	}
-}
-
-func registryName(server *kavryntv1alpha1.MCPServer) string {
-	if server.Namespace == "" {
-		return server.Name
-	}
-	return server.Namespace + "." + server.Name
 }

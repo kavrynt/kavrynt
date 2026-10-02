@@ -5,7 +5,7 @@ ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
 RELEASE_VERSION="${RELEASE_VERSION:-}"
 RELEASE_VERSION="${RELEASE_VERSION#v}"
 [ -n "${RELEASE_VERSION}" ] || {
-  printf 'error: RELEASE_VERSION is required (for example, 0.0.1-beta.1)\n' >&2
+  printf 'error: RELEASE_VERSION is required (for example, 0.0.2-beta.1)\n' >&2
   exit 1
 }
 
@@ -24,7 +24,6 @@ CONTROL_NAMESPACE="kavrynt-system"
 E2E_NAMESPACE="kavrynt-e2e"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 
-REGISTRY_IMAGE="${IMAGE_REGISTRY}/registry:${RELEASE_VERSION}"
 GATEWAY_IMAGE="${IMAGE_REGISTRY}/gateway:${RELEASE_VERSION}"
 OPERATOR_IMAGE="${IMAGE_REGISTRY}/operator:${RELEASE_VERSION}"
 SAMPLE_IMAGE="kavrynt/e2e-mcp-server:${RELEASE_VERSION}-verification"
@@ -51,7 +50,6 @@ diagnostics() {
   kubectl --context "${KUBE_CONTEXT}" get nodes -o wide || true
   kubectl --context "${KUBE_CONTEXT}" get pods -A -o wide || true
   kubectl --context "${KUBE_CONTEXT}" get events -A --sort-by=.lastTimestamp || true
-  kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment/kavrynt-registry --tail=100 || true
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment/kavrynt-gateway --tail=100 || true
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment/kavrynt-operator --tail=100 || true
 }
@@ -114,7 +112,6 @@ if kind get clusters | grep --fixed-strings --line-regexp "${CLUSTER_NAME}" >/de
 fi
 
 log "pulling released runtime images"
-docker pull "${REGISTRY_IMAGE}"
 docker pull "${GATEWAY_IMAGE}"
 docker pull "${OPERATOR_IMAGE}"
 
@@ -127,7 +124,7 @@ CREATED_CLUSTER=1
 
 log "loading released images"
 kind load docker-image --name "${CLUSTER_NAME}" \
-  "${REGISTRY_IMAGE}" "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${SAMPLE_IMAGE}"
+  "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${SAMPLE_IMAGE}"
 
 log "installing published Kavrynt chart ${RELEASE_VERSION}"
 helm upgrade --install kavrynt "${CHART_REF}" \
@@ -135,8 +132,6 @@ helm upgrade --install kavrynt "${CHART_REF}" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
-  --set registry.image.repository="${IMAGE_REGISTRY}/registry" \
-  --set-string registry.image.tag="${RELEASE_VERSION}" \
   --set gateway.image.repository="${IMAGE_REGISTRY}/gateway" \
   --set-string gateway.image.tag="${RELEASE_VERSION}" \
   --set operator.image.repository="${IMAGE_REGISTRY}/operator" \
@@ -144,7 +139,7 @@ helm upgrade --install kavrynt "${CHART_REF}" \
   --wait \
   --timeout 180s
 
-for deployment in kavrynt-registry kavrynt-gateway kavrynt-operator; do
+for deployment in kavrynt-gateway kavrynt-operator; do
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
     rollout status "deployment/${deployment}" --timeout=120s
 done
@@ -156,28 +151,17 @@ kubectl --context "${KUBE_CONTEXT}" apply -f "${TEMP_DIR}/mcp-server.yaml"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   rollout status deployment/example-mcp-server --timeout=120s
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
-  wait mcpserver/example-mcp-server --for=condition=Registered --timeout=120s
+  wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
 
-log "starting local API port-forwards"
-kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
-  port-forward service/kavrynt-registry 18081:8080 \
-  >"${TEMP_DIR}/registry-port-forward.log" 2>&1 &
-PORT_FORWARD_PIDS+=("$!")
+log "starting Gateway port-forward"
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
   port-forward service/kavrynt-gateway 18080:8080 \
   >"${TEMP_DIR}/gateway-port-forward.log" 2>&1 &
 PORT_FORWARD_PIDS+=("$!")
 
-wait_for_url "http://127.0.0.1:18081/readyz"
 wait_for_url "http://127.0.0.1:18080/readyz"
-wait_for_json "http://127.0.0.1:18081/v1/servers" '.servers | length == 1'
-
-SERVER_ID="$(curl --fail --silent http://127.0.0.1:18081/v1/servers | jq --raw-output '.servers[0].id // .servers[0].manifest.metadata.name')"
-[ -n "${SERVER_ID}" ] && [ "${SERVER_ID}" != "null" ] || fail "Registry did not return a server identity"
-EXPECTED_SERVER_ID="${E2E_NAMESPACE}.example-mcp-server"
-[ "${SERVER_ID}" = "${EXPECTED_SERVER_ID}" ] ||
-  fail "Registry identity ${SERVER_ID} does not match ${EXPECTED_SERVER_ID}"
-wait_for_json "http://127.0.0.1:18080/v1/routes" ".routes | map(.id // .name) | index(\"${SERVER_ID}\") != null"
+SERVER_ID="${E2E_NAMESPACE}.example-mcp-server"
+wait_for_json "http://127.0.0.1:18080/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 
 log "calling tools/list through Gateway route ${SERVER_ID}"
 MCP_RESPONSE="$(curl --fail --silent --show-error \
@@ -189,7 +173,6 @@ printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo
 log "verifying deletion cleanup"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/example-mcp-server --wait=true --timeout=120s
-wait_for_json "http://127.0.0.1:18081/v1/servers" '.servers | length == 0'
 wait_for_json "http://127.0.0.1:18080/v1/routes" '.routes | length == 0' 30
 
 log "published release ${RELEASE_VERSION} end-to-end workflow passed"

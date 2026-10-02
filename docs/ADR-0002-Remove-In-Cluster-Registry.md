@@ -2,7 +2,8 @@
 
 ## Status
 
-Accepted (2026-10-02). Implementation targets release `0.0.2-beta.1`.
+Accepted (2026-10-02). Implemented on `develop` for release `0.0.2-beta.1`
+(not yet published).
 
 ## Context
 
@@ -45,10 +46,11 @@ option to restrict to listed namespaces through namespaced Roles.
 
 - Status: remove `registrySyncedAt` and `registryError`; replace the
   `Registered` condition with `Accepted` and `Ready`.
-- Spec: add `remote` for MCP servers outside the cluster (URL, allowed host).
-  The gateway governs them with the same policy path (ADR-0003).
-- Spec: `environment` values in plain text are deprecated in favour of
-  `secretKeyRef`, so credentials are not stored in custom resources.
+- Spec: `endpoint` is validated at admission (absolute `http`/`https` URL,
+  no embedded credentials, at most 2048 characters).
+- Deferred to a later release to keep this change narrow: a `remote` spec for
+  MCP servers outside the cluster with SSRF allow-listing, and `secretKeyRef`
+  replacing plain-text `environment` values.
 - The API stays `v1alpha1`; breaking changes are allowed before `v1beta1` and
   are listed in the upgrade notes.
 
@@ -58,8 +60,9 @@ option to restrict to listed namespaces through namespaced Roles.
 the registry Deployment and Service are removed by the chart, existing
 `MCPServer` resources are re-reconciled, and the old
 `mcpservers.kavrynt.io/registry-sync` finalizer is removed by the operator on
-startup so deletions do not hang. The upgrade path is covered by an end-to-end
-test.
+startup so deletions do not hang. Helm does not upgrade CRDs, so the CRD is
+applied first (see `docs/UPGRADE-0.0.2-BETA.md`). `make e2e-upgrade` covers
+this path.
 
 ## Consequences
 

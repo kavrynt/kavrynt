@@ -2,10 +2,18 @@ replicaCount: 1
 
 image:
   repository: kavrynt/gateway
-  tag: 0.0.1-beta.1
+  tag: 0.0.2-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  # Grants read-only access (get, list, watch) to MCPServer resources.
+  create: true
 
 service:
   type: ClusterIP
@@ -13,9 +21,10 @@ service:
 
 config:
   addr: ":8080"
-  registryURL: "http://registry.default.svc.cluster.local:8080"
-  syncInterval: "10s"
   requestTimeout: "30s"
+  # Namespaces to watch for MCPServer resources. Empty watches all namespaces
+  # through a ClusterRole; a list uses one Role per namespace instead.
+  watchNamespaces: []
 
 podSecurityContext:
   runAsNonRoot: true

@@ -11,9 +11,8 @@ pipeline ([ADR-0001](docs/ADR-0001-Runtime-Monorepo.md)).
 | `cmd/kavryctl`, `internal/kavryctl` | Developer and platform CLI |
 | `cmd/gateway`, `internal/gateway` | MCP runtime routing and (future) enforcement |
 | `cmd/operator`, `internal/operator`, `api/v1alpha1`, `config/` | `MCPServer` CRD and reconciliation |
-| `cmd/registry`, `internal/registry` | In-cluster Registry, removed in `0.0.2-beta.1` (ADR-0002) |
 | `charts/kavrynt` | The Helm chart with vendored component subcharts |
-| `build/Dockerfile` | All runtime images (`--target gateway`, `operator`, `registry`) |
+| `build/Dockerfile` | All runtime images (`--target gateway`, `operator`) |
 | `test/e2e`, `scripts/` | Kind end-to-end tests, installers, release checks |
 
 The hosted control plane lives in `kavrynt-cloud`; Azure infrastructure lives
@@ -83,16 +82,20 @@ explicitly requests it.
 
 ```bash
 make qa        # fmt, race tests, vet, staticcheck, gosec, govulncheck, Helm, release contract
-make e2e-kind  # disposable Kind cluster, full product loop
+make e2e-kind     # disposable Kind cluster, full product loop
+make e2e-upgrade  # upgrade from the last Registry-based runtime
 ```
 
 The end-to-end workflow must verify:
 
-1. Registry, Gateway, and Operator become ready.
-2. Applying an `MCPServer` produces a successful `Registered` condition.
-3. Registry and Gateway expose the expected server identity.
-4. A JSON-RPC `tools/list` call succeeds through Gateway.
-5. Deleting the `MCPServer` removes Registry and Gateway state.
+1. Gateway and Operator become ready.
+2. Applying an `MCPServer` produces a `Ready` condition.
+3. The CRD rejects unsafe endpoints at admission.
+4. Gateway RBAC is read-only on `MCPServer` and has no Secret access.
+5. Gateway and `kavryctl list` expose the expected route.
+6. A JSON-RPC `tools/list` call succeeds through Gateway.
+7. `kavryctl register`, `inspect`, and `unregister` work against the cluster.
+8. Deleting an `MCPServer` removes its Gateway route.
 
 Keep the Kind workflow disposable and isolated from the user's current
 Kubernetes context. On macOS and Apple Silicon, build images locally and load

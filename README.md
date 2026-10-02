@@ -4,7 +4,7 @@
 
 > [!IMPORTANT]
 > This is the private source and release repository for the commercial Kavrynt
-> MCP Control Plane runtime: `kavryctl`, Gateway, Operator, Registry, the
+> MCP Control Plane runtime: `kavryctl`, Gateway, Operator, the
 > `MCPServer` CRD, and the Helm chart. See
 > [ADR-0001](docs/ADR-0001-Runtime-Monorepo.md).
 
@@ -19,14 +19,14 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 
 - install and operate the control plane with `kavryctl`;
 - declare MCP servers as Kubernetes resources;
-- let the Operator reconcile desired state into Registry;
+- let the Operator validate each server and report its readiness;
 - route MCP traffic through Gateway;
 - inspect and manage the platform with `kubectl` and kavryctl.
 
 > [!IMPORTANT]
 > Kavrynt is currently an early MVP. The core registration and HTTP routing
-> loop works, but authentication, policy enforcement, durable production
-> storage, and high availability are not implemented yet. Run this version only
+> loop works, but authentication, policy enforcement, and high availability are
+> not implemented yet. Run this version only
 > in trusted development or evaluation clusters.
 
 ## Why Kavrynt
@@ -47,28 +47,27 @@ each MCP server to become its own platform.
 ## Architecture
 
 ```text
-                         Kavrynt control plane
-
-  Platform engineer                                      Developer
-          |                                                   |
-          | kubectl apply MCPServer                           | kavryctl
-          v                                                   v
-  +-------------------+                             +-------------------+
-  | Kavrynt Operator  |---------------------------->| Kavrynt Registry |
-  +-------------------+     reconcile metadata      +-------------------+
-                                                            |
-                                                            | route sync
-                                                            v
-                                                    +-------------------+
-  MCP client / agent ------------------------------>| Kavrynt Gateway  |
-                                                    +-------------------+
-                                                            |
-                                                            | MCP request
-                                                            v
-                                                    +-------------------+
-                                                    | Customer MCP     |
-                                                    | servers          |
-                                                    +-------------------+
+  Platform engineer / developer
+          |
+          | kubectl apply MCPServer  |  kavryctl register
+          v
+  +---------------------------+   validate, set Accepted/Ready
+  | Kubernetes API            |<------------------------------- Kavrynt Operator
+  | MCPServer resources       |
+  +---------------------------+
+          |
+          | watch (read-only)
+          v
+  +-------------------+
+  | Kavrynt Gateway   |<-------------- MCP client / agent
+  +-------------------+   /mcp/<namespace>.<name>
+          |
+          | MCP request
+          v
+  +-------------------+
+  | Customer MCP      |
+  | servers           |
+  +-------------------+
 ```
 
 Kavrynt does not deploy customer MCP server workloads in the current MVP. It
@@ -78,20 +77,20 @@ registers and routes to endpoints that already exist.
 
 | Component | Responsibility |
 | --- | --- |
-| `kavryctl` | Validate manifests and manage local or remote Registry records |
-| `registry` | Store MCP server metadata and expose the Registry API |
-| `gateway` | Synchronize Registry state and proxy HTTP MCP requests |
-| `operator` | Reconcile Kubernetes `MCPServer` resources into Registry |
+| `kavryctl` | Validate manifests and register, list, inspect, and remove `MCPServer` resources |
+| `operator` | Validate `MCPServer` resources and report `Accepted` and `Ready` conditions |
+| `gateway` | Watch `Ready` `MCPServer` resources and proxy HTTP MCP requests |
 
 All components live in this repository, build from one Go module, and are
-released together under one version. The Registry is scheduled for removal in
-`0.0.2-beta.1` ([ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md)).
+released together under one version. The `MCPServer` API is the in-cluster
+source of truth; the separate Registry service was removed in `0.0.2-beta.1`
+([ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md)).
 
 The current MVP supports:
 
 - Kubernetes-native `MCPServer` registration;
-- direct registration with kavryctl and the Registry API;
-- periodic Gateway synchronization from Registry;
+- registration with kavryctl through the Kubernetes API;
+- Gateway route updates on Kubernetes watch events;
 - HTTP request proxying through `/mcp/<server-id>`;
 - health, readiness, version, metrics, and route inspection endpoints.
 
@@ -113,7 +112,7 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=0.0.1-beta.1
+export KAVRYNT_VERSION=0.0.2-beta.1
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
@@ -122,7 +121,7 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 ```
 
 The command pulls the versioned OCI Helm chart and installs the matching
-Registry, Gateway, and Operator images. Authenticate Helm to GHCR first when
+Gateway and Operator images. Authenticate Helm to GHCR first when
 the chart package is private. The default release is `kavrynt` in the
 `kavrynt-system` namespace.
 
@@ -137,11 +136,10 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --set gateway.replicaCount=2
 ```
 
-For source development, build the chart dependencies and install the local
-umbrella chart:
+For source development, install the local chart (component subcharts are
+vendored, so no dependency build is needed):
 
 ```bash
-helm dependency build --skip-refresh charts/kavrynt
 helm upgrade --install kavrynt charts/kavrynt \
   --namespace kavrynt-system \
   --create-namespace
@@ -151,9 +149,6 @@ helm upgrade --install kavrynt charts/kavrynt \
 
 ```bash
 helm status kavrynt --namespace kavrynt-system
-
-kubectl rollout status deployment/kavrynt-registry \
-  --namespace kavrynt-system --timeout=120s
 
 kubectl rollout status deployment/kavrynt-gateway \
   --namespace kavrynt-system --timeout=120s
@@ -168,7 +163,6 @@ kubectl get crd mcpservers.kavrynt.io
 Expected control-plane workloads:
 
 ```text
-kavrynt-registry
 kavrynt-gateway
 kavrynt-operator
 ```
@@ -196,30 +190,23 @@ kubectl rollout status deployment/example-mcp-server --timeout=120s
 ### 2. Register it through Kubernetes
 
 ```bash
-kubectl apply -f operator/config/samples/kavrynt_v1alpha1_mcpserver.yaml
+kubectl apply -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
+kubectl wait mcpserver/example-mcp-server --for=condition=Ready --timeout=60s
 
 kubectl get mcpservers
 kubectl describe mcpserver example-mcp-server
 ```
 
-The Operator writes a namespace-qualified record into Registry. The example
-resource becomes `default.example-mcp-server`, so equal server names in other
-namespaces remain distinct.
+The Operator sets the `Ready` condition once the spec is valid and uses the
+`http` transport. The Gateway route is namespace-qualified: the example becomes
+`default.example-mcp-server`, so equal server names in other namespaces remain
+distinct.
 
-### 3. Inspect Registry
-
-```bash
-kubectl port-forward \
-  --namespace kavrynt-system \
-  service/kavrynt-registry 18081:8080
-```
-
-In another terminal:
+### 3. Inspect registrations
 
 ```bash
-curl -fsS http://localhost:18081/readyz
-curl -fsS http://localhost:18081/v1/servers
-curl -fsS http://localhost:18081/v1/servers/default.example-mcp-server
+kavryctl list -A
+kavryctl inspect -n default example-mcp-server
 ```
 
 ### 4. Route through Gateway
@@ -248,18 +235,15 @@ return:
 ### 5. Clean up the example
 
 ```bash
-kubectl delete -f operator/config/samples/kavrynt_v1alpha1_mcpserver.yaml
+kubectl delete -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
 kubectl delete service example-mcp-server
 kubectl delete deployment example-mcp-server
 ```
 
 ## Use kavryctl
 
-kavryctl supports both local file-backed development and a remote Registry.
-The current canonical CLI does not install or upgrade the Kubernetes control
-plane; Helm owns that release path.
-
-The same CLI also validates and manages MCP server registrations. Install it
+kavryctl manages `MCPServer` resources through your kubeconfig. It does not
+install or upgrade the control plane; Helm owns that release path. Install it
 from source when developing locally:
 
 ```bash
@@ -267,22 +251,18 @@ go install ./cmd/kavryctl
 kavryctl version
 ```
 
-Validate and register a manifest against the in-cluster Registry port-forward:
+Validate, register, inspect, and remove a server:
 
 ```bash
-kavryctl validate examples/kavryctl/mcp-server.json
-
-kavryctl register \
-  --registry http://localhost:18081 \
-  examples/kavryctl/mcp-server.json
-
-kavryctl list --registry http://localhost:18081
-kavryctl inspect --registry http://localhost:18081 example-mcp-server
-kavryctl unregister --registry http://localhost:18081 example-mcp-server
+kavryctl validate examples/kavryctl/mcp-server.yaml
+kavryctl register -n default examples/kavryctl/mcp-server.yaml
+kavryctl list -A
+kavryctl inspect -n default example-mcp-server
+kavryctl unregister -n default example-mcp-server
 ```
 
-For local-only workflows, omit `--registry`. State is stored in
-`.kavrynt/registry.json` by default.
+All cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
+Manifests may be YAML or JSON.
 
 See [docs/components/kavryctl](docs/components/kavryctl/README.md) for all
 available commands.
@@ -295,7 +275,6 @@ Override component settings through Helm:
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
   --namespace kavrynt-system \
-  --set registry.image.tag=<version> \
   --set gateway.image.tag=<version> \
   --set operator.image.tag=<version>
 ```
@@ -304,14 +283,12 @@ Important values:
 
 | Value | Default | Purpose |
 | --- | --- | --- |
-| `registry.image.repository` | `kavrynt/registry` | Registry container repository |
-| `registry.image.tag` | `0.0.1-beta.1` | Registry image tag |
 | `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
-| `gateway.image.tag` | `0.0.1-beta.1` | Gateway image tag |
-| `gateway.config.registryURL` | In-cluster Registry service | Registry synchronization endpoint |
+| `gateway.image.tag` | `0.0.2-beta.1` | Gateway image tag |
+| `gateway.config.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches RBAC to per-namespace Roles |
+| `gateway.rbac.create` | `true` | Create read-only `MCPServer` RBAC for the Gateway |
 | `operator.image.repository` | `kavrynt/operator` | Operator container repository |
-| `operator.image.tag` | `0.0.1-beta.1` | Operator image tag |
-| `operator.config.registryURL` | In-cluster Registry service | Operator reconciliation endpoint |
+| `operator.image.tag` | `0.0.2-beta.1` | Operator image tag |
 
 Review [`charts/kavrynt/values.yaml`](charts/kavrynt/values.yaml) and each
 component chart before production-oriented customization.
@@ -320,7 +297,7 @@ component chart before production-oriented customization.
 
 ### Health and readiness
 
-Registry and Gateway expose:
+Gateway exposes (the Operator serves `/healthz` and `/readyz` on port 8081):
 
 ```text
 GET /healthz
@@ -329,8 +306,7 @@ GET /version
 GET /metrics
 ```
 
-Gateway readiness remains false until it has synchronized Registry at least
-once.
+Gateway readiness remains false until its `MCPServer` cache has synced once.
 
 ### Inspect desired and reconciled state
 
@@ -338,16 +314,9 @@ once.
 kubectl get mcpservers --all-namespaces
 kubectl get mcpserver example-mcp-server -o yaml
 kubectl logs --namespace kavrynt-system deployment/kavrynt-operator
-kubectl logs --namespace kavrynt-system deployment/kavrynt-registry
 kubectl logs --namespace kavrynt-system deployment/kavrynt-gateway
 ```
 
-Component runbooks:
-
-- [kavryctl runbook](docs/components/kavryctl/RUNBOOK.md)
-- [Registry runbook](docs/components/registry/RUNBOOK.md)
-- [Gateway runbook](docs/components/gateway/RUNBOOK.md)
-- [Operator runbook](docs/components/operator/RUNBOOK.md)
 
 ### Uninstall
 
@@ -369,17 +338,17 @@ The MVP uses defensive container defaults: non-root users, dropped Linux
 capabilities, read-only root filesystems, and limited Kubernetes RBAC. However,
 the current release is not production-security complete:
 
-- Registry and Gateway do not authenticate clients.
-- Registry and Operator communication is not authenticated or encrypted by
-  Kavrynt.
+- Gateway does not authenticate clients.
+- Gateway forwards client request headers, including `Authorization`, to the
+  upstream MCP server (planned fix: ADR-0003).
 - Gateway does not yet enforce actor, tool, or policy authorization.
-- Registry uses a local JSON file on an `emptyDir` volume by default; Registry
-  data is lost if its pod is replaced.
-- Registry and Gateway are single-replica by default.
+- Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
+  else.
+- Gateway is single-replica by default.
 - Audit, policy, approval, and usage services are not part of the current
   runtime beta.
 
-Keep Registry and Gateway as internal `ClusterIP` services, restrict cluster
+Keep Gateway as an internal `ClusterIP` service, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
 
 ## Development
@@ -412,15 +381,16 @@ make docker-build
 make helm-lint
 make helm-template
 make e2e-kind
+make e2e-upgrade
 ```
 
 Repository layout:
 
 ```text
 api/v1alpha1/        MCPServer CRD Go types
-cmd/<component>/     entry points: kavryctl, gateway, operator, registry
+cmd/<component>/     entry points: kavryctl, gateway, operator
 internal/<component>/ component packages
-build/Dockerfile     all runtime images (--target gateway|operator|registry)
+build/Dockerfile     all runtime images (--target gateway|operator)
 charts/kavrynt/      the Helm chart, with vendored component subcharts
 config/              generated CRD and RBAC manifests
 test/e2e/            Kind end-to-end tests
@@ -445,8 +415,8 @@ is imported here. `kavrynt-cloud` owns the commercial hosted control plane, and
 
 The next product milestones are:
 
-1. remove the in-cluster Registry in favour of the `MCPServer` API
-   ([ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md));
+1. ~~remove the in-cluster Registry~~ (done in `0.0.2-beta.1`,
+   [ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md));
 2. Gateway authentication and no token passthrough
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 3. MCP Streamable HTTP and protocol-aware routing;

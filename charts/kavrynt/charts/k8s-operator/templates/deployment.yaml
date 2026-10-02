@@ -28,14 +28,10 @@ spec:
           image: "{{ .Values.image.repository }}:{{ .Values.image.tag }}"
           imagePullPolicy: {{ .Values.image.pullPolicy }}
           args:
-            - --registry-url
-            - {{ .Values.config.registryURL | quote }}
             - --metrics-bind-address
             - {{ .Values.config.metricsBindAddress | quote }}
             - --health-probe-bind-address
             - {{ .Values.config.healthProbeBindAddress | quote }}
-            - --sync-retry-period
-            - {{ .Values.config.syncRetryPeriod | quote }}
             {{- if .Values.config.leaderElect }}
             - --leader-elect
             {{- end }}

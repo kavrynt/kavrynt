@@ -3,14 +3,11 @@ package main
 import (
 	"flag"
 	"log/slog"
-	"net/http"
 	"os"
-	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/operator/build"
 	"github.com/kavrynt/kavrynt/internal/operator/controller"
-	"github.com/kavrynt/kavrynt/internal/operator/registry"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -22,17 +19,13 @@ import (
 
 func main() {
 	var (
-		metricsAddr     string
-		probeAddr       string
-		registryURL     string
-		syncRetryPeriod time.Duration
-		enableLeader    bool
+		metricsAddr  string
+		probeAddr    string
+		enableLeader bool
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address")
-	flag.StringVar(&registryURL, "registry-url", getenv("KAVRYNT_REGISTRY_URL", ""), "Kavrynt Registry base URL")
-	flag.DurationVar(&syncRetryPeriod, "sync-retry-period", 30*time.Second, "Retry period after Registry sync failures")
 	flag.BoolVar(&enableLeader, "leader-elect", false, "Enable leader election")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
@@ -43,12 +36,6 @@ func main() {
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
 	utilruntime.Must(kavryntv1alpha1.AddToScheme(scheme))
-
-	registryClient, err := registry.NewClient(registryURL, &http.Client{Timeout: 30 * time.Second})
-	if err != nil {
-		slog.Error("invalid registry configuration", "error", err)
-		os.Exit(1)
-	}
 
 	mgr, err := ctrl.NewManager(ctrl.GetConfigOrDie(), ctrl.Options{
 		Scheme:                 scheme,
@@ -63,10 +50,8 @@ func main() {
 	}
 
 	if err := (&controller.MCPServerReconciler{
-		Client:         mgr.GetClient(),
-		Scheme:         mgr.GetScheme(),
-		RegistryClient: registryClient,
-		RequeueAfter:   syncRetryPeriod,
+		Client: mgr.GetClient(),
+		Scheme: mgr.GetScheme(),
 	}).SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "error", err)
 		os.Exit(1)
@@ -86,11 +71,4 @@ func main() {
 		slog.Error("operator stopped with error", "error", err)
 		os.Exit(1)
 	}
-}
-
-func getenv(key, fallback string) string {
-	if value := os.Getenv(key); value != "" {
-		return value
-	}
-	return fallback
 }

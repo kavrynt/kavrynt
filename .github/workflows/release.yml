@@ -67,7 +67,7 @@ jobs:
     strategy:
       fail-fast: true
       matrix:
-        image: [gateway, operator, registry]
+        image: [gateway, operator]
     env:
       VERSION: ${{ needs.verify.outputs.version }}
     steps:
@@ -288,7 +288,7 @@ jobs:
       - name: Verify published images
         shell: bash
         run: |
-          for image in gateway operator registry; do
+          for image in gateway operator; do
             ref="docker.io/kavrynt/${image}:${VERSION}"
             docker buildx imagetools inspect --raw "$ref" |
               jq --exit-status '

@@ -21,3 +21,11 @@ app.kubernetes.io/version: {{ .Chart.AppVersion | quote }}
 app.kubernetes.io/managed-by: {{ .Release.Service }}
 helm.sh/chart: {{ include "gateway.chart" . }}
 {{- end -}}
+
+{{- define "gateway.serviceAccountName" -}}
+{{- if .Values.serviceAccount.create -}}
+{{- default (include "gateway.fullname" .) .Values.serviceAccount.name -}}
+{{- else -}}
+{{- default "default" .Values.serviceAccount.name -}}
+{{- end -}}
+{{- end -}}

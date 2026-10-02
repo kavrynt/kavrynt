@@ -2,175 +2,181 @@ package controller
 
 import (
 	"context"
-	"encoding/json"
-	"io"
-	"net/http"
-	"strings"
 	"testing"
-	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
-	"github.com/kavrynt/kavrynt/internal/operator/registry"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
 )
 
-type roundTripFunc func(*http.Request) (*http.Response, error)
-
-func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
-	return f(req)
-}
-
-func TestReconcileRegistersMCPServer(t *testing.T) {
-	scheme := runtime.NewScheme()
-	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
-		t.Fatal(err)
+func TestReconcileSetsConditions(t *testing.T) {
+	tests := []struct {
+		name          string
+		spec          kavryntv1alpha1.MCPServerSpec
+		wantAccepted  metav1.ConditionStatus
+		wantReady     metav1.ConditionStatus
+		wantReadyWhy  string
+		wantReadyText string
+	}{
+		{
+			name:          "http server is routable",
+			spec:          kavryntv1alpha1.MCPServerSpec{Version: "0.1.0", Transport: "http", Endpoint: "http://demo.default.svc:8080/mcp"},
+			wantAccepted:  metav1.ConditionTrue,
+			wantReady:     metav1.ConditionTrue,
+			wantReadyWhy:  kavryntv1alpha1.ReasonRoutable,
+			wantReadyText: "/mcp/default.demo-mcp",
+		},
+		{
+			name:         "stdio server is accepted but not routable",
+			spec:         kavryntv1alpha1.MCPServerSpec{Version: "0.1.0", Transport: "stdio", Command: "demo"},
+			wantAccepted: metav1.ConditionTrue,
+			wantReady:    metav1.ConditionFalse,
+			wantReadyWhy: kavryntv1alpha1.ReasonUnsupportedTransport,
+		},
+		{
+			name:         "invalid endpoint is rejected",
+			spec:         kavryntv1alpha1.MCPServerSpec{Version: "0.1.0", Transport: "http", Endpoint: "file:///etc/passwd"},
+			wantAccepted: metav1.ConditionFalse,
+			wantReady:    metav1.ConditionFalse,
+			wantReadyWhy: kavryntv1alpha1.ReasonInvalidSpec,
+		},
 	}
 
-	server := &kavryntv1alpha1.MCPServer{
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sClient := newClient(t, newServer(tt.spec))
+			reconcile(t, k8sClient)
+
+			updated := get(t, k8sClient)
+			if updated.Status.ObservedGeneration != updated.Generation {
+				t.Fatalf("observedGeneration = %d, want %d", updated.Status.ObservedGeneration, updated.Generation)
+			}
+			accepted := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionAccepted)
+			if accepted == nil || accepted.Status != tt.wantAccepted {
+				t.Fatalf("Accepted = %+v, want %s", accepted, tt.wantAccepted)
+			}
+			ready := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionReady)
+			if ready == nil || ready.Status != tt.wantReady || ready.Reason != tt.wantReadyWhy {
+				t.Fatalf("Ready = %+v, want %s/%s", ready, tt.wantReady, tt.wantReadyWhy)
+			}
+			if tt.wantReadyText != "" && ready.Message != "Gateway routes "+tt.wantReadyText {
+				t.Fatalf("Ready message = %q", ready.Message)
+			}
+		})
+	}
+}
+
+func TestReconcileIsIdempotent(t *testing.T) {
+	k8sClient := newClient(t, newServer(validSpec()))
+	reconcile(t, k8sClient)
+	first := get(t, k8sClient)
+
+	reconcile(t, k8sClient)
+	second := get(t, k8sClient)
+	if first.ResourceVersion != second.ResourceVersion {
+		t.Fatalf("second reconcile wrote the object: %s -> %s", first.ResourceVersion, second.ResourceVersion)
+	}
+}
+
+func TestReconcileMigratesLegacyRegistryState(t *testing.T) {
+	server := newServer(validSpec())
+	server.Finalizers = []string{kavryntv1alpha1.LegacyRegistryFinalizer}
+	server.Status.Conditions = []metav1.Condition{{
+		Type:               "Registered",
+		Status:             metav1.ConditionTrue,
+		Reason:             "RegistrySynced",
+		Message:            "MCPServer is synced to Kavrynt Registry",
+		LastTransitionTime: metav1.Now(),
+	}}
+	k8sClient := newClient(t, server)
+
+	reconcile(t, k8sClient)
+
+	updated := get(t, k8sClient)
+	if len(updated.Finalizers) != 0 {
+		t.Fatalf("finalizers = %v, want none", updated.Finalizers)
+	}
+	if apimeta.FindStatusCondition(updated.Status.Conditions, "Registered") != nil {
+		t.Fatal("legacy Registered condition was not removed")
+	}
+	if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("Ready condition is not True")
+	}
+}
+
+func TestReconcileReleasesDeletionBlockedByLegacyFinalizer(t *testing.T) {
+	server := newServer(validSpec())
+	server.Finalizers = []string{kavryntv1alpha1.LegacyRegistryFinalizer}
+	k8sClient := newClient(t, server)
+
+	if err := k8sClient.Delete(context.Background(), get(t, k8sClient)); err != nil {
+		t.Fatal(err)
+	}
+	reconcile(t, k8sClient)
+
+	var gone kavryntv1alpha1.MCPServer
+	err := k8sClient.Get(context.Background(), key(), &gone)
+	if !apierrors.IsNotFound(err) {
+		t.Fatalf("Get after delete = %v, want NotFound", err)
+	}
+}
+
+func TestReconcileIgnoresMissingServer(t *testing.T) {
+	k8sClient := newClient(t)
+	reconcile(t, k8sClient)
+}
+
+func validSpec() kavryntv1alpha1.MCPServerSpec {
+	return kavryntv1alpha1.MCPServerSpec{Version: "0.1.0", Transport: "http", Endpoint: "http://demo.default.svc:8080/mcp"}
+}
+
+func newServer(spec kavryntv1alpha1.MCPServerSpec) *kavryntv1alpha1.MCPServer {
+	return &kavryntv1alpha1.MCPServer{
 		TypeMeta: metav1.TypeMeta{
 			APIVersion: kavryntv1alpha1.GroupVersion.String(),
 			Kind:       kavryntv1alpha1.MCPServerKind,
 		},
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "demo-mcp",
-			Namespace: "default",
-			Annotations: map[string]string{
-				"kavrynt.io/description": "demo server",
-			},
-			Labels: map[string]string{
-				"app": "demo",
-			},
-		},
-		Spec: kavryntv1alpha1.MCPServerSpec{
-			Version:   "0.1.0",
-			Transport: "http",
-			Endpoint:  "http://demo.default.svc.cluster.local:8080/mcp",
-		},
+		ObjectMeta: metav1.ObjectMeta{Name: "demo-mcp", Namespace: "default", Generation: 1},
+		Spec:       spec,
 	}
+}
 
-	var got registry.Manifest
-	registryClient, err := registry.NewClient("http://registry.test", &http.Client{
-		Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
-			if req.Method != http.MethodPost {
-				t.Fatalf("method = %s, want POST", req.Method)
-			}
-			if err := json.NewDecoder(req.Body).Decode(&got); err != nil {
-				t.Fatal(err)
-			}
-			return &http.Response{
-				StatusCode: http.StatusCreated,
-				Header:     make(http.Header),
-				Body:       io.NopCloser(strings.NewReader(`{}`)),
-			}, nil
-		}),
-	})
-	if err != nil {
+func newClient(t *testing.T, objects ...client.Object) client.Client {
+	t.Helper()
+	scheme := runtime.NewScheme()
+	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
-
-	k8sClient := fake.NewClientBuilder().
+	return fake.NewClientBuilder().
 		WithScheme(scheme).
 		WithStatusSubresource(&kavryntv1alpha1.MCPServer{}).
-		WithObjects(server).
+		WithObjects(objects...).
 		Build()
+}
 
-	reconciler := &MCPServerReconciler{
-		Client:         k8sClient,
-		Scheme:         scheme,
-		RegistryClient: registryClient,
-		RequeueAfter:   time.Millisecond,
-	}
-
-	_, err = reconciler.Reconcile(context.Background(), ctrl.Request{
-		NamespacedName: types.NamespacedName{Name: "demo-mcp", Namespace: "default"},
-	})
-	if err != nil {
+func reconcile(t *testing.T, k8sClient client.Client) {
+	t.Helper()
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme()}
+	if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key()}); err != nil {
 		t.Fatal(err)
 	}
+}
 
-	if got.Metadata.Name != "default.demo-mcp" {
-		t.Fatalf("manifest name = %s, want default.demo-mcp", got.Metadata.Name)
-	}
-	if got.Metadata.Description != "demo server" {
-		t.Fatalf("description = %s, want demo server", got.Metadata.Description)
-	}
-	if got.Spec.Endpoint != "http://demo.default.svc.cluster.local:8080/mcp" {
-		t.Fatalf("endpoint = %s", got.Spec.Endpoint)
-	}
-
-	var updated kavryntv1alpha1.MCPServer
-	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: "demo-mcp", Namespace: "default"}, &updated); err != nil {
+func get(t *testing.T, k8sClient client.Client) *kavryntv1alpha1.MCPServer {
+	t.Helper()
+	var server kavryntv1alpha1.MCPServer
+	if err := k8sClient.Get(context.Background(), key(), &server); err != nil {
 		t.Fatal(err)
 	}
-	if !containsFinalizer(updated.Finalizers, FinalizerName) {
-		t.Fatalf("missing finalizer: %#v", updated.Finalizers)
-	}
-	if updated.Status.ObservedGeneration != updated.Generation {
-		t.Fatalf("observedGeneration = %d, want %d", updated.Status.ObservedGeneration, updated.Generation)
-	}
-	if updated.Status.RegistrySyncedAt == nil {
-		t.Fatal("registrySyncedAt is nil")
-	}
-	if updated.Status.RegistryError != "" {
-		t.Fatalf("registryError = %q, want empty", updated.Status.RegistryError)
-	}
-	condition := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionRegistered)
-	if condition == nil {
-		t.Fatalf("missing %s condition", kavryntv1alpha1.ConditionRegistered)
-	}
-	if condition.Status != metav1.ConditionTrue {
-		t.Fatalf("condition status = %s, want True", condition.Status)
-	}
+	return &server
 }
 
-func TestManifestFromServer(t *testing.T) {
-	server := &kavryntv1alpha1.MCPServer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name: "stdio-mcp",
-		},
-		Spec: kavryntv1alpha1.MCPServerSpec{
-			Version:   "0.1.0",
-			Transport: "stdio",
-			Command:   "demo",
-			Args:      []string{"--stdio"},
-		},
-	}
-
-	manifest := manifestFromServer(server)
-	if manifest.APIVersion != registry.APIVersion {
-		t.Fatalf("apiVersion = %s", manifest.APIVersion)
-	}
-	if manifest.Kind != registry.Kind {
-		t.Fatalf("kind = %s", manifest.Kind)
-	}
-	if manifest.Spec.Command != "demo" {
-		t.Fatalf("command = %s", manifest.Spec.Command)
-	}
-}
-
-func TestRegistryNameQualifiesKubernetesNamespace(t *testing.T) {
-	server := &kavryntv1alpha1.MCPServer{
-		ObjectMeta: metav1.ObjectMeta{
-			Name:      "demo-mcp",
-			Namespace: "team-a",
-		},
-	}
-
-	if got := registryName(server); got != "team-a.demo-mcp" {
-		t.Fatalf("registryName = %q, want team-a.demo-mcp", got)
-	}
-}
-
-func containsFinalizer(finalizers []string, want string) bool {
-	for _, finalizer := range finalizers {
-		if finalizer == want {
-			return true
-		}
-	}
-	return false
+func key() types.NamespacedName {
+	return types.NamespacedName{Name: "demo-mcp", Namespace: "default"}
 }

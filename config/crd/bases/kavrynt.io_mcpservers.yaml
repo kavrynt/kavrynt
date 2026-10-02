@@ -39,6 +39,8 @@ spec:
                   message: "spec.endpoint is required when spec.transport is http"
                 - rule: "self.transport != 'stdio' || has(self.command)"
                   message: "spec.command is required when spec.transport is stdio"
+                - rule: "!has(self.endpoint) || self.endpoint.matches('^https?://[^/?#@\\\\s]+([/?].*)?$')"
+                  message: "spec.endpoint must be an absolute http or https URL without credentials"
               properties:
                 version:
                   type: string
@@ -56,6 +58,7 @@ spec:
                     type: string
                 endpoint:
                   type: string
+                  maxLength: 2048
                 environment:
                   type: object
                   additionalProperties:
@@ -66,11 +69,6 @@ spec:
                 observedGeneration:
                   type: integer
                   format: int64
-                registrySyncedAt:
-                  type: string
-                  format: date-time
-                registryError:
-                  type: string
                 conditions:
                   type: array
                   x-kubernetes-list-type: map
@@ -110,9 +108,9 @@ spec:
         - name: Version
           type: string
           jsonPath: .spec.version
-        - name: Registered
+        - name: Ready
           type: string
-          jsonPath: .status.conditions[?(@.type=="Registered")].status
+          jsonPath: .status.conditions[?(@.type=="Ready")].status
         - name: Age
           type: date
           jsonPath: .metadata.creationTimestamp

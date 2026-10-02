@@ -22,7 +22,6 @@ vendor/
 # Local runtime state
 *.log
 *.pid
-registry-data/
 .kavrynt/
 
 # Secrets and machine-specific config
