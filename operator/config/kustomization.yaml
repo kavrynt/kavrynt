@@ -1,6 +1,0 @@
-resources:
-  - crd/bases/kavrynt.io_mcpservers.yaml
-  - rbac/service_account.yaml
-  - rbac/role.yaml
-  - rbac/role_binding.yaml
-  - manager/deployment.yaml
