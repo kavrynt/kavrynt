@@ -1,7 +1,7 @@
 # 0.0.1 Beta.1 Release Runbook
 
 > [!NOTE]
-> Historical. This runbook describes releases from the former per-component
+> Historical; see [RELEASE.md](RELEASE.md) for the current process. This runbook describes releases from the former per-component
 > repositories. From the runtime monorepo onwards, one `vX.Y.Z-beta.N` tag on
 > `main` in this repository runs `.github/workflows/release.yml`, which
 > publishes all images, `kavryctl`, and the chart. One-time setup moves here:

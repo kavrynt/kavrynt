@@ -318,10 +318,18 @@ jobs:
       - name: Publish chart
         run: helm push "dist/charts/kavrynt-${VERSION}.tgz" oci://ghcr.io/kavrynt/charts
 
+      - name: Mirror chart to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "$DOCKERHUB_TOKEN" | helm registry login registry-1.docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+          helm push "dist/charts/kavrynt-${VERSION}.tgz" oci://registry-1.docker.io/kavrynt
+
       - name: Install Kind
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
         with:
           install_only: true
 
-      - name: Validate published release end to end
+      - name: Validate published release end to end (trial path)
         run: make e2e-release RELEASE_VERSION="$VERSION"

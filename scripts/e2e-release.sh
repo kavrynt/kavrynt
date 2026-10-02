@@ -17,7 +17,8 @@ case "${RELEASE_VERSION}" in
 esac
 
 IMAGE_REGISTRY="${KAVRYNT_IMAGE_REGISTRY:-docker.io/kavrynt}"
-CHART_REF="${KAVRYNT_CHART_REF:-oci://ghcr.io/kavrynt/charts/kavrynt}"
+# Defaults match the public trial path: images and chart from Docker Hub.
+CHART_REF="${KAVRYNT_CHART_REF:-oci://registry-1.docker.io/kavrynt/kavrynt}"
 CLUSTER_NAME="${KIND_CLUSTER_NAME:-kavrynt-release-${RELEASE_VERSION//./-}}"
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 CONTROL_NAMESPACE="kavrynt-system"
