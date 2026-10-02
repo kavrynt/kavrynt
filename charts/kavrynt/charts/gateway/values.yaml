@@ -25,6 +25,9 @@ config:
   # Namespaces to watch for MCPServer resources. Empty watches all namespaces
   # through a ClusterRole; a list uses one Role per namespace instead.
   watchNamespaces: []
+  # Extra request headers never forwarded to MCP servers. Authorization,
+  # Cookie, and Proxy-Authorization are always removed (no token passthrough).
+  stripRequestHeaders: []
 
 podSecurityContext:
   runAsNonRoot: true

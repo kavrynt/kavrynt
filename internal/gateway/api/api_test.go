@@ -128,3 +128,62 @@ func TestBuildTargetURLRejectsUnsafeEndpoints(t *testing.T) {
 		})
 	}
 }
+
+func TestProxyNeverForwardsCredentials(t *testing.T) {
+	table := routing.NewTable()
+	table.Replace([]model.Route{{Name: "demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp"}}, time.Now())
+
+	var upstream http.Header
+	proxyClient := &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		upstream = req.Header.Clone()
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header: http.Header{
+				"Content-Type": []string{"application/json"},
+				"Set-Cookie":   []string{"session=upstream"},
+				"X-Upstream":   []string{"1"},
+			},
+			Body: io.NopCloser(strings.NewReader(`{}`)),
+		}, nil
+	})}
+	handler := NewHandler(table, proxyClient, Metadata{})
+	handler.StripRequestHeaders("X-Api-Key")
+
+	req := httptest.NewRequest(http.MethodPost, "/mcp/demo", strings.NewReader(`{}`))
+	req.Header.Set("Authorization", "Bearer client-token")
+	req.Header.Set("Cookie", "session=client")
+	req.Header.Set("Proxy-Authorization", "Basic abc")
+	req.Header.Set("X-Api-Key", "secret")
+	req.Header.Set("Connection", "X-Hop")
+	req.Header.Set("X-Hop", "1")
+	req.Header.Set("Mcp-Method", "tools/list")
+	req.Header.Set("X-Keep", "1")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+
+	if rr.Code != http.StatusOK {
+		t.Fatalf("status = %d: %s", rr.Code, rr.Body.String())
+	}
+	for _, name := range []string{"Authorization", "Cookie", "Proxy-Authorization", "X-Api-Key", "X-Hop", "Connection"} {
+		if value := upstream.Get(name); value != "" {
+			t.Errorf("upstream received %s: %q", name, value)
+		}
+	}
+	for _, name := range []string{"Mcp-Method", "X-Keep", "X-Kavrynt-Route"} {
+		if upstream.Get(name) == "" {
+			t.Errorf("upstream missing %s", name)
+		}
+	}
+	if rr.Header().Get("Set-Cookie") != "" {
+		t.Errorf("client received upstream Set-Cookie: %q", rr.Header().Get("Set-Cookie"))
+	}
+	if rr.Header().Get("X-Upstream") != "1" {
+		t.Error("client missing X-Upstream response header")
+	}
+
+	metrics := httptest.NewRecorder()
+	handler.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	if !strings.Contains(metrics.Body.String(), "kavrynt_gateway_stripped_credential_requests_total 1") {
+		t.Fatalf("metrics missing stripped count:\n%s", metrics.Body.String())
+	}
+}

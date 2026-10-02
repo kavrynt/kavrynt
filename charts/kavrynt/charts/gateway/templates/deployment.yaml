@@ -31,6 +31,10 @@ spec:
           args:
             - --addr
             - {{ .Values.config.addr | quote }}
+            {{- with .Values.config.stripRequestHeaders }}
+            - --strip-request-headers
+            - {{ join "," . | quote }}
+            {{- end }}
             {{- with .Values.config.watchNamespaces }}
             - --watch-namespaces
             - {{ join "," . | quote }}
