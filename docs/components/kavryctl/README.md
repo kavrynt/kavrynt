@@ -17,7 +17,7 @@ Kavrynt uses GitFlow:
 - `feature/<branch-name>` is used for each focused feature.
 
 Repository coding, branching, and security standards are defined in
-[AGENTS.md](AGENTS.md).
+[AGENTS.md](../../../AGENTS.md).
 
 ## Current Commands
 
@@ -75,7 +75,7 @@ go run . unregister --registry http://localhost:8080 example-mcp-server
 file-backed workflows and `--registry` for shared Registry API workflows.
 
 For Docker, Helm, GitHub Actions, and first-time contributor steps, see
-[docs/RUNBOOK.md](docs/RUNBOOK.md).
+[docs/RUNBOOK.md](RUNBOOK.md).
 
 ## Manifest Shape
 

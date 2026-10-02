@@ -1,76 +1,89 @@
 # AGENTS.md
 
-This is the private Kavrynt integration and release repository for the
-Kubernetes-native MCP Control Plane.
+This is the private Kavrynt runtime repository for the Kubernetes-native MCP
+Control Plane. It holds all customer-installed components and their release
+pipeline ([ADR-0001](docs/ADR-0001-Runtime-Monorepo.md)).
 
 ## Repository Ownership
 
-Canonical runtime source lives in separate sibling repositories:
+| Path | Owns |
+| --- | --- |
+| `cmd/kavryctl`, `internal/kavryctl` | Developer and platform CLI |
+| `cmd/gateway`, `internal/gateway` | MCP runtime routing and (future) enforcement |
+| `cmd/operator`, `internal/operator`, `api/v1alpha1`, `config/` | `MCPServer` CRD and reconciliation |
+| `cmd/registry`, `internal/registry` | In-cluster Registry, removed in `0.0.2-beta.1` (ADR-0002) |
+| `charts/kavrynt` | The Helm chart with vendored component subcharts |
+| `build/Dockerfile` | All runtime images (`--target gateway`, `operator`, `registry`) |
+| `test/e2e`, `scripts/` | Kind end-to-end tests, installers, release checks |
 
-- `../kavryctl`: developer and platform CLI.
-- `../registry`: MCP server metadata API and source of truth.
-- `../gateway`: MCP runtime routing and proxying.
-- `../operator`: Kubernetes `MCPServer` reconciliation.
+The hosted control plane lives in `kavrynt-cloud`; Azure infrastructure lives
+in `kavrynt-platform`. The former `kavryctl`, `registry`, `gateway`, and
+`operator` repositories are archived and must not receive new changes.
 
-This repository owns only cross-component concerns:
+## Architecture Decisions In Force
 
-- the umbrella Helm chart,
-- local and CI end-to-end workflows,
-- coordinated version manifests,
-- trial installation and validation runbooks.
-
-The existing `cmd/`, `services/`, and `operator/` trees are frozen legacy
-snapshots. Do not implement new runtime behavior there. Port any behavior that
-must be retained into the canonical sibling repository with tests, then remove
-the duplicate only through a separately reviewed migration.
+- [ADR-0001](docs/ADR-0001-Runtime-Monorepo.md): one module, one version, one chart.
+- [ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md): the `MCPServer` API
+  replaces the in-cluster Registry.
+- [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
+  design (not implemented yet).
+- Identity planes and threat model: `kavrynt-cloud/docs/ADR-0006-Identity-Planes.md`
+  and `kavrynt-cloud/docs/THREAT-0001-System-Threat-Model.md`.
 
 ## Product Boundary
 
 Kavrynt is a private commercial product. Do not describe this repository or
 the runtime source as open source or source-available. Trial users consume
 approved alpha or beta images, client binaries, Helm charts, and runbooks; they
-do not receive source repository access by default.
+do not receive source repository access by default. Do not add source-code
+GitHub links to customer-facing docs.
 
 ## Branching
 
 Use GitFlow:
 
-- `main`: validated release baseline.
-- `develop`: integrated development.
-- `feature/<short-kebab-case-name>`: scoped feature work.
+- `main`: validated release baseline. Release tags are cut from `main`.
+- `develop`: integrated development and the default branch.
+- `feature/<short-kebab-case-name>`: one logical change, merged back into
+  `develop` after `make qa` and `make e2e-kind` pass.
 - `release/<version>`: release stabilization when required.
 - `hotfix/<short-kebab-case-name>`: urgent production fixes.
 
 Never force-push shared branches. Preserve user changes and inspect repository
-status before editing. Commit or push only when the user explicitly requests
-it.
+status before editing. Commit, push, merge, or publish only when the owner
+explicitly requests it.
 
-## Integration Standards
+## Engineering Standards
 
-- Keep runtime repositories independently buildable and releasable.
-- Pin the exact component versions used by each coordinated release.
-- Treat Kubernetes manifests, MCP payloads, Registry data, and Gateway traffic
+- Keep components separated by package: Gateway must not contain
+  reconciliation logic; the Operator must not proxy traffic; `kavryctl` must
+  not import server internals other than shared API types.
+- Shared Kubernetes API types live only in `api/v1alpha1`.
+- Prefer simple, dependency-light Go. New dependencies must pass govulncheck
+  and Trivy gates.
+- Treat Kubernetes manifests, MCP payloads, tool metadata, and Gateway traffic
   as untrusted input.
-- Use non-root containers, least-privilege RBAC, and no embedded credentials.
+- Keep behaviour testable without network access; prefer fake
+  `http.RoundTripper`s and `t.TempDir()`.
+- Use explicit HTTP status codes and stable JSON responses.
+
+## Security Standards
+
+- Never commit secrets, tokens, kubeconfigs, private keys, or credentials, and
+  never log secret values.
+- Non-root, distroless images pinned by digest, with OCI labels.
+- Least-privilege RBAC; disable service account token automount unless needed;
+  `readOnlyRootFilesystem: true` unless a write path is required.
 - Do not claim authentication, tenant isolation, policy, audit, or SaaS
   controls exist until they are implemented and tested.
-- Keep the Kind workflow disposable and isolated from the user's current
-  Kubernetes context.
-- On macOS and Apple Silicon, build images locally and load them into Kind.
-- Prefer port-forwarding over NodePort for local verification.
+- Images are published only by `.github/workflows/release.yml` after all gates
+  pass. No mutable tags such as `latest`.
 
 ## Required Validation
 
-Run the canonical runtime QA:
-
 ```bash
-make qa
-```
-
-Run the complete local product flow:
-
-```bash
-make e2e-kind
+make qa        # fmt, race tests, vet, staticcheck, gosec, govulncheck, Helm, release contract
+make e2e-kind  # disposable Kind cluster, full product loop
 ```
 
 The end-to-end workflow must verify:
@@ -80,3 +93,8 @@ The end-to-end workflow must verify:
 3. Registry and Gateway expose the expected server identity.
 4. A JSON-RPC `tools/list` call succeeds through Gateway.
 5. Deleting the `MCPServer` removes Registry and Gateway state.
+
+Keep the Kind workflow disposable and isolated from the user's current
+Kubernetes context. On macOS and Apple Silicon, build images locally and load
+them into Kind. Prefer port-forwarding over NodePort for local verification.
+Do not modify or delete Kind clusters this workflow did not create.

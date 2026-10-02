@@ -64,7 +64,7 @@ Kavrynt uses GitFlow:
 - `feature/<branch-name>` is used for each focused feature.
 
 Repository coding, branching, and security standards are defined in
-[AGENTS.md](AGENTS.md).
+[AGENTS.md](../../../AGENTS.md).
 
 ## Scope
 
@@ -86,4 +86,4 @@ Out of scope:
 - Kubernetes Operator synchronization.
 - durable audit logging.
 
-For first-time validation steps, see [docs/RUNBOOK.md](docs/RUNBOOK.md).
+For first-time validation steps, see [docs/RUNBOOK.md](RUNBOOK.md).
