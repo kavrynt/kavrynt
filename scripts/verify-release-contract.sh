@@ -22,7 +22,7 @@ APP_VERSION="$(chart_field "${UMBRELLA_CHART}" appVersion)"
 [ -n "${VERSION}" ] || fail "umbrella chart version is empty"
 [ "${VERSION}" = "${APP_VERSION}" ] || fail "umbrella chart version and appVersion differ"
 
-for component in registry gateway operator; do
+for component in gateway operator; do
   case "${component}" in
     operator) chart="${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/Chart.yaml" ;;
     *) chart="${ROOT_DIR}/charts/kavrynt/charts/${component}/Chart.yaml" ;;
@@ -34,10 +34,10 @@ for component in registry gateway operator; do
     fail "${component} chart appVersion does not match ${VERSION}"
 done
 
-[ "$(grep --count --fixed-strings "tag: ${VERSION}" "${ROOT_DIR}/charts/kavrynt/values.yaml")" -eq 3 ] ||
+[ "$(grep --count --fixed-strings "tag: ${VERSION}" "${ROOT_DIR}/charts/kavrynt/values.yaml")" -eq 2 ] ||
   fail "umbrella image tags do not all match ${VERSION}"
 
-for component in registry gateway operator; do
+for component in gateway operator; do
   grep --quiet --fixed-strings "repository: kavrynt/${component}" "${ROOT_DIR}/charts/kavrynt/values.yaml" ||
     fail "umbrella values do not use kavrynt/${component}"
 done
@@ -67,7 +67,17 @@ done
 bash -n \
   "${ROOT_DIR}/scripts/e2e-kind.sh" \
   "${ROOT_DIR}/scripts/e2e-release.sh" \
+  "${ROOT_DIR}/scripts/e2e-upgrade.sh" \
   "${ROOT_DIR}/scripts/install.sh" \
   "${ROOT_DIR}/scripts/verify-release-contract.sh"
+
+cmp --silent "${ROOT_DIR}/config/crd/bases/kavrynt.io_mcpservers.yaml" \
+  "${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml" ||
+  fail "CRD copies in config/crd/bases and the operator chart differ"
+
+for archive in "${ROOT_DIR}"/charts/kavrynt/charts/*.tgz; do
+  [ -e "${archive}" ] || continue
+  fail "stale packaged subchart ${archive}; subcharts are vendored as directories"
+done
 
 printf 'release contract %s is internally consistent\n' "${VERSION}"

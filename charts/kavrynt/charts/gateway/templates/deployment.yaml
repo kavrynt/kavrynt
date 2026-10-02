@@ -15,7 +15,9 @@ spec:
       labels:
         {{- include "gateway.labels" . | nindent 8 }}
     spec:
-      automountServiceAccountToken: false
+      serviceAccountName: {{ include "gateway.serviceAccountName" . }}
+      # The Gateway watches MCPServer resources through the Kubernetes API.
+      automountServiceAccountToken: true
       {{- with .Values.imagePullSecrets }}
       imagePullSecrets:
         {{- toYaml . | nindent 8 }}
@@ -29,10 +31,10 @@ spec:
           args:
             - --addr
             - {{ .Values.config.addr | quote }}
-            - --registry-url
-            - {{ .Values.config.registryURL | quote }}
-            - --sync-interval
-            - {{ .Values.config.syncInterval | quote }}
+            {{- with .Values.config.watchNamespaces }}
+            - --watch-namespaces
+            - {{ join "," . | quote }}
+            {{- end }}
             - --request-timeout
             - {{ .Values.config.requestTimeout | quote }}
           ports:

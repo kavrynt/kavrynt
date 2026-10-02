@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: kavrynt/operator
-  tag: 0.0.1-beta.1
+  tag: 0.0.2-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -12,10 +12,8 @@ serviceAccount:
   name: ""
 
 config:
-  registryURL: "http://registry.default.svc.cluster.local:8080"
   metricsBindAddress: ":8080"
   healthProbeBindAddress: ":8081"
-  syncRetryPeriod: "30s"
   leaderElect: true
 
 podSecurityContext:

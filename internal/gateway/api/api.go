@@ -1,7 +1,6 @@
 package api
 
 import (
-	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,7 +12,6 @@ import (
 	"time"
 
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
-	"github.com/kavrynt/kavrynt/internal/gateway/registry"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 )
 
@@ -25,27 +23,23 @@ type Metadata struct {
 
 type Handler struct {
 	table    *routing.Table
-	registry *registry.Client
 	client   *http.Client
 	metadata Metadata
 
-	requests     atomic.Uint64
-	proxied      atomic.Uint64
-	syncSuccess  atomic.Uint64
-	syncFailures atomic.Uint64
+	requests atomic.Uint64
+	proxied  atomic.Uint64
 }
 
 type errorResponse struct {
 	Error string `json:"error"`
 }
 
-func NewHandler(table *routing.Table, registry *registry.Client, client *http.Client, metadata Metadata) *Handler {
+func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *Handler {
 	if client == nil {
 		client = http.DefaultClient
 	}
 	return &Handler{
 		table:    table,
-		registry: registry,
 		client:   client,
 		metadata: metadata,
 	}
@@ -69,37 +63,6 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.proxy(w, r)
 	default:
 		writeError(w, http.StatusNotFound, errors.New("not found"))
-	}
-}
-
-func (h *Handler) SyncOnce(ctx context.Context) error {
-	records, err := h.registry.ListServers(ctx)
-	if err != nil {
-		h.syncFailures.Add(1)
-		h.table.MarkSyncError(err)
-		return err
-	}
-	h.table.Replace(records, time.Now())
-	h.syncSuccess.Add(1)
-	return nil
-}
-
-func (h *Handler) StartSync(ctx context.Context, interval time.Duration) {
-	if interval <= 0 {
-		interval = 10 * time.Second
-	}
-
-	_ = h.SyncOnce(ctx)
-
-	ticker := time.NewTicker(interval)
-	defer ticker.Stop()
-	for {
-		select {
-		case <-ctx.Done():
-			return
-		case <-ticker.C:
-			_ = h.SyncOnce(ctx)
-		}
 	}
 }
 
@@ -131,11 +94,12 @@ func (h *Handler) version(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) metrics(w http.ResponseWriter, _ *http.Request) {
 	_, _, _, routes := h.table.Status()
+	syncs, failures := h.table.SyncCounts()
 	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
 	_, _ = fmt.Fprintf(w, "kavrynt_gateway_requests_total %d\n", h.requests.Load())
 	_, _ = fmt.Fprintf(w, "kavrynt_gateway_proxied_requests_total %d\n", h.proxied.Load())
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_registry_sync_success_total %d\n", h.syncSuccess.Load())
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_registry_sync_failure_total %d\n", h.syncFailures.Load())
+	_, _ = fmt.Fprintf(w, "kavrynt_gateway_route_sync_success_total %d\n", syncs)
+	_, _ = fmt.Fprintf(w, "kavrynt_gateway_route_sync_failure_total %d\n", failures)
 	_, _ = fmt.Fprintf(w, "kavrynt_gateway_routes %d\n", routes)
 }
 
@@ -176,7 +140,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Kavrynt-Route", route.Name)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
-	// #nosec G704 -- buildTargetURL restricts Registry-provided targets to validated HTTP(S) URLs.
+	// #nosec G704 -- buildTargetURL restricts MCPServer-provided targets to validated HTTP(S) URLs.
 	resp, err := h.client.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)

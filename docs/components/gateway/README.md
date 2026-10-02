@@ -1,116 +1,48 @@
-# Kavrynt Gateway
+# Gateway
 
-Kavrynt Gateway is the MVP data-plane entry point for HTTP MCP traffic.
+Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
+`internal/gateway`.
 
-It syncs registered MCP server metadata from Kavrynt Registry, builds an
-in-memory route table, and proxies requests from:
+## Behaviour
 
-```text
-/mcp/<server-name>
-```
+- Watches `MCPServer` resources through a read-only informer cache
+  (`internal/gateway/kube`). A server gets a route when the operator reports
+  `Ready=True`, the spec passes validation, and the transport is `http`.
+- Route path: `/mcp/<namespace>.<name>[/<suffix>]`. Suffix and query string are
+  appended to the endpoint URL.
+- Endpoints are restricted to absolute `http`/`https` URLs without credentials
+  or fragments.
+- Not implemented: authentication, policy, audit, header stripping. The
+  Gateway currently forwards client headers, including `Authorization`,
+  upstream. See ADR-0003.
 
-to the registered HTTP endpoint for that server.
+## Endpoints
 
-## MVP Scope
+| Path | Purpose |
+| --- | --- |
+| `GET /healthz` | Liveness |
+| `GET /readyz` | `200` after the `MCPServer` cache has synced once |
+| `GET /version` | Build metadata |
+| `GET /metrics` | Request, proxy, and route-sync counters (Prometheus text) |
+| `GET /v1/routes` | Current route table |
+| `* /mcp/<route>/...` | Proxied MCP traffic |
 
-Included:
+## Flags
 
-- Registry sync from `GET /v1/servers`.
-- In-memory route table.
-- HTTP transport proxying for registered MCP servers.
-- Health, readiness, version, metrics, and route inspection endpoints.
-- Docker, GitHub Actions QA, Helm chart, and runbook.
+| Flag | Default | Purpose |
+| --- | --- | --- |
+| `--addr` | `:8080` | Listen address |
+| `--watch-namespaces` | all | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
+| `--request-timeout` | `30s` | Upstream request timeout |
+| `--shutdown-timeout` | `10s` | Graceful shutdown timeout |
 
-Not included yet:
+Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`
+when run locally). The chart grants only `get`, `list`, `watch` on
+`mcpservers.kavrynt.io`.
 
-- authentication and authorization,
-- tenant isolation,
-- Gateway-to-Registry mTLS,
-- stdio MCP process execution,
-- Kubernetes Operator integration,
-- durable route cache,
-- advanced MCP protocol validation.
-
-## Run Locally
-
-Start Registry first, then run Gateway:
-
-```bash
-go run . --registry-url http://localhost:8081 --addr :8080
-```
-
-Environment variable alternative:
-
-```bash
-KAVRYNT_REGISTRY_URL=http://localhost:8081 go run .
-```
-
-Useful endpoints:
+## Run locally
 
 ```bash
-curl -fsS http://localhost:8080/healthz
-curl -fsS http://localhost:8080/readyz
-curl -fsS http://localhost:8080/version
-curl -fsS http://localhost:8080/v1/routes
-curl -fsS http://localhost:8080/metrics
-```
-
-Proxy a registered HTTP MCP server:
-
-```bash
-curl -fsS -X POST http://localhost:8080/mcp/example-mcp-server \
-  -H 'Content-Type: application/json' \
-  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
-```
-
-## Validate
-
-```bash
-mkdir -p .cache/go-build
-GOCACHE="$PWD/.cache/go-build" go test ./...
-GOCACHE="$PWD/.cache/go-build" go vet ./...
-helm lint charts/gateway
-helm template gateway charts/gateway
-```
-
-## Docker
-
-```bash
-docker build -t kavrynt/gateway:dev .
-docker run --rm -p 8080:8080 \
-  -e KAVRYNT_REGISTRY_URL=http://host.docker.internal:8081 \
-  kavrynt/gateway:dev
-```
-
-## Private GHCR Image
-
-Kavrynt private release images are published to GitHub Container Registry:
-
-```text
-ghcr.io/kavrynt/gateway:<tag>
-```
-
-For local publishing, authenticate with a classic GitHub token that has
-`write:packages`:
-
-```bash
-export CR_PAT=<classic-token-with-write-packages>
-echo "$CR_PAT" | docker login ghcr.io -u <github-username> --password-stdin
-docker buildx build --platform linux/amd64,linux/arm64 \
-  --build-arg VERSION=0.0.1-beta.1 \
-  --build-arg COMMIT="$(git rev-parse HEAD)" \
-  --build-arg BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)" \
-  -t ghcr.io/kavrynt/gateway:0.0.1-beta.1 \
-  --push .
-```
-
-The package is private by default on first publish. Link it to this private
-repository and inherit repository permissions from the package settings.
-
-## Helm
-
-```bash
-helm install gateway charts/gateway \
-  --set config.registryURL=http://registry.default.svc.cluster.local:8080 \
-  --set imagePullSecrets[0].name=ghcr-kavrynt
+go run ./cmd/gateway --addr 127.0.0.1:8080   # uses your current kubeconfig context
+curl -fsS http://127.0.0.1:8080/v1/routes
 ```

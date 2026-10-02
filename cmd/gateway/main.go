@@ -8,31 +8,42 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strings"
 	"syscall"
 	"time"
 
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
-	"github.com/kavrynt/kavrynt/internal/gateway/registry"
+	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	ctrl "sigs.k8s.io/controller-runtime"
 )
 
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
-	registryURL := flag.String("registry-url", getenv("KAVRYNT_REGISTRY_URL", ""), "Kavrynt Registry base URL")
-	syncInterval := flag.Duration("sync-interval", 10*time.Second, "Registry sync interval")
+	watchNamespaces := flag.String("watch-namespaces", getenv("KAVRYNT_WATCH_NAMESPACES", ""), "Comma-separated namespaces to watch for MCPServer resources (empty watches all)")
 	requestTimeout := flag.Duration("request-timeout", 30*time.Second, "Outbound request timeout")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
+	flag.Usage = func() {
+		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
+		flag.PrintDefaults()
+	}
 	flag.Parse()
 
-	registryClient, err := registry.NewClient(*registryURL, &http.Client{Timeout: *requestTimeout})
+	cfg, err := ctrl.GetConfig()
 	if err != nil {
-		slog.Error("invalid registry configuration", "error", err)
+		slog.Error("load Kubernetes configuration", "error", err)
+		os.Exit(1)
+	}
+	namespaces := splitNamespaces(*watchNamespaces)
+	routeCache, err := kube.NewCache(cfg, namespaces)
+	if err != nil {
+		slog.Error("create MCPServer cache", "error", err)
 		os.Exit(1)
 	}
 
 	table := routing.NewTable()
-	handler := api.NewHandler(table, registryClient, &http.Client{Timeout: *requestTimeout}, api.Metadata{
+	handler := api.NewHandler(table, &http.Client{Timeout: *requestTimeout}, api.Metadata{
 		Version:   build.Version,
 		Commit:    build.Commit,
 		BuildDate: build.BuildDate,
@@ -40,36 +51,53 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
-	go handler.StartSync(ctx, *syncInterval)
+
+	errCh := make(chan error, 2)
+	go func() {
+		watcher := &kube.Watcher{Cache: routeCache, Table: table}
+		if err := watcher.Run(ctx); err != nil {
+			errCh <- fmt.Errorf("MCPServer watch: %w", err)
+		}
+	}()
 
 	server := &http.Server{
 		Addr:              *addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
 	}
-
-	errCh := make(chan error, 1)
 	go func() {
-		slog.Info("starting kavrynt gateway", "addr", *addr, "registryURL", *registryURL)
-		errCh <- server.ListenAndServe()
+		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "version", build.Version)
+		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
+			errCh <- err
+		}
 	}()
 
+	exitCode := 0
 	select {
 	case <-ctx.Done():
 	case err := <-errCh:
-		if err != nil && err != http.ErrServerClosed {
-			slog.Error("gateway failed", "error", err)
-			os.Exit(1)
-		}
+		slog.Error("gateway failed", "error", err)
+		exitCode = 1
 	}
 
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
 	defer cancel()
 	if err := server.Shutdown(shutdownCtx); err != nil {
 		slog.Error("gateway shutdown failed", "error", err)
-		os.Exit(1)
+		exitCode = 1
 	}
 	slog.Info("gateway stopped")
+	os.Exit(exitCode)
+}
+
+func splitNamespaces(value string) []string {
+	var namespaces []string
+	for _, namespace := range strings.Split(value, ",") {
+		if namespace = strings.TrimSpace(namespace); namespace != "" {
+			namespaces = append(namespaces, namespace)
+		}
+	}
+	return namespaces
 }
 
 func getenv(key, fallback string) string {
@@ -77,13 +105,4 @@ func getenv(key, fallback string) string {
 		return value
 	}
 	return fallback
-}
-
-func init() {
-	flag.CommandLine.Usage = func() {
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Kavrynt Gateway\n\n")
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway --registry-url http://localhost:8081\n\n")
-		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Flags:\n")
-		flag.PrintDefaults()
-	}
 }

@@ -1,19 +1,25 @@
 package cli
 
 import (
+	"context"
 	"encoding/json"
 	"flag"
 	"fmt"
 	"io"
-	"os"
-	"path/filepath"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/kavryctl/manifest"
-	"github.com/kavrynt/kavrynt/internal/kavryctl/registry"
-	"github.com/kavrynt/kavrynt/internal/kavryctl/remote"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
+	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
+	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/types"
+	"k8s.io/apimachinery/pkg/util/duration"
+	"k8s.io/client-go/tools/clientcmd"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 )
 
 var (
@@ -21,6 +27,51 @@ var (
 	Commit    = "unknown"
 	BuildDate = "unknown"
 )
+
+const requestTimeout = 30 * time.Second
+
+// kubeOptions are the connection flags shared by cluster commands.
+type kubeOptions struct {
+	kubeconfig string
+	context    string
+	namespace  string
+}
+
+func (o *kubeOptions) bind(fs *flag.FlagSet) {
+	fs.StringVar(&o.kubeconfig, "kubeconfig", "", "Path to the kubeconfig file (defaults to KUBECONFIG or ~/.kube/config)")
+	fs.StringVar(&o.context, "context", "", "Kubeconfig context to use")
+	fs.StringVar(&o.namespace, "namespace", "", "Namespace (defaults to the context namespace)")
+	fs.StringVar(&o.namespace, "n", "", "Shorthand for --namespace")
+}
+
+// newKubeClient returns a client and the effective namespace. Tests replace it.
+var newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
+	rules := clientcmd.NewDefaultClientConfigLoadingRules()
+	rules.ExplicitPath = opts.kubeconfig
+	overrides := &clientcmd.ConfigOverrides{CurrentContext: opts.context}
+	loader := clientcmd.NewNonInteractiveDeferredLoadingClientConfig(rules, overrides)
+
+	cfg, err := loader.ClientConfig()
+	if err != nil {
+		return nil, "", fmt.Errorf("load kubeconfig: %w", err)
+	}
+	namespace := opts.namespace
+	if namespace == "" {
+		if namespace, _, err = loader.Namespace(); err != nil {
+			return nil, "", fmt.Errorf("resolve namespace: %w", err)
+		}
+	}
+
+	scheme := runtime.NewScheme()
+	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
+		return nil, "", err
+	}
+	c, err := client.New(cfg, client.Options{Scheme: scheme})
+	if err != nil {
+		return nil, "", fmt.Errorf("create Kubernetes client: %w", err)
+	}
+	return c, namespace, nil
+}
 
 func Execute(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
@@ -35,8 +86,6 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	case "help", "-h", "--help":
 		printUsage(stdout)
 		return 0
-	case "init":
-		return runInit(args[1:], stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "register":
@@ -54,154 +103,121 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
-func runInit(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("init", stderr)
-	homeFlag := fs.String("home", "", "Kavrynt home directory")
-	if err := fs.Parse(args); err != nil {
-		return 2
-	}
-	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "init does not accept positional arguments")
-		return 2
-	}
-
-	home := registry.Home(*homeFlag)
-	if err := registry.Init(home); err != nil {
-		fmt.Fprintf(stderr, "init failed: %v\n", err)
-		return 1
-	}
-
-	fmt.Fprintf(stdout, "initialized registry at %s\n", registry.Path(home))
-	return 0
-}
-
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("validate", stderr)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl validate <manifest.json>")
+		fmt.Fprintln(stderr, "usage: kavryctl validate <manifest.yaml|json>")
 		return 2
 	}
 
-	path := fs.Arg(0)
-	m, err := manifest.Load(path)
+	server, err := manifest.Load(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "validation failed: %v\n", err)
 		return 1
 	}
-
-	fmt.Fprintf(stdout, "valid MCP server manifest: %s\n", m.Metadata.Name)
+	fmt.Fprintf(stdout, "valid MCPServer manifest: %s\n", server.Name)
 	return 0
 }
 
 func runRegister(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("register", stderr)
-	homeFlag := fs.String("home", "", "Kavrynt home directory")
-	registryFlag := fs.String("registry", "", "Remote Kavrynt Registry URL")
+	var opts kubeOptions
+	opts.bind(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl register [--home DIR] [--registry URL] <manifest.json>")
+		fmt.Fprintln(stderr, "usage: kavryctl register [-n NAMESPACE] <manifest.yaml|json>")
 		return 2
 	}
 
-	path := fs.Arg(0)
-	m, err := manifest.Load(path)
+	server, err := manifest.Load(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "registration failed: %v\n", err)
 		return 1
 	}
-
-	registryURL, err := remoteRegistryURL(*registryFlag, *homeFlag)
-	if err != nil {
-		fmt.Fprintf(stderr, "registration failed: %v\n", err)
+	if opts.namespace != "" && server.Namespace != "" && opts.namespace != server.Namespace {
+		fmt.Fprintf(stderr, "registration failed: manifest namespace %q conflicts with --namespace %q\n", server.Namespace, opts.namespace)
 		return 2
 	}
-	if registryURL != "" {
-		client, err := remote.NewClient(registryURL)
-		if err != nil {
-			fmt.Fprintf(stderr, "registration failed: %v\n", err)
-			return 2
-		}
-		server, created, err := client.Register(m)
-		if err != nil {
+	if opts.namespace == "" {
+		opts.namespace = server.Namespace
+	}
+
+	c, namespace, err := newKubeClient(opts)
+	if err != nil {
+		fmt.Fprintf(stderr, "registration failed: %v\n", err)
+		return 1
+	}
+	server.Namespace = namespace
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	action := "registered"
+	if err := c.Create(ctx, server); err != nil {
+		if !apierrors.IsAlreadyExists(err) {
 			fmt.Fprintf(stderr, "registration failed: %v\n", err)
 			return 1
 		}
-		action := "updated"
-		if created {
-			action = "registered"
+		var existing kavryntv1alpha1.MCPServer
+		if err := c.Get(ctx, client.ObjectKeyFromObject(server), &existing); err != nil {
+			fmt.Fprintf(stderr, "registration failed: %v\n", err)
+			return 1
 		}
-		fmt.Fprintf(stdout, "%s MCP server %s@%s in Registry %s\n", action, server.Manifest.Metadata.Name, server.Manifest.Spec.Version, registryURL)
-		return 0
+		existing.Labels = server.Labels
+		existing.Annotations = server.Annotations
+		existing.Spec = server.Spec
+		if err := c.Update(ctx, &existing); err != nil {
+			fmt.Fprintf(stderr, "registration failed: %v\n", err)
+			return 1
+		}
+		action = "updated"
 	}
 
-	home := registry.Home(*homeFlag)
-	source, err := filepath.Abs(path)
-	if err != nil {
-		source = path
-	}
-	server, created, err := registry.Register(home, m, source, time.Now())
-	if err != nil {
-		fmt.Fprintf(stderr, "registration failed: %v\n", err)
-		return 1
-	}
-
-	action := "updated"
-	if created {
-		action = "registered"
-	}
-	fmt.Fprintf(stdout, "%s MCP server %s@%s\n", action, server.Manifest.Metadata.Name, server.Manifest.Spec.Version)
+	fmt.Fprintf(stdout, "%s MCPServer %s/%s@%s\n", action, server.Namespace, server.Name, server.Spec.Version)
 	return 0
 }
 
 func runUnregister(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("unregister", stderr)
-	homeFlag := fs.String("home", "", "Kavrynt home directory")
-	registryFlag := fs.String("registry", "", "Remote Kavrynt Registry URL")
+	var opts kubeOptions
+	opts.bind(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl unregister [--home DIR] [--registry URL] <name>")
+		fmt.Fprintln(stderr, "usage: kavryctl unregister [-n NAMESPACE] <name>")
 		return 2
 	}
 
-	name := fs.Arg(0)
-	registryURL, err := remoteRegistryURL(*registryFlag, *homeFlag)
+	c, namespace, err := newKubeClient(opts)
 	if err != nil {
-		fmt.Fprintf(stderr, "unregister failed: %v\n", err)
-		return 2
-	}
-	if registryURL != "" {
-		client, err := remote.NewClient(registryURL)
-		if err != nil {
-			fmt.Fprintf(stderr, "unregister failed: %v\n", err)
-			return 2
-		}
-		if err := client.Unregister(name); err != nil {
-			fmt.Fprintf(stderr, "unregister failed: %v\n", err)
-			return 1
-		}
-		fmt.Fprintf(stdout, "unregistered MCP server %s from Registry %s\n", name, registryURL)
-		return 0
-	}
-
-	if err := registry.Unregister(registry.Home(*homeFlag), name); err != nil {
 		fmt.Fprintf(stderr, "unregister failed: %v\n", err)
 		return 1
 	}
-	fmt.Fprintf(stdout, "unregistered MCP server %s\n", name)
+
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	server := &kavryntv1alpha1.MCPServer{ObjectMeta: metav1.ObjectMeta{Name: fs.Arg(0), Namespace: namespace}}
+	if err := c.Delete(ctx, server); err != nil {
+		fmt.Fprintf(stderr, "unregister failed: %v\n", err)
+		return 1
+	}
+	fmt.Fprintf(stdout, "unregistered MCPServer %s/%s\n", namespace, fs.Arg(0))
 	return 0
 }
 
 func runList(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("list", stderr)
-	homeFlag := fs.String("home", "", "Kavrynt home directory")
-	registryFlag := fs.String("registry", "", "Remote Kavrynt Registry URL")
+	var opts kubeOptions
+	opts.bind(fs)
+	allNamespaces := fs.Bool("all-namespaces", false, "List MCPServers in all namespaces")
+	fs.BoolVar(allNamespaces, "A", false, "Shorthand for --all-namespaces")
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
@@ -210,63 +226,46 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 
-	registryURL, err := remoteRegistryURL(*registryFlag, *homeFlag)
-	if err != nil {
-		fmt.Fprintf(stderr, "list failed: %v\n", err)
-		return 2
-	}
-	if registryURL != "" {
-		client, err := remote.NewClient(registryURL)
-		if err != nil {
-			fmt.Fprintf(stderr, "list failed: %v\n", err)
-			return 2
-		}
-		servers, err := client.List()
-		if err != nil {
-			fmt.Fprintf(stderr, "list failed: %v\n", err)
-			return 1
-		}
-		if len(servers) == 0 {
-			fmt.Fprintln(stdout, "no MCP servers registered")
-			return 0
-		}
-		tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-		fmt.Fprintln(tw, "NAME\tVERSION\tTRANSPORT\tUPDATED")
-		for _, server := range servers {
-			fmt.Fprintf(
-				tw,
-				"%s\t%s\t%s\t%s\n",
-				server.Manifest.Metadata.Name,
-				server.Manifest.Spec.Version,
-				server.Manifest.Spec.Transport,
-				server.UpdatedAt.Format(time.RFC3339),
-			)
-		}
-		_ = tw.Flush()
-		return 0
-	}
-
-	servers, err := registry.List(registry.Home(*homeFlag))
+	c, namespace, err := newKubeClient(opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "list failed: %v\n", err)
 		return 1
 	}
 
-	if len(servers) == 0 {
-		fmt.Fprintln(stdout, "no MCP servers registered")
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	var listOpts []client.ListOption
+	if !*allNamespaces {
+		listOpts = append(listOpts, client.InNamespace(namespace))
+	}
+	var servers kavryntv1alpha1.MCPServerList
+	if err := c.List(ctx, &servers, listOpts...); err != nil {
+		fmt.Fprintf(stderr, "list failed: %v\n", err)
+		return 1
+	}
+	if len(servers.Items) == 0 {
+		fmt.Fprintln(stdout, "no MCPServers found")
 		return 0
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAME\tVERSION\tTRANSPORT\tUPDATED")
-	for _, server := range servers {
-		fmt.Fprintf(
-			tw,
-			"%s\t%s\t%s\t%s\n",
-			server.Manifest.Metadata.Name,
-			server.Manifest.Spec.Version,
-			server.Manifest.Spec.Transport,
-			server.UpdatedAt.Format(time.RFC3339),
+	fmt.Fprintln(tw, "NAMESPACE\tNAME\tVERSION\tTRANSPORT\tREADY\tROUTE\tAGE")
+	now := time.Now()
+	for i := range servers.Items {
+		server := &servers.Items[i]
+		ready := "Unknown"
+		if condition := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady); condition != nil {
+			ready = string(condition.Status)
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+			server.Namespace,
+			server.Name,
+			server.Spec.Version,
+			server.Spec.Transport,
+			ready,
+			"/mcp/"+server.RouteName(),
+			duration.HumanDuration(now.Sub(server.CreationTimestamp.Time)),
 		)
 	}
 	_ = tw.Flush()
@@ -275,48 +274,35 @@ func runList(args []string, stdout, stderr io.Writer) int {
 
 func runInspect(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("inspect", stderr)
-	homeFlag := fs.String("home", "", "Kavrynt home directory")
-	registryFlag := fs.String("registry", "", "Remote Kavrynt Registry URL")
+	var opts kubeOptions
+	opts.bind(fs)
 	if err := fs.Parse(args); err != nil {
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl inspect [--home DIR] [--registry URL] <name>")
+		fmt.Fprintln(stderr, "usage: kavryctl inspect [-n NAMESPACE] <name>")
 		return 2
 	}
 
-	registryURL, err := remoteRegistryURL(*registryFlag, *homeFlag)
-	if err != nil {
-		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
-		return 2
-	}
-	if registryURL != "" {
-		client, err := remote.NewClient(registryURL)
-		if err != nil {
-			fmt.Fprintf(stderr, "inspect failed: %v\n", err)
-			return 2
-		}
-		server, err := client.Inspect(fs.Arg(0))
-		if err != nil {
-			fmt.Fprintf(stderr, "inspect failed: %v\n", err)
-			return 1
-		}
-		data, err := json.MarshalIndent(server, "", "  ")
-		if err != nil {
-			fmt.Fprintf(stderr, "inspect failed: %v\n", err)
-			return 1
-		}
-		fmt.Fprintln(stdout, string(data))
-		return 0
-	}
-
-	server, err := registry.Inspect(registry.Home(*homeFlag), fs.Arg(0))
+	c, namespace, err := newKubeClient(opts)
 	if err != nil {
 		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
 		return 1
 	}
 
-	data, err := json.MarshalIndent(server, "", "  ")
+	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
+	defer cancel()
+
+	var server kavryntv1alpha1.MCPServer
+	if err := c.Get(ctx, types.NamespacedName{Name: fs.Arg(0), Namespace: namespace}, &server); err != nil {
+		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
+		return 1
+	}
+	server.APIVersion = kavryntv1alpha1.GroupVersion.String()
+	server.Kind = kavryntv1alpha1.MCPServerKind
+	server.ManagedFields = nil
+
+	data, err := json.MarshalIndent(&server, "", "  ")
 	if err != nil {
 		fmt.Fprintf(stderr, "inspect failed: %v\n", err)
 		return 1
@@ -331,34 +317,23 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	return fs
 }
 
-func remoteRegistryURL(explicitURL, explicitHome string) (string, error) {
-	if explicitURL != "" && explicitHome != "" {
-		return "", fmt.Errorf("--registry and --home cannot be used together")
-	}
-	if explicitURL != "" {
-		return explicitURL, nil
-	}
-	if explicitHome != "" {
-		return "", nil
-	}
-	return os.Getenv("KAVRYNT_REGISTRY_URL"), nil
-}
-
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, strings.TrimSpace(`
-kavryctl manages Kavrynt MCP server registration.
+kavryctl manages Kavrynt MCPServer resources in a Kubernetes cluster.
 
 Usage:
   kavryctl version
-  kavryctl init [--home DIR]
-  kavryctl validate <manifest.json>
-  kavryctl register [--home DIR] [--registry URL] <manifest.json>
-  kavryctl unregister [--home DIR] [--registry URL] <name>
-  kavryctl list [--home DIR] [--registry URL]
-  kavryctl inspect [--home DIR] [--registry URL] <name>
+  kavryctl validate <manifest.yaml|json>
+  kavryctl register   [cluster flags] <manifest.yaml|json>
+  kavryctl unregister [cluster flags] <name>
+  kavryctl list       [cluster flags] [-A]
+  kavryctl inspect    [cluster flags] <name>
 
-Environment:
-  KAVRYNT_HOME          Defaults to .kavrynt in the current directory.
-  KAVRYNT_REGISTRY_URL  Remote Registry API URL for register/unregister/list/inspect.
+Cluster flags:
+  --kubeconfig PATH   Kubeconfig file (defaults to KUBECONFIG or ~/.kube/config)
+  --context NAME      Kubeconfig context
+  -n, --namespace NS  Namespace (defaults to the context namespace)
+
+The Gateway routes each Ready MCPServer at /mcp/<namespace>.<name>.
 `)+"\n")
 }
