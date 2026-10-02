@@ -2,11 +2,6 @@
 set -Eeuo pipefail
 
 ROOT_DIR="$(CDPATH= cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.." && pwd)"
-RUNTIME_ROOT="${RUNTIME_ROOT:-${ROOT_DIR}/..}"
-KAVRYCTL_REPO="${KAVRYCTL_REPO:-${RUNTIME_ROOT}/kavryctl}"
-REGISTRY_REPO="${REGISTRY_REPO:-${RUNTIME_ROOT}/registry}"
-GATEWAY_REPO="${GATEWAY_REPO:-${RUNTIME_ROOT}/gateway}"
-OPERATOR_REPO="${OPERATOR_REPO:-${RUNTIME_ROOT}/operator}"
 CLUSTER_NAME="${KIND_CLUSTER_NAME:-kavrynt-alpha0}"
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 CONTROL_NAMESPACE="kavrynt-system"
@@ -37,7 +32,7 @@ require_command() {
 }
 
 git_commit() {
-  git -C "$1" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown'
+  git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown'
 }
 
 diagnostics() {
@@ -106,10 +101,6 @@ for command in docker kind kubectl helm curl jq git grep sed; do
   require_command "${command}"
 done
 
-for repository in "${KAVRYCTL_REPO}" "${REGISTRY_REPO}" "${GATEWAY_REPO}" "${OPERATOR_REPO}"; do
-  [ -d "${repository}" ] || fail "runtime repository not found: ${repository}"
-done
-
 docker info >/dev/null 2>&1 || fail "Docker is not reachable"
 
 if kind get clusters | grep --fixed-strings --line-regexp "${CLUSTER_NAME}" >/dev/null 2>&1; then
@@ -118,28 +109,24 @@ fi
 
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
-log "building canonical kavryctl client"
+log "building kavryctl client"
 (
-  cd "${KAVRYCTL_REPO}"
-  GOWORK=off GOCACHE="${TEMP_DIR}/go-build" go build -o "${TEMP_DIR}/kavryctl" .
+  cd "${ROOT_DIR}"
+  GOCACHE="${TEMP_DIR}/go-build" go build -o "${TEMP_DIR}/kavryctl" ./cmd/kavryctl
 )
 
-log "building canonical runtime images"
-docker build \
-  --build-arg VERSION=0.0.1-beta.1 \
-  --build-arg COMMIT="$(git_commit "${REGISTRY_REPO}")" \
-  --build-arg BUILD_DATE="${BUILD_DATE}" \
-  --tag "${REGISTRY_IMAGE}" "${REGISTRY_REPO}"
-docker build \
-  --build-arg VERSION=0.0.1-beta.1 \
-  --build-arg COMMIT="$(git_commit "${GATEWAY_REPO}")" \
-  --build-arg BUILD_DATE="${BUILD_DATE}" \
-  --tag "${GATEWAY_IMAGE}" "${GATEWAY_REPO}"
-docker build \
-  --build-arg VERSION=0.0.1-beta.1 \
-  --build-arg COMMIT="$(git_commit "${OPERATOR_REPO}")" \
-  --build-arg BUILD_DATE="${BUILD_DATE}" \
-  --tag "${OPERATOR_IMAGE}" "${OPERATOR_REPO}"
+log "building runtime images"
+COMMIT="$(git_commit)"
+for target in registry gateway operator; do
+  docker build \
+    --file "${ROOT_DIR}/build/Dockerfile" \
+    --target "${target}" \
+    --build-arg VERSION="${LOCAL_VERSION}" \
+    --build-arg COMMIT="${COMMIT}" \
+    --build-arg BUILD_DATE="${BUILD_DATE}" \
+    --tag "kavrynt/${target}:${LOCAL_VERSION}" \
+    "${ROOT_DIR}"
+done
 docker build --tag "${SAMPLE_IMAGE}" "${ROOT_DIR}/test/e2e/mcp-server"
 
 log "creating Kind cluster ${CLUSTER_NAME}"
@@ -149,9 +136,6 @@ CREATED_CLUSTER=1
 log "loading local images"
 kind load docker-image --name "${CLUSTER_NAME}" \
   "${REGISTRY_IMAGE}" "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${SAMPLE_IMAGE}"
-
-log "building umbrella chart dependencies from canonical repositories"
-helm dependency build --skip-refresh "${ROOT_DIR}/charts/kavrynt"
 
 log "installing Kavrynt control plane"
 helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
