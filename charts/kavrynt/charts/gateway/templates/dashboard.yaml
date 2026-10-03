@@ -1,0 +1,17 @@
+{{- if .Values.metrics.dashboard.enabled }}
+# Grafana dashboard for MCP traffic. The Grafana dashboard sidecar (for
+# example kube-prometheus-stack) loads ConfigMaps carrying the configured label.
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gateway.fullname" . }}-dashboard
+  {{- with .Values.metrics.dashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "gateway.labels" . | nindent 4 }}
+    {{- toYaml .Values.metrics.dashboard.labels | nindent 4 }}
+data:
+  kavrynt-mcp-traffic.json: |-
+{{ .Files.Get "dashboards/mcp-traffic.json" | indent 4 }}
+{{- end }}

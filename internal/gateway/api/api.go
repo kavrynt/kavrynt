@@ -11,6 +11,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus/promhttp"
+
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 )
@@ -37,6 +39,9 @@ type Handler struct {
 	requests         atomic.Uint64
 	proxied          atomic.Uint64
 	strippedRequests atomic.Uint64
+
+	traffic        *trafficMetrics
+	metricsHandler http.Handler
 }
 
 type errorResponse struct {
@@ -54,6 +59,9 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		stripRequest: map[string]struct{}{},
 	}
 	h.StripRequestHeaders(credentialHeaders...)
+	registry := h.newRegistry()
+	h.traffic = newTrafficMetrics(registry)
+	h.metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return h
 }
 
@@ -114,16 +122,8 @@ func (h *Handler) version(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, h.metadata)
 }
 
-func (h *Handler) metrics(w http.ResponseWriter, _ *http.Request) {
-	_, _, _, routes := h.table.Status()
-	syncs, failures := h.table.SyncCounts()
-	w.Header().Set("Content-Type", "text/plain; version=0.0.4")
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_requests_total %d\n", h.requests.Load())
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_proxied_requests_total %d\n", h.proxied.Load())
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_stripped_credential_requests_total %d\n", h.strippedRequests.Load())
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_route_sync_success_total %d\n", syncs)
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_route_sync_failure_total %d\n", failures)
-	_, _ = fmt.Fprintf(w, "kavrynt_gateway_routes %d\n", routes)
+func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
+	h.metricsHandler.ServeHTTP(w, r)
 }
 
 func (h *Handler) listRoutes(w http.ResponseWriter, _ *http.Request) {
@@ -142,21 +142,42 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
 		return
 	}
+
+	start := time.Now()
+	call, body, err := inspectRequest(r)
+	if err != nil {
+		writeError(w, http.StatusBadRequest, errors.New("read request body"))
+		h.traffic.observe(route.Name, call, outcomeClientError, time.Since(start), 0, 0)
+		return
+	}
+	upstreamBody := &countingReader{r: body}
+	gatewayError := func(status int, err error) {
+		writeError(w, status, err)
+		h.traffic.observe(route.Name, call, outcomeGatewayError, time.Since(start), upstreamBody.n, 0)
+	}
+
 	if route.Transport != "http" {
-		writeError(w, http.StatusBadGateway, fmt.Errorf("transport %q is not supported by gateway MVP", route.Transport))
+		gatewayError(http.StatusBadGateway, fmt.Errorf("transport %q is not supported by gateway MVP", route.Transport))
 		return
 	}
 
 	target, err := buildTargetURL(route.Endpoint, suffix, r.URL.RawQuery)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
+		gatewayError(http.StatusBadGateway, err)
 		return
 	}
 
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, r.Body)
+	var forward io.Reader = upstreamBody
+	if body == http.NoBody {
+		forward = http.NoBody
+	}
+	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, forward)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
+		gatewayError(http.StatusBadGateway, err)
 		return
+	}
+	if forward != http.NoBody {
+		req.ContentLength = r.ContentLength
 	}
 	if copyHeaders(req.Header, r.Header, h.stripRequest) {
 		h.strippedRequests.Add(1)
@@ -169,16 +190,31 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	resp, err := h.client.Do(req)
 	if err != nil {
 		writeError(w, http.StatusBadGateway, err)
+		h.traffic.observe(route.Name, call, classifyTransportError(err), time.Since(start), upstreamBody.n, 0)
 		return
 	}
 	defer resp.Body.Close()
 
 	copyHeaders(w.Header(), resp.Header, responseStrip)
 	w.WriteHeader(resp.StatusCode)
-	if _, err := io.Copy(w, resp.Body); err != nil {
-		return
+
+	// JSON responses are also captured (bounded) to detect JSON-RPC and tool
+	// errors; streamed responses (text/event-stream) are not inspected.
+	var captured *captureBuffer
+	var dst io.Writer = w
+	if isJSON(resp.Header.Get("Content-Type")) {
+		captured = &captureBuffer{limit: maxInspectBytes}
+		dst = io.MultiWriter(w, captured)
 	}
-	h.proxied.Add(1)
+	written, copyErr := io.Copy(dst, resp.Body)
+	outcome := classifyResponse(resp.StatusCode, captured)
+	if copyErr != nil {
+		outcome = outcomeIncomplete
+	}
+	h.traffic.observe(route.Name, call, outcome, time.Since(start), upstreamBody.n, written)
+	if copyErr == nil {
+		h.proxied.Add(1)
+	}
 }
 
 func parseMCPPath(path string) (string, string, bool) {

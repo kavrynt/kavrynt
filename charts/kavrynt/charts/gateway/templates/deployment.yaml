@@ -14,6 +14,12 @@ spec:
     metadata:
       labels:
         {{- include "gateway.labels" . | nindent 8 }}
+      {{- if .Values.metrics.scrapeAnnotations }}
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: {{ .Values.service.port | quote }}
+        prometheus.io/path: /metrics
+      {{- end }}
     spec:
       serviceAccountName: {{ include "gateway.serviceAccountName" . }}
       # The Gateway watches MCPServer resources through the Kubernetes API.

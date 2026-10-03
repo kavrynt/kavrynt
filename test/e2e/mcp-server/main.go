@@ -81,7 +81,7 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	result, ok := resultFor(input.Method)
+	result, ok := resultFor(input.Method, input.Params)
 	if !ok {
 		writeResponse(w, http.StatusOK, response{
 			JSONRPC: "2.0",
@@ -98,7 +98,7 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 	})
 }
 
-func resultFor(method string) (any, bool) {
+func resultFor(method string, params json.RawMessage) (any, bool) {
 	switch method {
 	case "initialize":
 		return map[string]any{
@@ -127,8 +127,30 @@ func resultFor(method string) (any, bool) {
 				},
 			},
 		}, true
+	case "tools/call":
+		return callTool(params), true
 	default:
 		return nil, false
+	}
+}
+
+// callTool implements the echo tool. Unknown tools return an MCP tool error
+// (result.isError), which the Gateway reports as outcome="tool_error".
+func callTool(params json.RawMessage) map[string]any {
+	var call struct {
+		Name      string `json:"name"`
+		Arguments struct {
+			Message string `json:"message"`
+		} `json:"arguments"`
+	}
+	if err := json.Unmarshal(params, &call); err != nil || call.Name != "echo" {
+		return map[string]any{
+			"isError": true,
+			"content": []map[string]string{{"type": "text", "text": "unknown tool"}},
+		}
+	}
+	return map[string]any{
+		"content": []map[string]string{{"type": "text", "text": call.Arguments.Message}},
 	}
 }
 
