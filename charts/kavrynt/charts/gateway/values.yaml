@@ -29,6 +29,25 @@ config:
   # Cookie, and Proxy-Authorization are always removed (no token passthrough).
   stripRequestHeaders: []
 
+# MCP traffic metrics on /metrics: requests, outcomes, and latency per MCP
+# server, method, and tool. Metadata only; bodies are never recorded.
+metrics:
+  # prometheus.io/* pod annotations for Prometheus annotation-based discovery.
+  scrapeAnnotations: true
+  # ServiceMonitor for the Prometheus Operator (requires its CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  # ConfigMap with the "Kavrynt MCP Traffic" Grafana dashboard, picked up by
+  # the Grafana dashboard sidecar through the labels below.
+  dashboard:
+    enabled: false
+    # Namespace the sidecar watches; empty uses the release namespace.
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532
