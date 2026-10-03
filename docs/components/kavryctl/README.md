@@ -18,9 +18,6 @@ Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
 Without `-n`, the namespace comes from the manifest, then the kubeconfig
 context. A manifest namespace that conflicts with `-n` is an error.
 
-Manifests written for `0.0.1-beta.1` (JSON with `metadata.description`) still
-load; the description becomes the `kavrynt.io/description` annotation.
-
 ## Examples
 
 ```bash

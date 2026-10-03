@@ -29,7 +29,7 @@ spec:
           type: RuntimeDefault
       containers:
         - name: manager
-          image: ghcr.io/kavrynt/operator:0.0.1-beta.1
+          image: ghcr.io/kavrynt/operator:0.0.2-beta.1
           imagePullPolicy: IfNotPresent
           args:
             - --leader-elect

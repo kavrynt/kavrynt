@@ -382,7 +382,6 @@ make docker-build
 make helm-lint
 make helm-template
 make e2e-kind
-make e2e-upgrade
 ```
 
 Repository layout:
@@ -401,8 +400,7 @@ docs/                ADRs, runbooks, component docs
 Repository-specific engineering and contribution rules are documented in
 [`AGENTS.md`](AGENTS.md).
 
-The coordinated beta publication process is documented in
-[`docs/RELEASE-0.0.1-BETA.md`](docs/RELEASE-0.0.1-BETA.md).
+The release process is documented in [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Repository model
 

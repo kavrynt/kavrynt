@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -81,49 +80,6 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	second := get(t, k8sClient)
 	if first.ResourceVersion != second.ResourceVersion {
 		t.Fatalf("second reconcile wrote the object: %s -> %s", first.ResourceVersion, second.ResourceVersion)
-	}
-}
-
-func TestReconcileMigratesLegacyRegistryState(t *testing.T) {
-	server := newServer(validSpec())
-	server.Finalizers = []string{kavryntv1alpha1.LegacyRegistryFinalizer}
-	server.Status.Conditions = []metav1.Condition{{
-		Type:               "Registered",
-		Status:             metav1.ConditionTrue,
-		Reason:             "RegistrySynced",
-		Message:            "MCPServer is synced to Kavrynt Registry",
-		LastTransitionTime: metav1.Now(),
-	}}
-	k8sClient := newClient(t, server)
-
-	reconcile(t, k8sClient)
-
-	updated := get(t, k8sClient)
-	if len(updated.Finalizers) != 0 {
-		t.Fatalf("finalizers = %v, want none", updated.Finalizers)
-	}
-	if apimeta.FindStatusCondition(updated.Status.Conditions, "Registered") != nil {
-		t.Fatal("legacy Registered condition was not removed")
-	}
-	if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
-		t.Fatal("Ready condition is not True")
-	}
-}
-
-func TestReconcileReleasesDeletionBlockedByLegacyFinalizer(t *testing.T) {
-	server := newServer(validSpec())
-	server.Finalizers = []string{kavryntv1alpha1.LegacyRegistryFinalizer}
-	k8sClient := newClient(t, server)
-
-	if err := k8sClient.Delete(context.Background(), get(t, k8sClient)); err != nil {
-		t.Fatal(err)
-	}
-	reconcile(t, k8sClient)
-
-	var gone kavryntv1alpha1.MCPServer
-	err := k8sClient.Get(context.Background(), key(), &gone)
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("Get after delete = %v, want NotFound", err)
 	}
 }
 

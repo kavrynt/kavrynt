@@ -6,8 +6,6 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
-
-	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 )
 
 func TestParseYAML(t *testing.T) {
@@ -32,21 +30,6 @@ spec:
 	}
 	if server.Spec.Endpoint != "http://payments.team-a.svc:8080/mcp" {
 		t.Fatalf("endpoint = %q", server.Spec.Endpoint)
-	}
-}
-
-func TestParseLegacyJSONDescription(t *testing.T) {
-	server, err := Parse([]byte(`{
-  "apiVersion": "kavrynt.io/v1alpha1",
-  "kind": "MCPServer",
-  "metadata": {"name": "example", "description": "Example server"},
-  "spec": {"version": "0.1.0", "transport": "stdio", "command": "python3"}
-}`))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if got := server.Annotations[kavryntv1alpha1.DescriptionAnnotation]; got != "Example server" {
-		t.Fatalf("description annotation = %q", got)
 	}
 }
 

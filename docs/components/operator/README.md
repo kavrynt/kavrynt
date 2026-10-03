@@ -14,8 +14,6 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | `Accepted` | spec is valid | `InvalidSpec` |
 | `Ready` | accepted and `transport: http` (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport` |
 
-- Removes the legacy `mcpservers.kavrynt.io/registry-sync` finalizer and
-  `Registered` condition left by `0.0.1-beta.1`.
 - Does not deploy MCP server workloads, manage secrets, or call external
   services.
 

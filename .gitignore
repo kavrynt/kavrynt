@@ -32,3 +32,8 @@ vendor/
 *.crt
 kubeconfig
 *.kubeconfig
+
+# Binaries built with `go build ./cmd/<component>` at the repository root
+/operator
+/gateway
+/kavryctl

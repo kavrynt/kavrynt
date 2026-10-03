@@ -24,7 +24,6 @@ help:
 	@printf "  make build          Build kavryctl, gateway, and operator binaries\n"
 	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
-	@printf "  make e2e-upgrade    Upgrade from the last Registry-based runtime in Kind\n"
 	@printf "  make e2e-release    Validate a published chart and runtime images\n"
 
 .PHONY: qa
@@ -92,10 +91,6 @@ helm-package:
 .PHONY: e2e-kind
 e2e-kind:
 	LOCAL_VERSION="$(LOCAL_VERSION)" ./scripts/e2e-kind.sh
-
-.PHONY: e2e-upgrade
-e2e-upgrade:
-	./scripts/e2e-upgrade.sh
 
 .PHONY: e2e-release
 e2e-release:

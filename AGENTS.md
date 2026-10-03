@@ -83,7 +83,6 @@ explicitly requests it.
 ```bash
 make qa        # fmt, race tests, vet, staticcheck, gosec, govulncheck, Helm, release contract
 make e2e-kind     # disposable Kind cluster, full product loop
-make e2e-upgrade  # upgrade from the last Registry-based runtime
 ```
 
 The end-to-end workflow must verify:
