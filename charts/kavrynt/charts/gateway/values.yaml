@@ -1,0 +1,59 @@
+replicaCount: 1
+
+image:
+  repository: kavrynt/gateway
+  tag: 0.0.2-beta.1
+  pullPolicy: IfNotPresent
+
+imagePullSecrets: []
+
+serviceAccount:
+  create: true
+  name: ""
+
+rbac:
+  # Grants read-only access (get, list, watch) to MCPServer resources.
+  create: true
+
+service:
+  type: ClusterIP
+  port: 8080
+
+config:
+  addr: ":8080"
+  requestTimeout: "30s"
+  # Namespaces to watch for MCPServer resources. Empty watches all namespaces
+  # through a ClusterRole; a list uses one Role per namespace instead.
+  watchNamespaces: []
+  # Extra request headers never forwarded to MCP servers. Authorization,
+  # Cookie, and Proxy-Authorization are always removed (no token passthrough).
+  stripRequestHeaders: []
+
+podSecurityContext:
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+  seccompProfile:
+    type: RuntimeDefault
+
+securityContext:
+  allowPrivilegeEscalation: false
+  capabilities:
+    drop:
+      - ALL
+  readOnlyRootFilesystem: true
+  runAsNonRoot: true
+  runAsUser: 65532
+  runAsGroup: 65532
+
+resources:
+  requests:
+    cpu: 25m
+    memory: 64Mi
+  limits:
+    cpu: 250m
+    memory: 256Mi
+
+nodeSelector: {}
+tolerations: []
+affinity: {}

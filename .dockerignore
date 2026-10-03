@@ -1,0 +1,7 @@
+# Only the Go sources are needed to build runtime images.
+*
+!go.mod
+!go.sum
+!api/
+!cmd/
+!internal/

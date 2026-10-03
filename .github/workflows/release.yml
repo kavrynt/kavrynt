@@ -1,4 +1,4 @@
-name: Release Umbrella Chart
+name: Release
 
 on:
   push:
@@ -7,22 +7,26 @@ on:
 
 permissions:
   contents: read
-  packages: write
+
+env:
+  STATICCHECK_VERSION: v0.8.0
+  GOSEC_VERSION: v2.28.0
+  GOVULNCHECK_VERSION: v1.7.0
 
 jobs:
-  chart:
-    name: Package Canonical Runtime Chart
+  verify:
+    name: Verify Release Source
     runs-on: ubuntu-latest
-    environment: release
+    outputs:
+      version: ${{ steps.tag.outputs.version }}
     steps:
-      - name: Checkout integration repository
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
           fetch-depth: 0
-          path: kavrynt
 
       - name: Validate release tag
-        working-directory: kavrynt
+        id: tag
         shell: bash
         run: |
           version="${GITHUB_REF_NAME#v}"
@@ -32,47 +36,274 @@ jobs:
           fi
           git fetch origin main
           git merge-base --is-ancestor "$GITHUB_SHA" origin/main
-          echo "VERSION=$version" >> "$GITHUB_ENV"
+          chart_version=$(awk '$1 == "version:" { print $2; exit }' charts/kavrynt/Chart.yaml)
+          if [[ "$chart_version" != "$version" ]]; then
+            echo "Chart version $chart_version does not match tag $version" >&2
+            exit 1
+          fi
+          echo "version=$version" >> "$GITHUB_OUTPUT"
 
-      - name: Checkout kavryctl release
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
-          repository: kavrynt/kavryctl
-          ref: ${{ github.ref_name }}
-          path: kavryctl
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Checkout Registry release
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/registry
-          ref: ${{ github.ref_name }}
-          path: registry
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Checkout Gateway release
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/gateway
-          ref: ${{ github.ref_name }}
-          path: gateway
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
-
-      - name: Checkout Operator release
-        uses: actions/checkout@d23441a48e516b6c34aea4fa41551a30e30af803 # v6
-        with:
-          repository: kavrynt/operator
-          ref: ${{ github.ref_name }}
-          path: operator
-          token: ${{ secrets.KAVRYNT_REPO_TOKEN }}
+          go-version: "1.26.x"
+          cache: true
 
       - name: Set up Helm
-        uses: azure/setup-helm@1a275c3b69536ee54be43f2070a358922e12c8d4 # v4
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
 
-      - name: Build and lint chart
-        working-directory: kavrynt
+      - name: Run quality and security gates
+        run: make qa
+
+  images:
+    name: Publish ${{ matrix.image }} Image
+    runs-on: ubuntu-latest
+    needs: verify
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+      id-token: write
+    strategy:
+      fail-fast: true
+      matrix:
+        image: [gateway, operator]
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Record build date
+        run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
+
+      - name: Set up QEMU
+        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+
+      - name: Build release candidate
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: build/Dockerfile
+          target: ${{ matrix.image }}
+          platforms: linux/amd64
+          load: true
+          push: false
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          tags: kavrynt/${{ matrix.image }}:release-candidate
+          provenance: false
+          sbom: false
+
+      - name: Scan release candidate
+        uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
+        with:
+          scan-type: image
+          image-ref: kavrynt/${{ matrix.image }}:release-candidate
+          scanners: vuln
+          severity: HIGH,CRITICAL
+          ignore-unfixed: false
+          exit-code: 1
+
+      - name: Login to GHCR
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Publish multi-architecture image
+        id: publish
+        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        with:
+          context: .
+          file: build/Dockerfile
+          target: ${{ matrix.image }}
+          platforms: linux/amd64,linux/arm64
+          push: true
+          build-args: |
+            VERSION=${{ env.VERSION }}
+            COMMIT=${{ github.sha }}
+            BUILD_DATE=${{ env.BUILD_DATE }}
+          tags: ghcr.io/kavrynt/${{ matrix.image }}:${{ env.VERSION }}
+          provenance: mode=max
+          sbom: true
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign GHCR image
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
+        run: cosign sign --yes "ghcr.io/kavrynt/${IMAGE}@${DIGEST}"
+
+      - name: Login to Docker Hub
+        uses: docker/login-action@dbcb813823bdd20940b903addbd779551569679f # v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      - name: Mirror image to Docker Hub
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
         run: |
-          helm dependency build --skip-refresh charts/kavrynt
+          mirror="docker.io/kavrynt/${IMAGE}:${VERSION}"
+          docker buildx imagetools create --tag "$mirror" "ghcr.io/kavrynt/${IMAGE}@${DIGEST}"
+          mirror_digest=$(docker buildx imagetools inspect "$mirror" | awk '$1 == "Digest:" {print $2; exit}')
+          test "$mirror_digest" = "$DIGEST"
+
+      - name: Sign Docker Hub image
+        env:
+          DIGEST: ${{ steps.publish.outputs.digest }}
+          IMAGE: ${{ matrix.image }}
+        run: cosign sign --yes "docker.io/kavrynt/${IMAGE}@${DIGEST}"
+
+  kavryctl-build:
+    name: Build kavryctl ${{ matrix.goos }}/${{ matrix.goarch }}
+    runs-on: ubuntu-latest
+    needs: verify
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: linux
+            goarch: amd64
+          - goos: linux
+            goarch: arm64
+          - goos: darwin
+            goarch: amd64
+          - goos: darwin
+            goarch: arm64
+          - goos: windows
+            goarch: amd64
+          - goos: windows
+            goarch: arm64
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
+        with:
+          go-version: "1.26.x"
+          cache: true
+
+      - name: Build archive
+        shell: bash
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+          CGO_ENABLED: 0
+          version: ${{ needs.verify.outputs.version }}
+        run: |
+          build_date=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+          name="kavryctl_${version}_${GOOS}_${GOARCH}"
+          binary="kavryctl"
+          if [[ "$GOOS" == "windows" ]]; then binary="kavryctl.exe"; fi
+          pkg="github.com/kavrynt/kavrynt/internal/kavryctl/cli"
+          mkdir -p "dist/$name"
+          go build \
+            -trimpath \
+            -ldflags="-s -w -X ${pkg}.Version=${version} -X ${pkg}.Commit=${GITHUB_SHA} -X ${pkg}.BuildDate=${build_date}" \
+            -o "dist/$name/$binary" ./cmd/kavryctl
+          if [[ "$GOOS" == "windows" ]]; then
+            (cd dist && zip -q -r "${name}.zip" "$name")
+          else
+            tar -C dist -czf "dist/${name}.tar.gz" "$name"
+          fi
+
+      - name: Upload archive
+        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        with:
+          name: kavryctl-${{ matrix.goos }}-${{ matrix.goarch }}
+          path: dist/kavryctl_*.${{ matrix.goos == 'windows' && 'zip' || 'tar.gz' }}
+          if-no-files-found: error
+          retention-days: 7
+
+  kavryctl-release:
+    name: Sign and Publish kavryctl
+    runs-on: ubuntu-latest
+    needs: [kavryctl-build, images]
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+    steps:
+      - name: Download archives
+        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        with:
+          pattern: kavryctl-*
+          path: dist
+          merge-multiple: true
+
+      - name: Generate checksums
+        run: cd dist && sha256sum kavryctl_* > SHA256SUMS
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Sign checksums
+        run: |
+          cosign sign-blob --yes \
+            --bundle dist/SHA256SUMS.sigstore.json \
+            dist/SHA256SUMS
+
+      - name: Publish prerelease
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          gh release create "$GITHUB_REF_NAME" dist/* \
+            --repo "$GITHUB_REPOSITORY" \
+            --prerelease \
+            --generate-notes \
+            --title "Kavrynt ${GITHUB_REF_NAME#v}"
+
+  chart:
+    name: Publish Chart and Validate Release
+    runs-on: ubuntu-latest
+    needs: [verify, images]
+    environment: release
+    permissions:
+      contents: read
+      packages: write
+    env:
+      VERSION: ${{ needs.verify.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+
+      - name: Set up Helm
+        uses: azure/setup-helm@9bc31f4ebc9c6b171d7bfbaa5d006ae7abdb4310 # v5.0.1
+
+      - name: Install Cosign
+        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
+
+      - name: Verify published images
+        shell: bash
+        run: |
+          for image in gateway operator; do
+            ref="docker.io/kavrynt/${image}:${VERSION}"
+            docker buildx imagetools inspect --raw "$ref" |
+              jq --exit-status '
+                [.manifests[].platform | "\(.os)/\(.architecture)"] as $platforms |
+                ($platforms | index("linux/amd64") != null) and
+                ($platforms | index("linux/arm64") != null)
+              '
+            cosign verify \
+              --certificate-identity "https://github.com/${GITHUB_REPOSITORY}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
+              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
+              "$ref"
+          done
+
+      - name: Package chart
+        run: |
           helm lint charts/kavrynt
           helm template kavrynt charts/kavrynt --namespace kavrynt-system >/dev/null
           mkdir -p dist/charts
@@ -81,39 +312,24 @@ jobs:
             --app-version "$VERSION" \
             --destination dist/charts
 
-      - name: Install Cosign
-        uses: sigstore/cosign-installer@6f9f17788090df1f26f669e9d70d6ae9567deba6 # v4.1.2
-
-      - name: Verify released component images
-        shell: bash
-        run: |
-          for component in registry gateway operator; do
-            image="docker.io/kavrynt/${component}:${VERSION}"
-            docker buildx imagetools inspect --raw "$image" |
-              jq --exit-status '
-                [.manifests[].platform | "\(.os)/\(.architecture)"] as $platforms |
-                ($platforms | index("linux/amd64") != null) and
-                ($platforms | index("linux/arm64") != null)
-              '
-            cosign verify \
-              --certificate-identity "https://github.com/kavrynt/${component}/.github/workflows/release.yml@refs/tags/v${VERSION}" \
-              --certificate-oidc-issuer "https://token.actions.githubusercontent.com" \
-              "$image"
-          done
-
       - name: Login to GHCR
-        working-directory: kavrynt
         run: echo "${{ secrets.GITHUB_TOKEN }}" | helm registry login ghcr.io --username "${{ github.actor }}" --password-stdin
 
       - name: Publish chart
-        working-directory: kavrynt
         run: helm push "dist/charts/kavrynt-${VERSION}.tgz" oci://ghcr.io/kavrynt/charts
+
+      - name: Mirror chart to Docker Hub
+        env:
+          DOCKERHUB_USERNAME: ${{ secrets.DOCKERHUB_USERNAME }}
+          DOCKERHUB_TOKEN: ${{ secrets.DOCKERHUB_TOKEN }}
+        run: |
+          echo "$DOCKERHUB_TOKEN" | helm registry login registry-1.docker.io --username "$DOCKERHUB_USERNAME" --password-stdin
+          helm push "dist/charts/kavrynt-${VERSION}.tgz" oci://registry-1.docker.io/kavrynt
 
       - name: Install Kind
         uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
         with:
           install_only: true
 
-      - name: Validate published release end to end
-        working-directory: kavrynt
+      - name: Validate published release end to end (trial path)
         run: make e2e-release RELEASE_VERSION="$VERSION"

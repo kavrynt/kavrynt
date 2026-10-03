@@ -1,0 +1,12 @@
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: example-mcp-server
+  annotations:
+    kavrynt.io/description: Example HTTP MCP server routed through the Gateway
+  labels:
+    app.kavrynt.io/example: "true"
+spec:
+  version: 0.1.0
+  transport: http
+  endpoint: http://example-mcp-server.default.svc.cluster.local:8080

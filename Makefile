@@ -1,36 +1,34 @@
 SHELL := /bin/bash
 
-RUNTIME_ROOT ?= ..
-KAVRYCTL_DIR ?= $(RUNTIME_ROOT)/kavryctl
-REGISTRY_DIR ?= $(RUNTIME_ROOT)/registry
-GATEWAY_DIR ?= $(RUNTIME_ROOT)/gateway
-OPERATOR_DIR ?= $(RUNTIME_ROOT)/operator
-GOCACHE_DIR ?= $(CURDIR)/.cache/go-build
-LOCAL_VERSION ?= 0.0.1-beta.1-local
+LOCAL_VERSION ?= 0.0.2-beta.1-local
+IMAGES := gateway operator
+CHART := charts/kavrynt
+GO_DIRS := api cmd internal test
 
-COMPONENTS := $(KAVRYCTL_DIR) $(REGISTRY_DIR) $(GATEWAY_DIR) $(OPERATOR_DIR)
-CHARTS := \
-	$(KAVRYCTL_DIR)/charts/kavryctl \
-	$(REGISTRY_DIR)/charts/registry \
-	$(GATEWAY_DIR)/charts/gateway \
-	$(OPERATOR_DIR)/charts/k8s-operator
+STATICCHECK_VERSION ?= v0.8.0
+GOSEC_VERSION ?= v2.28.0
+GOVULNCHECK_VERSION ?= v1.7.0
 
 .PHONY: help
 help:
-	@printf "Kavrynt integration targets:\n"
-	@printf "  make qa             Validate canonical runtime repositories and charts\n"
-	@printf "  make fmt-check      Check canonical Go formatting\n"
-	@printf "  make test           Run canonical runtime unit tests\n"
-	@printf "  make vet            Run canonical runtime go vet checks\n"
-	@printf "  make docker-build   Build coordinated local runtime images\n"
-	@printf "  make helm-deps      Build umbrella chart dependencies\n"
-	@printf "  make helm-lint      Lint component and umbrella charts\n"
-	@printf "  make helm-template  Render the umbrella chart\n"
+	@printf "Kavrynt runtime targets:\n"
+	@printf "  make qa             Run all local quality and security gates\n"
+	@printf "  make fmt-check      Check Go formatting\n"
+	@printf "  make test           Run unit tests with the race detector\n"
+	@printf "  make vet            Run go vet\n"
+	@printf "  make lint           Run staticcheck\n"
+	@printf "  make sast           Run gosec\n"
+	@printf "  make vulncheck      Run govulncheck\n"
+	@printf "  make helm-lint      Lint the Helm chart\n"
+	@printf "  make helm-template  Render the Helm chart\n"
+	@printf "  make build          Build kavryctl, gateway, and operator binaries\n"
+	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
+	@printf "  make e2e-upgrade    Upgrade from the last Registry-based runtime in Kind\n"
 	@printf "  make e2e-release    Validate a published chart and runtime images\n"
 
 .PHONY: qa
-qa: release-contract fmt-check test vet helm-lint helm-template
+qa: release-contract fmt-check test vet lint sast vulncheck helm-lint helm-template
 
 .PHONY: release-contract
 release-contract:
@@ -38,70 +36,66 @@ release-contract:
 
 .PHONY: fmt-check
 fmt-check:
-	@failed=0; \
-	tmp_dir=$$(mktemp -d); \
-	trap 'rm -rf "$$tmp_dir"' EXIT; \
-	for component in $(COMPONENTS); do \
-		files=$$(find "$$component" -name '*.go' -not -path '*/.cache/*'); \
-		for file in $$files; do \
-			sed 's/\r$$//' "$$file" >"$$tmp_dir/input.go"; \
-			if [ -n "$$(gofmt -l "$$tmp_dir/input.go")" ]; then \
-				printf "Unformatted Go file: %s\n" "$$file"; \
-				failed=1; \
-			fi; \
-		done; \
-	done; \
-	exit $$failed
+	@unformatted="$$(gofmt -l $(GO_DIRS))"; \
+	if [ -n "$$unformatted" ]; then printf "Unformatted Go files:\n%s\n" "$$unformatted"; exit 1; fi
 
 .PHONY: test
 test:
-	@mkdir -p "$(GOCACHE_DIR)"
-	@for component in $(COMPONENTS); do \
-		printf "==> go test %s\n" "$$component"; \
-		(cd "$$component" && GOCACHE="$(GOCACHE_DIR)" go test ./...); \
-	done
+	go test -race ./...
 
 .PHONY: vet
 vet:
-	@mkdir -p "$(GOCACHE_DIR)"
-	@for component in $(COMPONENTS); do \
-		printf "==> go vet %s\n" "$$component"; \
-		(cd "$$component" && GOCACHE="$(GOCACHE_DIR)" go vet ./...); \
+	go vet ./...
+
+.PHONY: lint
+lint:
+	go run honnef.co/go/tools/cmd/staticcheck@$(STATICCHECK_VERSION) ./...
+
+.PHONY: sast
+sast:
+	go run github.com/securego/gosec/v2/cmd/gosec@$(GOSEC_VERSION) -exclude-dir=.cache ./...
+
+.PHONY: vulncheck
+vulncheck:
+	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+.PHONY: helm-lint
+helm-lint:
+	helm lint $(CHART)
+
+.PHONY: helm-template
+helm-template:
+	helm template kavrynt $(CHART) --namespace kavrynt-system >/dev/null
+
+.PHONY: build
+build:
+	@mkdir -p bin
+	@for component in kavryctl $(IMAGES); do \
+		printf "==> go build %s\n" "$$component"; \
+		CGO_ENABLED=0 go build -trimpath -o "bin/$$component" "./cmd/$$component" || exit 1; \
 	done
 
 .PHONY: docker-build
 docker-build:
-	docker build -t kavrynt/registry:$(LOCAL_VERSION) "$(REGISTRY_DIR)"
-	docker build -t kavrynt/gateway:$(LOCAL_VERSION) "$(GATEWAY_DIR)"
-	docker build -t kavrynt/operator:$(LOCAL_VERSION) "$(OPERATOR_DIR)"
-	docker build -t kavrynt/e2e-mcp-server:$(LOCAL_VERSION) test/e2e/mcp-server
-
-.PHONY: helm-deps
-helm-deps:
-	helm dependency build --skip-refresh charts/kavrynt
-
-.PHONY: helm-lint
-helm-lint: helm-deps
-	@for chart in $(CHARTS); do helm lint "$$chart"; done
-	helm lint charts/kavrynt
-
-.PHONY: helm-template
-helm-template: helm-deps
-	helm template kavrynt charts/kavrynt --namespace kavrynt-system
+	@for image in $(IMAGES); do \
+		docker build --file build/Dockerfile --target "$$image" \
+			--build-arg VERSION=$(LOCAL_VERSION) \
+			--tag "kavrynt/$$image:$(LOCAL_VERSION)" . || exit 1; \
+	done
+	docker build --tag kavrynt/e2e-mcp-server:$(LOCAL_VERSION) test/e2e/mcp-server
 
 .PHONY: helm-package
-helm-package: helm-deps
+helm-package:
 	mkdir -p dist/charts
-	helm package charts/kavrynt --destination dist/charts
+	helm package $(CHART) --destination dist/charts
 
 .PHONY: e2e-kind
 e2e-kind:
-	KAVRYCTL_REPO="$(KAVRYCTL_DIR)" \
-	REGISTRY_REPO="$(REGISTRY_DIR)" \
-	GATEWAY_REPO="$(GATEWAY_DIR)" \
-	OPERATOR_REPO="$(OPERATOR_DIR)" \
-	LOCAL_VERSION="$(LOCAL_VERSION)" \
-	./scripts/e2e-kind.sh
+	LOCAL_VERSION="$(LOCAL_VERSION)" ./scripts/e2e-kind.sh
+
+.PHONY: e2e-upgrade
+e2e-upgrade:
+	./scripts/e2e-upgrade.sh
 
 .PHONY: e2e-release
 e2e-release:

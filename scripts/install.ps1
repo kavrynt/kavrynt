@@ -5,13 +5,13 @@ param(
 )
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = "v0.0.1-beta.1"
+    $Version = "v0.0.2-beta.1"
 }
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Join-Path $HOME ".kavrynt\bin"
 }
 if ([string]::IsNullOrWhiteSpace($Repo)) {
-    $Repo = "kavrynt/kavryctl"
+    $Repo = "kavrynt/kavrynt"
 }
 
 $arch = switch ($env:PROCESSOR_ARCHITECTURE) {

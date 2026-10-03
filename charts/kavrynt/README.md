@@ -1,15 +1,15 @@
 # Kavrynt Helm Chart
 
-This chart installs the Kavrynt Kubernetes control plane:
+This chart installs the Kavrynt Kubernetes runtime:
 
-- Registry
-- Gateway
-- Kubernetes Operator
+- Gateway (watches `MCPServer` resources read-only and routes MCP traffic)
+- Kubernetes Operator (validates `MCPServer` resources, sets `Accepted`/`Ready`)
+- the `MCPServer` CRD (`crds/` of the operator subchart)
 
-Install from this repository:
+Component subcharts are vendored under `charts/`, so no `helm dependency build`
+is needed. Install from this repository:
 
 ```bash
-helm dependency build charts/kavrynt
 helm upgrade --install kavrynt charts/kavrynt \
   --namespace kavrynt-system \
   --create-namespace
@@ -19,7 +19,7 @@ Install from the published OCI chart after a tagged release:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 0.0.1-beta.1 \
+  --version 0.0.2-beta.1 \
   --namespace kavrynt-system \
   --create-namespace
 ```
@@ -27,17 +27,18 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 Authenticate with `helm registry login ghcr.io` first when the chart package
 is private.
 
-Check the control plane:
+Helm installs CRDs only on first install and never upgrades them. Before
+`helm upgrade`, apply the CRD from the target version (see
+`docs/UPGRADE-0.0.2-BETA.md`).
+
+Check the runtime:
 
 ```bash
 kubectl get pods -n kavrynt-system
 kubectl get svc -n kavrynt-system
 ```
 
-Expected services:
-
-- `kavrynt-registry`
-- `kavrynt-gateway`
+Expected service: `kavrynt-gateway`.
 
 Uninstall:
 

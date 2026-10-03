@@ -1,8 +1,0 @@
-go 1.23.0
-
-use (
-	./cmd/kavryctl
-	./operator
-	./services/gateway
-	./services/registry
-)

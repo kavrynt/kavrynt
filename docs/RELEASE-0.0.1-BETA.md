@@ -1,5 +1,13 @@
 # 0.0.1 Beta.1 Release Runbook
 
+> [!NOTE]
+> Historical; see [RELEASE.md](RELEASE.md) for the current process. This runbook describes releases from the former per-component
+> repositories. From the runtime monorepo onwards, one `vX.Y.Z-beta.N` tag on
+> `main` in this repository runs `.github/workflows/release.yml`, which
+> publishes all images, `kavryctl`, and the chart. One-time setup moves here:
+> a protected `release` environment with `DOCKERHUB_USERNAME` and
+> `DOCKERHUB_TOKEN`, and Actions write access on each GHCR package.
+
 Kavrynt runtime releases are built from the canonical private repositories.
 The integration repository publishes only the umbrella Helm chart.
 

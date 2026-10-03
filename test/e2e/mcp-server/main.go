@@ -34,6 +34,12 @@ func main() {
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
 		w.WriteHeader(http.StatusNoContent)
 	})
+	// Test-only: echoes received request headers so end-to-end tests can
+	// prove the Gateway never forwards caller credentials.
+	mux.HandleFunc("GET /debug/headers", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(r.Header)
+	})
 	mux.HandleFunc("POST /", handleMCP)
 
 	server := &http.Server{
