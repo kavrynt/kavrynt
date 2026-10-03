@@ -12,8 +12,6 @@ import (
 	"k8s.io/apimachinery/pkg/runtime"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
-	"sigs.k8s.io/controller-runtime/pkg/controller/controllerutil"
-	"sigs.k8s.io/controller-runtime/pkg/log"
 )
 
 const conflictRetryDelay = time.Second
@@ -27,20 +25,9 @@ type MCPServerReconciler struct {
 }
 
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
-	logger := log.FromContext(ctx)
-
 	var server kavryntv1alpha1.MCPServer
 	if err := r.Get(ctx, req.NamespacedName, &server); err != nil {
 		return ctrl.Result{}, client.IgnoreNotFound(err)
-	}
-
-	// Releases up to 0.0.1-beta.1 added a finalizer to clean up the removed
-	// Registry. Drop it so deletes and upgrades never hang on it.
-	if controllerutil.RemoveFinalizer(&server, kavryntv1alpha1.LegacyRegistryFinalizer) {
-		if err := r.Update(ctx, &server); err != nil {
-			return ctrl.Result{}, client.IgnoreNotFound(err)
-		}
-		logger.Info("removed legacy registry finalizer", "mcpserver", req.NamespacedName)
 	}
 
 	if !server.DeletionTimestamp.IsZero() {
@@ -67,8 +54,6 @@ func desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerS
 		ObservedGeneration: server.Generation,
 		Conditions:         append([]metav1.Condition(nil), server.Status.Conditions...),
 	}
-	// The Registered condition belonged to the removed Registry integration.
-	apimeta.RemoveStatusCondition(&status.Conditions, "Registered")
 
 	accepted := metav1.Condition{
 		Type:               kavryntv1alpha1.ConditionAccepted,

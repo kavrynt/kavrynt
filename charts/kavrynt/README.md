@@ -28,8 +28,8 @@ Authenticate with `helm registry login ghcr.io` first when the chart package
 is private.
 
 Helm installs CRDs only on first install and never upgrades them. Before
-`helm upgrade`, apply the CRD from the target version (see
-`docs/UPGRADE-0.0.2-BETA.md`).
+`helm upgrade`, apply the CRD from the target version's chart
+(`charts/k8s-operator/crds/`) with `kubectl apply --server-side`.
 
 Check the runtime:
 

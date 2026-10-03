@@ -56,13 +56,8 @@ option to restrict to listed namespaces through namespaced Roles.
 
 ### Migration for trial users
 
-`0.0.1-beta.1` installs are upgraded by `helm upgrade` to `0.0.2-beta.1`:
-the registry Deployment and Service are removed by the chart, existing
-`MCPServer` resources are re-reconciled, and the old
-`mcpservers.kavrynt.io/registry-sync` finalizer is removed by the operator on
-startup so deletions do not hang. Helm does not upgrade CRDs, so the CRD is
-applied first (see `docs/UPGRADE-0.0.2-BETA.md`). `make e2e-upgrade` covers
-this path.
+`0.0.1-beta.1` was never published, so no upgrade path from it is supported.
+The temporary migration code and upgrade test were removed on 2026-10-03.
 
 ## Consequences
 

@@ -46,6 +46,8 @@ grep --quiet --fixed-strings 'kavrynt/kavrynt' "${ROOT_DIR}/scripts/install.sh" 
   fail "Unix installer does not target the kavrynt release repository"
 grep --quiet --fixed-strings 'kavrynt/kavrynt' "${ROOT_DIR}/scripts/install.ps1" ||
   fail "PowerShell installer does not target the kavrynt release repository"
+grep --quiet --fixed-strings "operator:${VERSION}" "${ROOT_DIR}/config/manager/deployment.yaml" ||
+  fail "config/manager operator image does not match ${VERSION}"
 grep --quiet --fixed-strings "v${VERSION}" "${ROOT_DIR}/scripts/install.sh" ||
   fail "Unix installer version does not match ${VERSION}"
 grep --quiet --fixed-strings "v${VERSION}" "${ROOT_DIR}/scripts/install.ps1" ||
@@ -67,7 +69,6 @@ done
 bash -n \
   "${ROOT_DIR}/scripts/e2e-kind.sh" \
   "${ROOT_DIR}/scripts/e2e-release.sh" \
-  "${ROOT_DIR}/scripts/e2e-upgrade.sh" \
   "${ROOT_DIR}/scripts/install.sh" \
   "${ROOT_DIR}/scripts/verify-release-contract.sh"
 
