@@ -1,7 +1,8 @@
 # AGENTS.md
 
-This is the private Kavrynt runtime repository for the Kubernetes-native MCP
-Control Plane. It holds all customer-installed components and their release
+This is the Kavrynt runtime repository for the Kubernetes-native MCP Control
+Plane: public on GitHub and source-available under the Elastic License 2.0
+(never describe it as open source). It holds all customer-installed components and their release
 pipeline ([ADR-0001](docs/ADR-0001-Runtime-Monorepo.md)).
 
 ## Repository Ownership
