@@ -47,6 +47,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
+          check-latest: true # take Go security patches the runner image has not cached yet
           cache: true
 
       - name: Set up Helm
@@ -193,6 +194,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
+          check-latest: true # take Go security patches the runner image has not cached yet
           cache: true
 
       - name: Build archive
