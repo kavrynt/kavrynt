@@ -3,10 +3,9 @@
 [![QA](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml/badge.svg)](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml)
 
 > [!IMPORTANT]
-> This is the private source and release repository for the commercial Kavrynt
-> MCP Control Plane runtime: `kavryctl`, Gateway, Operator, the
-> `MCPServer` CRD, and the Helm chart. See
-> [ADR-0001](docs/ADR-0001-Runtime-Monorepo.md).
+> This is the source and release repository for the Kavrynt MCP Control Plane
+> runtime: `kavryctl`, Gateway, Operator, the `MCPServer` CRD, and the Helm
+> chart. See [ADR-0001](docs/ADR-0001-Runtime-Monorepo.md).
 
 Kavrynt is a Kubernetes-native control plane for registering, discovering, and
 routing Model Context Protocol (MCP) servers.
@@ -317,7 +316,6 @@ kubectl logs --namespace kavrynt-system deployment/kavrynt-operator
 kubectl logs --namespace kavrynt-system deployment/kavrynt-gateway
 ```
 
-
 ### Uninstall
 
 ```bash
@@ -362,26 +360,11 @@ Prerequisites:
 - `kubectl`
 - Kind for disposable Kubernetes testing
 
-Run repository validation:
-
 ```bash
-make qa
-```
-
-Useful targets:
-
-```bash
-make test
-make vet
-make lint
-make sast
-make vulncheck
-make fmt-check
-make build
-make docker-build
-make helm-lint
-make helm-template
-make e2e-kind
+make help       # every target
+make qa         # all quality and security gates
+make build      # kavryctl, gateway, and operator binaries
+make e2e-kind   # disposable Kind cluster, full product loop
 ```
 
 Repository layout:
@@ -392,38 +375,28 @@ cmd/<component>/     entry points: kavryctl, gateway, operator
 internal/<component>/ component packages
 build/Dockerfile     all runtime images (--target gateway|operator)
 charts/kavrynt/      the Helm chart, with vendored component subcharts
-config/              generated CRD and RBAC manifests
+config/              CRD and RBAC manifests
 test/e2e/            Kind end-to-end tests
 docs/                ADRs, runbooks, component docs
 ```
 
 Repository-specific engineering and contribution rules are documented in
-[`AGENTS.md`](AGENTS.md).
+[`CLAUDE.md`](CLAUDE.md).
 
 The release process is documented in [`docs/RELEASE.md`](docs/RELEASE.md).
-
-## Repository model
-
-This private repository owns all customer runtime code, the Helm chart, QA,
-releases, integration tests, and trial runbooks. The former `kavryctl`,
-`registry`, `gateway`, and `operator` repositories are archived; their history
-is imported here. `kavrynt-cloud` owns the commercial hosted control plane, and
-`kavrynt-platform` owns Azure infrastructure.
 
 ## Roadmap
 
 The next product milestones are:
 
-1. ~~remove the in-cluster Registry~~ (done in `0.0.2-beta.1`,
-   [ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md));
-2. Gateway authentication and no token passthrough
+1. Gateway authentication and no token passthrough
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
-3. MCP Streamable HTTP and protocol-aware routing;
-4. policy decisions and tool-level authorization;
-5. audit and usage events;
-6. upgrade and rollback commands in kavryctl;
-7. upgrade, rollback, backup, and recovery workflows;
-8. tested high-availability deployment profiles.
+2. MCP Streamable HTTP and protocol-aware routing;
+3. policy decisions and tool-level authorization;
+4. audit and usage events;
+5. upgrade and rollback commands in kavryctl;
+6. upgrade, rollback, backup, and recovery workflows;
+7. tested high-availability deployment profiles.
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this
@@ -437,9 +410,3 @@ may change before the first stable release.
 Use [GitHub issues](https://github.com/kavrynt/kavrynt/issues) for reproducible
 bugs and feature requests. Please include the Kavrynt version, Kubernetes
 version, installation method, relevant manifests, and sanitized logs.
-
-## Commercial status
-
-Kavrynt is private commercial software. Trial access is provided through
-approved prerelease images, client binaries, Helm charts, and runbooks under
-the applicable Kavrynt commercial terms.
