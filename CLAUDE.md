@@ -1,0 +1,163 @@
+# CLAUDE.md
+
+Kavrynt runtime: the Kubernetes-native MCP Control Plane that customers install
+in their own clusters. One Go module, one version, one Helm chart
+([ADR-0001](docs/ADR-0001-Runtime-Monorepo.md)).
+
+This repository is **public** on GitHub and **source-available under the
+Elastic License 2.0**. Never describe it as open source. Everything committed
+here, including this file, is publicly readable: keep internal infrastructure,
+cloud account details, pricing, and customer names out of it.
+
+## Repository Ownership
+
+| Path | Owns |
+| --- | --- |
+| `cmd/kavryctl`, `internal/kavryctl` | Developer and platform CLI (`cli`, `manifest`) |
+| `cmd/gateway`, `internal/gateway` | MCP routing (`api`, `kube`, `model`, `routing`) and (future) enforcement |
+| `cmd/operator`, `internal/operator`, `api/v1alpha1`, `config/` | `MCPServer` CRD and reconciliation |
+| `charts/kavrynt` | Umbrella Helm chart; subcharts vendored in `charts/kavrynt/charts/{gateway,k8s-operator}` |
+| `build/Dockerfile` | All runtime images (`--target gateway`, `--target operator`) |
+| `test/e2e`, `scripts/` | Kind end-to-end tests, installers, release contract |
+| `examples/kavryctl` | Sample manifests; CI validates every file here with `kavryctl validate` |
+| `docs/` | ADRs, `RELEASE.md`, `E2E.md`, per-component docs in `docs/components/` |
+
+Related repositories: the hosted control plane is `kavrynt-cloud`; cloud
+infrastructure is `kavrynt-platform`; the end-to-end lab is `kavrynt-labs`;
+customer docs are `product-docs`. The former `kavryctl`, `registry`, `gateway`,
+and `operator` repositories are archived and must not receive new changes.
+
+## Architecture Decisions In Force
+
+- [ADR-0001](docs/ADR-0001-Runtime-Monorepo.md): one module, one version, one chart.
+- [ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md): the `MCPServer` API
+  replaces the in-cluster Registry (removed in `0.0.2-beta.1`).
+- [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
+  design. **Not implemented yet.**
+- Identity planes and the system threat model live in `kavrynt-cloud`
+  (ADR-0006, THREAT-0001).
+
+## What Works Today (do not overstate)
+
+- `MCPServer` registration through Kubernetes or `kavryctl`; the Operator sets
+  `Accepted` and `Ready`.
+- Gateway watches `Ready` servers and proxies **HTTP only** at
+  `/mcp/<namespace>.<name>`. `stdio` manifests validate but are not proxied.
+- Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
+  forwarding and drops upstream `Set-Cookie`.
+- Not implemented: client authentication, token exchange, policy and tool
+  authorization, audit, high availability. Never claim them in code comments,
+  docs, or release notes until they are implemented and tested.
+
+## Product Boundary
+
+- Trial users consume approved alpha or beta images, `kavryctl` binaries, Helm
+  charts, and runbooks.
+- Customer-facing docs (`product-docs`) may link to this repository. Ask the
+  owner before adding source links to the marketing website.
+- Hosted features (cross-cluster inventory, enterprise identity, billing) belong
+  in `kavrynt-cloud`, not here.
+
+## Branching
+
+GitFlow:
+
+- `develop`: integration and the default branch.
+- `main`: validated release baseline. Release tags are cut from `main` only.
+- `feature/<short-kebab-case-name>`: one logical change, from `develop`, merged
+  back after `make qa` and `make e2e-kind` pass.
+- `release/<version>`: release stabilization when required.
+- `hotfix/<short-kebab-case-name>`: urgent fixes.
+
+Never force-push shared branches. Inspect `git status` before editing and
+preserve the owner's uncommitted changes. Commit, push, merge, tag, or publish
+only when the owner explicitly asks.
+
+## Commands
+
+```bash
+make help            # list targets
+make qa              # release contract, gofmt, race tests, vet, staticcheck, gosec, govulncheck, helm lint/template
+make test            # go test -race ./...
+make build           # bin/kavryctl, bin/gateway, bin/operator
+make docker-build    # local images tagged $(LOCAL_VERSION)
+make e2e-kind        # disposable Kind cluster, full product loop (scripts/e2e-kind.sh)
+make e2e-release RELEASE_VERSION=<v>   # validate published chart and images
+```
+
+Run one package's tests: `go test -race ./internal/gateway/...`.
+Toolchain: Go 1.26+, Docker, Helm 3 or 4, kubectl, Kind.
+
+## CI and Release
+
+- `.github/workflows/qa.yml` (pull requests and pushes to `develop`, `main`,
+  `feature/**`): Go QA and SAST, Trivy source scan, Helm and release contract,
+  multi-arch image build with Trivy (amd64 and arm64). Kind e2e runs on pull
+  requests and manual runs only.
+- `.github/workflows/release.yml` (tag `v*`): tag must match
+  `X.Y.Z-(alpha|beta)[.N]`, be on `main`, and equal the chart version. Publishes
+  to GHCR (canonical), mirrors to Docker Hub, Cosign-signs both, builds
+  `kavryctl` for six platforms, pushes the OCI chart, then runs `e2e-release`.
+- Full procedure, verification, and failure handling: [docs/RELEASE.md](docs/RELEASE.md).
+  Never overwrite a published tag; fix forward with the next prerelease number.
+
+## Bumping The Version
+
+`scripts/verify-release-contract.sh` (part of `make qa`) fails unless one
+version matches in all of these places:
+
+- `charts/kavrynt/Chart.yaml` `version` and `appVersion`
+- `charts/kavrynt/charts/gateway/Chart.yaml` and `charts/kavrynt/charts/k8s-operator/Chart.yaml` (`version`, `appVersion`)
+- both `tag:` lines in `charts/kavrynt/values.yaml`
+- the operator image in `config/manager/deployment.yaml`
+- `v<version>` in `scripts/install.sh` and `scripts/install.ps1`
+
+Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
+
+## Engineering Standards
+
+- Keep components separated: Gateway contains no reconciliation logic; the
+  Operator never proxies traffic; `kavryctl` imports no server internals other
+  than shared API types.
+- Shared Kubernetes API types live only in `api/v1alpha1`. The CRD schema is
+  hand-written (no controller-gen) and exists twice, kept identical:
+  `config/crd/bases/kavrynt.io_mcpservers.yaml` and
+  `charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml`. Change
+  both with the Go types, and update RBAC in `config/rbac` and the chart
+  together.
+- Prefer simple, dependency-light Go. New dependencies must pass govulncheck
+  and Trivy.
+- Treat Kubernetes manifests, MCP payloads, tool metadata, and Gateway traffic
+  as untrusted input.
+- Tests run without network access: use fake `http.RoundTripper`s and
+  `t.TempDir()`.
+- Use explicit HTTP status codes and stable JSON responses.
+
+## Security Standards
+
+- Never commit secrets, tokens, kubeconfigs, private keys, or credentials, and
+  never log secret values.
+- Images: non-root, distroless, base images pinned by digest, OCI labels.
+- Least-privilege RBAC: Gateway is read-only on `MCPServer` with no Secret
+  access; disable service account token automount unless needed;
+  `readOnlyRootFilesystem: true` unless a write path is required.
+- Pin GitHub Actions by commit SHA.
+- Images are published only by `release.yml` after every gate passes.
+
+## End-To-End Contract
+
+`make e2e-kind` must verify:
+
+1. Gateway and Operator become ready.
+2. Applying an `MCPServer` produces a `Ready` condition.
+3. The CRD rejects unsafe endpoints at admission.
+4. Gateway RBAC is read-only on `MCPServer` and has no Secret access.
+5. Gateway and `kavryctl list` expose the expected route.
+6. A JSON-RPC `tools/list` call succeeds through Gateway.
+7. `kavryctl register`, `inspect`, and `unregister` work against the cluster.
+8. Deleting an `MCPServer` removes its Gateway route.
+
+Keep the Kind workflow disposable and isolated from the user's current
+Kubernetes context. On macOS and Apple Silicon, build images locally and load
+them into Kind. Prefer port-forwarding over NodePort. Never modify or delete
+Kind clusters this workflow did not create. Details: [docs/E2E.md](docs/E2E.md).
