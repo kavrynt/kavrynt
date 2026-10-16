@@ -189,6 +189,12 @@ done
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
   fail "Gateway must not read Secrets"
 
+log "verifying the Operator has the permissions it uses"
+if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment/kavrynt-operator |
+  grep --fixed-strings --quiet "forbidden"; then
+  fail "Operator logged a forbidden API request; check its RBAC"
+fi
+
 log "starting Gateway port-forward"
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
   port-forward service/kavrynt-gateway 18080:8080 \

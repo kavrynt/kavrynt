@@ -30,6 +30,13 @@ rules:
     verbs:
       - update
   - apiGroups:
+      - ""
+    resources:
+      - events
+    verbs:
+      - create
+      - patch
+  - apiGroups:
       - coordination.k8s.io
     resources:
       - leases
