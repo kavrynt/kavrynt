@@ -71,6 +71,37 @@ func TestReconcileSetsConditions(t *testing.T) {
 	}
 }
 
+func TestReconcileReportsNamespacesTheGatewayDoesNotWatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		namespaces []string
+		wantReady  metav1.ConditionStatus
+		wantReason string
+	}{
+		{name: "watched namespace", namespaces: []string{"team-a", "default"}, wantReady: metav1.ConditionTrue, wantReason: kavryntv1alpha1.ReasonRoutable},
+		{name: "unwatched namespace", namespaces: []string{"team-a"}, wantReady: metav1.ConditionFalse, wantReason: kavryntv1alpha1.ReasonNamespaceNotWatched},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sClient := newClient(t, newServer(validSpec()))
+			reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), GatewayNamespaces: tt.namespaces}
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key()}); err != nil {
+				t.Fatal(err)
+			}
+
+			updated := get(t, k8sClient)
+			accepted := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionAccepted)
+			if accepted == nil || accepted.Status != metav1.ConditionTrue {
+				t.Fatalf("Accepted = %+v, want True", accepted)
+			}
+			ready := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionReady)
+			if ready == nil || ready.Status != tt.wantReady || ready.Reason != tt.wantReason {
+				t.Fatalf("Ready = %+v, want %s/%s", ready, tt.wantReady, tt.wantReason)
+			}
+		})
+	}
+}
+
 func TestReconcileIsIdempotent(t *testing.T) {
 	k8sClient := newClient(t, newServer(validSpec()))
 	reconcile(t, k8sClient)

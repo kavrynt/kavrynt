@@ -29,3 +29,14 @@ helm.sh/chart: {{ include "gateway.chart" . }}
 {{- default "default" .Values.serviceAccount.name -}}
 {{- end -}}
 {{- end -}}
+
+{{/*
+Comma-separated namespaces the Gateway watches; empty means all. The value is
+global so the Operator reads the same list.
+*/}}
+{{- define "gateway.watchNamespaces" -}}
+{{- if .Values.config.watchNamespaces -}}
+{{- fail "gateway.config.watchNamespaces was replaced by global.watchNamespaces, which the Operator also reads" -}}
+{{- end -}}
+{{- join "," ((.Values.global | default dict).watchNamespaces | default list) -}}
+{{- end -}}

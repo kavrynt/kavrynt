@@ -41,9 +41,9 @@ spec:
             - --strip-request-headers
             - {{ join "," . | quote }}
             {{- end }}
-            {{- with .Values.config.watchNamespaces }}
+            {{- with include "gateway.watchNamespaces" . }}
             - --watch-namespaces
-            - {{ join "," . | quote }}
+            - {{ . | quote }}
             {{- end }}
             - --request-timeout
             - {{ .Values.config.requestTimeout | quote }}

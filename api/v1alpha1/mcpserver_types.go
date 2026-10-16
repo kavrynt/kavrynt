@@ -17,6 +17,7 @@ const (
 	ReasonInvalidSpec          = "InvalidSpec"
 	ReasonRoutable             = "Routable"
 	ReasonUnsupportedTransport = "UnsupportedTransport"
+	ReasonNamespaceNotWatched  = "NamespaceNotWatched"
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
