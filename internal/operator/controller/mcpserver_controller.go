@@ -2,6 +2,8 @@ package controller
 
 import (
 	"context"
+	"fmt"
+	"slices"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
@@ -22,6 +24,11 @@ const conflictRetryDelay = time.Second
 type MCPServerReconciler struct {
 	client.Client
 	Scheme *runtime.Scheme
+
+	// GatewayNamespaces lists the namespaces the Gateway watches. Empty means
+	// all namespaces. Servers elsewhere are not Ready because the Gateway
+	// never sees them.
+	GatewayNamespaces []string
 }
 
 func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (ctrl.Result, error) {
@@ -34,7 +41,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	status := desiredStatus(&server)
+	status := r.desiredStatus(&server)
 	if equality.Semantic.DeepEqual(server.Status, status) {
 		return ctrl.Result{}, nil
 	}
@@ -49,7 +56,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	return ctrl.Result{}, nil
 }
 
-func desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerStatus {
+func (r *MCPServerReconciler) desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerStatus {
 	status := kavryntv1alpha1.MCPServerStatus{
 		ObservedGeneration: server.Generation,
 		Conditions:         append([]metav1.Condition(nil), server.Status.Conditions...),
@@ -82,6 +89,10 @@ func desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerS
 		ready.Status = metav1.ConditionFalse
 		ready.Reason = kavryntv1alpha1.ReasonUnsupportedTransport
 		ready.Message = "Gateway routes only the http transport"
+	case len(r.GatewayNamespaces) > 0 && !slices.Contains(r.GatewayNamespaces, server.Namespace):
+		ready.Status = metav1.ConditionFalse
+		ready.Reason = kavryntv1alpha1.ReasonNamespaceNotWatched
+		ready.Message = fmt.Sprintf("Gateway does not watch namespace %q; add it to global.watchNamespaces", server.Namespace)
 	}
 
 	apimeta.SetStatusCondition(&status.Conditions, accepted)

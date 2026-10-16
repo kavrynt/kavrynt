@@ -1,6 +1,7 @@
 {{- if .Values.rbac.create }}
 {{- $rules := list (dict "apiGroups" (list "kavrynt.io") "resources" (list "mcpservers") "verbs" (list "get" "list" "watch")) }}
-{{- if empty .Values.config.watchNamespaces }}
+{{- $namespaces := include "gateway.watchNamespaces" . }}
+{{- if not $namespaces }}
 apiVersion: rbac.authorization.k8s.io/v1
 kind: ClusterRole
 metadata:
@@ -25,7 +26,7 @@ subjects:
     name: {{ include "gateway.serviceAccountName" . }}
     namespace: {{ .Release.Namespace }}
 {{- else }}
-{{- range .Values.config.watchNamespaces }}
+{{- range splitList "," $namespaces }}
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role

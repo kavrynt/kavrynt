@@ -258,13 +258,18 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		if condition := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady); condition != nil {
 			ready = string(condition.Status)
 		}
+		// The Gateway routes only Ready servers, so others have no route.
+		route := "-"
+		if ready == string(metav1.ConditionTrue) {
+			route = "/mcp/" + server.RouteName()
+		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			server.Namespace,
 			server.Name,
 			server.Spec.Version,
 			server.Spec.Transport,
 			ready,
-			"/mcp/"+server.RouteName(),
+			route,
 			duration.HumanDuration(now.Sub(server.CreationTimestamp.Time)),
 		)
 	}

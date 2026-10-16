@@ -1,3 +1,10 @@
+global:
+  # Namespaces whose MCPServer resources the Gateway routes. Empty means all
+  # namespaces. A list switches Gateway RBAC to per-namespace Roles, and the
+  # Operator reports servers in other namespaces as not Ready
+  # (NamespaceNotWatched).
+  watchNamespaces: []
+
 gateway:
   fullnameOverride: kavrynt-gateway
   image:

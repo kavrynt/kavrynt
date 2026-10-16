@@ -4,6 +4,7 @@ import (
 	"flag"
 	"log/slog"
 	"os"
+	"strings"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/operator/build"
@@ -19,14 +20,16 @@ import (
 
 func main() {
 	var (
-		metricsAddr  string
-		probeAddr    string
-		enableLeader bool
+		metricsAddr       string
+		probeAddr         string
+		enableLeader      bool
+		gatewayNamespaces string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address")
 	flag.StringVar(&probeAddr, "health-probe-bind-address", ":8081", "Health probe bind address")
 	flag.BoolVar(&enableLeader, "leader-elect", false, "Enable leader election")
+	flag.StringVar(&gatewayNamespaces, "gateway-watch-namespaces", "", "Comma-separated namespaces the Gateway watches (empty means all); servers elsewhere are not Ready")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -50,8 +53,9 @@ func main() {
 	}
 
 	if err := (&controller.MCPServerReconciler{
-		Client: mgr.GetClient(),
-		Scheme: mgr.GetScheme(),
+		Client:            mgr.GetClient(),
+		Scheme:            mgr.GetScheme(),
+		GatewayNamespaces: splitList(gatewayNamespaces),
 	}).SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "error", err)
 		os.Exit(1)
@@ -71,4 +75,14 @@ func main() {
 		slog.Error("operator stopped with error", "error", err)
 		os.Exit(1)
 	}
+}
+
+func splitList(value string) []string {
+	var items []string
+	for _, item := range strings.Split(value, ",") {
+		if item = strings.TrimSpace(item); item != "" {
+			items = append(items, item)
+		}
+	}
+	return items
 }

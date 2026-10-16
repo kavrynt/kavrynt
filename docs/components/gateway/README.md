@@ -66,7 +66,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | Flag | Default | Purpose |
 | --- | --- | --- |
 | `--addr` | `:8080` | Listen address |
-| `--watch-namespaces` | all | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
+| `--watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
 | `--strip-request-headers` | none | Extra headers never forwarded (`KAVRYNT_STRIP_REQUEST_HEADERS`) |
 | `--request-timeout` | `30s` | Upstream request timeout |
 | `--shutdown-timeout` | `10s` | Graceful shutdown timeout |

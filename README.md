@@ -284,7 +284,7 @@ Important values:
 | --- | --- | --- |
 | `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
 | `gateway.image.tag` | `0.0.2-beta.1` | Gateway image tag |
-| `gateway.config.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches RBAC to per-namespace Roles |
+| `global.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches Gateway RBAC to per-namespace Roles, and the Operator marks servers elsewhere `Ready=False` (`NamespaceNotWatched`). Replaces `gateway.config.watchNamespaces`. |
 | `gateway.rbac.create` | `true` | Create read-only `MCPServer` RBAC for the Gateway |
 | `operator.image.repository` | `kavrynt/operator` | Operator container repository |
 | `operator.image.tag` | `0.0.2-beta.1` | Operator image tag |
