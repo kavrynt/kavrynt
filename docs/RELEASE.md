@@ -50,6 +50,9 @@ gh run watch -R kavrynt/kavrynt "$(gh run list -R kavrynt/kavrynt --workflow rel
 
 ## Verify
 
+Use Cosign 3.0 or newer: the workflow signs with Cosign 3, and Cosign 2
+reports "no signatures found".
+
 ```bash
 VERSION=0.0.2-beta.1
 for image in gateway operator; do

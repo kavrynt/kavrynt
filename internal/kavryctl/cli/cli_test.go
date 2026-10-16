@@ -50,7 +50,8 @@ func TestRegisterListInspectUnregister(t *testing.T) {
 	}
 
 	out, errOut, code = run(t, "list")
-	if code != 0 || !strings.Contains(out, "payments") || !strings.Contains(out, "/mcp/team-a.payments") || !strings.Contains(out, "0.2.0") {
+	// No Operator runs here, so the server is not Ready and has no route yet.
+	if code != 0 || !strings.Contains(out, "payments") || strings.Contains(out, "/mcp/") || !strings.Contains(out, "0.2.0") {
 		t.Fatalf("list: code=%d out=%q err=%q", code, out, errOut)
 	}
 
@@ -89,10 +90,13 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("list -A: code=%d err=%q", code, errOut)
 	}
-	for _, want := range []string{"team-a", "team-b", "True", "Unknown"} {
+	for _, want := range []string{"team-a", "team-b", "True", "Unknown", "/mcp/team-a.a"} {
 		if !strings.Contains(out, want) {
 			t.Fatalf("list -A output missing %q:\n%s", want, out)
 		}
+	}
+	if strings.Contains(out, "/mcp/team-b.b") {
+		t.Fatalf("list -A shows a route for a server that is not Ready:\n%s", out)
 	}
 
 	out, _, _ = run(t, "list")

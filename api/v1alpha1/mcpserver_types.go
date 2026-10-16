@@ -17,13 +17,10 @@ const (
 	ReasonInvalidSpec          = "InvalidSpec"
 	ReasonRoutable             = "Routable"
 	ReasonUnsupportedTransport = "UnsupportedTransport"
+	ReasonNamespaceNotWatched  = "NamespaceNotWatched"
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
-
-	// LegacyRegistryFinalizer was added by operators up to 0.0.1-beta.1 to
-	// clean up the in-cluster Registry. It is removed on reconcile.
-	LegacyRegistryFinalizer = "mcpservers.kavrynt.io/registry-sync"
 )
 
 type MCPServerSpec struct {

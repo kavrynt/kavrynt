@@ -12,10 +12,8 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | Condition | True when | False reasons |
 | --- | --- | --- |
 | `Accepted` | spec is valid | `InvalidSpec` |
-| `Ready` | accepted and `transport: http` (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport` |
+| `Ready` | accepted, `transport: http`, and in a namespace the Gateway watches (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched` |
 
-- Removes the legacy `mcpservers.kavrynt.io/registry-sync` finalizer and
-  `Registered` condition left by `0.0.1-beta.1`.
 - Does not deploy MCP server workloads, manage secrets, or call external
   services.
 
@@ -26,6 +24,7 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | `--metrics-bind-address` | `:8080` | controller-runtime metrics |
 | `--health-probe-bind-address` | `:8081` | `/healthz`, `/readyz` |
 | `--leader-elect` | `false` (chart: `true`) | Leader election through a Lease |
+| `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 
 ## Manifests
 

@@ -12,8 +12,7 @@ import (
 	"sigs.k8s.io/yaml"
 )
 
-// document mirrors an MCPServer and accepts the legacy metadata.description
-// field used by manifests written for the removed Registry.
+// document mirrors an MCPServer. Unknown fields are rejected.
 type document struct {
 	APIVersion string                        `json:"apiVersion"`
 	Kind       string                        `json:"kind"`
@@ -24,7 +23,6 @@ type document struct {
 type metadata struct {
 	Name        string            `json:"name"`
 	Namespace   string            `json:"namespace,omitempty"`
-	Description string            `json:"description,omitempty"`
 	Labels      map[string]string `json:"labels,omitempty"`
 	Annotations map[string]string `json:"annotations,omitempty"`
 }
@@ -64,15 +62,6 @@ func Parse(data []byte) (*kavryntv1alpha1.MCPServer, error) {
 		},
 		Spec: doc.Spec,
 	}
-	if description := strings.TrimSpace(doc.Metadata.Description); description != "" {
-		if server.Annotations == nil {
-			server.Annotations = map[string]string{}
-		}
-		if _, exists := server.Annotations[kavryntv1alpha1.DescriptionAnnotation]; !exists {
-			server.Annotations[kavryntv1alpha1.DescriptionAnnotation] = description
-		}
-	}
-
 	if err := server.Validate(); err != nil {
 		problems = append(problems, err.Error())
 	}

@@ -11,15 +11,12 @@ Client CLI for `MCPServer` resources. Source: `cmd/kavryctl`,
 | `kavryctl validate <file>` | Offline validation of a YAML or JSON `MCPServer` manifest |
 | `kavryctl register [-n NS] <file>` | Create or update the `MCPServer` |
 | `kavryctl unregister [-n NS] <name>` | Delete the `MCPServer` |
-| `kavryctl list [-n NS] [-A]` | Table with readiness and Gateway route |
+| `kavryctl list [-n NS] [-A]` | Table with readiness and Gateway route (`-` until the server is `Ready`) |
 | `kavryctl inspect [-n NS] <name>` | Full resource as JSON |
 
 Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
 Without `-n`, the namespace comes from the manifest, then the kubeconfig
 context. A manifest namespace that conflicts with `-n` is an error.
-
-Manifests written for `0.0.1-beta.1` (JSON with `metadata.description`) still
-load; the description becomes the `kavrynt.io/description` annotation.
 
 ## Examples
 

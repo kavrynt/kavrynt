@@ -6,7 +6,7 @@ CLUSTER_NAME="${KIND_CLUSTER_NAME:-kavrynt-alpha0}"
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 CONTROL_NAMESPACE="kavrynt-system"
 E2E_NAMESPACE="kavrynt-e2e"
-LOCAL_VERSION="${LOCAL_VERSION:-0.0.2-beta.1-local}"
+LOCAL_VERSION="${LOCAL_VERSION:-0.0.3-beta.1-local}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 
 GATEWAY_IMAGE="kavrynt/gateway:${LOCAL_VERSION}"
@@ -189,6 +189,12 @@ done
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
   fail "Gateway must not read Secrets"
 
+log "verifying the Operator has the permissions it uses"
+if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment/kavrynt-operator |
+  grep --fixed-strings --quiet "forbidden"; then
+  fail "Operator logged a forbidden API request; check its RBAC"
+fi
+
 log "starting Gateway port-forward"
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
   port-forward service/kavrynt-gateway 18080:8080 \
@@ -207,6 +213,26 @@ MCP_RESPONSE="$(curl --fail --silent --show-error \
   --header 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
+
+log "verifying MCP traffic metrics"
+call_tool() {
+  curl --fail --silent --show-error \
+    --request POST "http://127.0.0.1:18080/mcp/${SERVER_ID}" \
+    --header 'Content-Type: application/json' \
+    --data "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":{\"message\":\"secret-argument\"}}}"
+}
+call_tool echo | jq --exit-status '.result.content[0].text == "secret-argument"' >/dev/null
+call_tool missing_tool | jq --exit-status '.result.isError == true' >/dev/null
+METRICS="$(curl --fail --silent --show-error http://127.0.0.1:18080/metrics)"
+for series in \
+  "kavrynt_gateway_mcp_requests_total{method=\"tools/list\",outcome=\"ok\",route=\"${SERVER_ID}\",tool=\"none\"}" \
+  "kavrynt_gateway_mcp_requests_total{method=\"tools/call\",outcome=\"ok\",route=\"${SERVER_ID}\",tool=\"echo\"} 1" \
+  "kavrynt_gateway_mcp_requests_total{method=\"tools/call\",outcome=\"tool_error\",route=\"${SERVER_ID}\",tool=\"missing_tool\"} 1"; do
+  grep --fixed-strings --quiet "${series}" <<<"${METRICS}" || fail "Gateway metrics missing ${series}"
+done
+if grep --fixed-strings --quiet "secret-argument" <<<"${METRICS}"; then
+  fail "Gateway metrics contain tool arguments"
+fi
 
 log "verifying the Gateway does not forward caller credentials"
 FORWARDED="$(curl --fail --silent --show-error \

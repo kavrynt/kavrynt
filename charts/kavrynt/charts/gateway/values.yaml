@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: kavrynt/gateway
-  tag: 0.0.2-beta.1
+  tag: 0.0.3-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -22,12 +22,28 @@ service:
 config:
   addr: ":8080"
   requestTimeout: "30s"
-  # Namespaces to watch for MCPServer resources. Empty watches all namespaces
-  # through a ClusterRole; a list uses one Role per namespace instead.
-  watchNamespaces: []
   # Extra request headers never forwarded to MCP servers. Authorization,
   # Cookie, and Proxy-Authorization are always removed (no token passthrough).
   stripRequestHeaders: []
+
+# MCP traffic metrics on /metrics: requests, outcomes, and latency per MCP
+# server, method, and tool. Metadata only; bodies are never recorded.
+metrics:
+  # prometheus.io/* pod annotations for Prometheus annotation-based discovery.
+  scrapeAnnotations: true
+  # ServiceMonitor for the Prometheus Operator (requires its CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+  # ConfigMap with the "Kavrynt MCP Traffic" Grafana dashboard, picked up by
+  # the Grafana dashboard sidecar through the labels below.
+  dashboard:
+    enabled: false
+    # Namespace the sidecar watches; empty uses the release namespace.
+    namespace: ""
+    labels:
+      grafana_dashboard: "1"
 
 podSecurityContext:
   runAsNonRoot: true

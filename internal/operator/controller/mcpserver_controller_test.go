@@ -5,7 +5,6 @@ import (
 	"testing"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
-	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -72,6 +71,37 @@ func TestReconcileSetsConditions(t *testing.T) {
 	}
 }
 
+func TestReconcileReportsNamespacesTheGatewayDoesNotWatch(t *testing.T) {
+	tests := []struct {
+		name       string
+		namespaces []string
+		wantReady  metav1.ConditionStatus
+		wantReason string
+	}{
+		{name: "watched namespace", namespaces: []string{"team-a", "default"}, wantReady: metav1.ConditionTrue, wantReason: kavryntv1alpha1.ReasonRoutable},
+		{name: "unwatched namespace", namespaces: []string{"team-a"}, wantReady: metav1.ConditionFalse, wantReason: kavryntv1alpha1.ReasonNamespaceNotWatched},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			k8sClient := newClient(t, newServer(validSpec()))
+			reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), GatewayNamespaces: tt.namespaces}
+			if _, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key()}); err != nil {
+				t.Fatal(err)
+			}
+
+			updated := get(t, k8sClient)
+			accepted := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionAccepted)
+			if accepted == nil || accepted.Status != metav1.ConditionTrue {
+				t.Fatalf("Accepted = %+v, want True", accepted)
+			}
+			ready := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionReady)
+			if ready == nil || ready.Status != tt.wantReady || ready.Reason != tt.wantReason {
+				t.Fatalf("Ready = %+v, want %s/%s", ready, tt.wantReady, tt.wantReason)
+			}
+		})
+	}
+}
+
 func TestReconcileIsIdempotent(t *testing.T) {
 	k8sClient := newClient(t, newServer(validSpec()))
 	reconcile(t, k8sClient)
@@ -81,49 +111,6 @@ func TestReconcileIsIdempotent(t *testing.T) {
 	second := get(t, k8sClient)
 	if first.ResourceVersion != second.ResourceVersion {
 		t.Fatalf("second reconcile wrote the object: %s -> %s", first.ResourceVersion, second.ResourceVersion)
-	}
-}
-
-func TestReconcileMigratesLegacyRegistryState(t *testing.T) {
-	server := newServer(validSpec())
-	server.Finalizers = []string{kavryntv1alpha1.LegacyRegistryFinalizer}
-	server.Status.Conditions = []metav1.Condition{{
-		Type:               "Registered",
-		Status:             metav1.ConditionTrue,
-		Reason:             "RegistrySynced",
-		Message:            "MCPServer is synced to Kavrynt Registry",
-		LastTransitionTime: metav1.Now(),
-	}}
-	k8sClient := newClient(t, server)
-
-	reconcile(t, k8sClient)
-
-	updated := get(t, k8sClient)
-	if len(updated.Finalizers) != 0 {
-		t.Fatalf("finalizers = %v, want none", updated.Finalizers)
-	}
-	if apimeta.FindStatusCondition(updated.Status.Conditions, "Registered") != nil {
-		t.Fatal("legacy Registered condition was not removed")
-	}
-	if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
-		t.Fatal("Ready condition is not True")
-	}
-}
-
-func TestReconcileReleasesDeletionBlockedByLegacyFinalizer(t *testing.T) {
-	server := newServer(validSpec())
-	server.Finalizers = []string{kavryntv1alpha1.LegacyRegistryFinalizer}
-	k8sClient := newClient(t, server)
-
-	if err := k8sClient.Delete(context.Background(), get(t, k8sClient)); err != nil {
-		t.Fatal(err)
-	}
-	reconcile(t, k8sClient)
-
-	var gone kavryntv1alpha1.MCPServer
-	err := k8sClient.Get(context.Background(), key(), &gone)
-	if !apierrors.IsNotFound(err) {
-		t.Fatalf("Get after delete = %v, want NotFound", err)
 	}
 }
 

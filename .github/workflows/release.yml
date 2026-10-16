@@ -47,6 +47,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
+          check-latest: true # take Go security patches the runner image has not cached yet
           cache: true
 
       - name: Set up Helm
@@ -78,13 +79,13 @@ jobs:
         run: echo "BUILD_DATE=$(date -u +%Y-%m-%dT%H:%M:%SZ)" >> "$GITHUB_ENV"
 
       - name: Set up QEMU
-        uses: docker/setup-qemu-action@96fe6ef7f33517b61c61be40b68a1882f3264fb8 # v4
+        uses: docker/setup-qemu-action@99012661954931238ded8c8b007157a8430204e1 # v4
 
       - name: Set up Docker Buildx
-        uses: docker/setup-buildx-action@37fe631027851001ddb9b187196cc803df7f5f0e # v4
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4
 
       - name: Build release candidate
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: build/Dockerfile
@@ -119,7 +120,7 @@ jobs:
 
       - name: Publish multi-architecture image
         id: publish
-        uses: docker/build-push-action@53b7df96c91f9c12dcc8a07bcb9ccacbed38856a # v7
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7
         with:
           context: .
           file: build/Dockerfile
@@ -193,6 +194,7 @@ jobs:
         uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7
         with:
           go-version: "1.26.x"
+          check-latest: true # take Go security patches the runner image has not cached yet
           cache: true
 
       - name: Build archive
@@ -220,7 +222,7 @@ jobs:
           fi
 
       - name: Upload archive
-        uses: actions/upload-artifact@b7c566a772e6b6bfb58ed0dc250532a479d7789f # v6
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:
           name: kavryctl-${{ matrix.goos }}-${{ matrix.goarch }}
           path: dist/kavryctl_*.${{ matrix.goos == 'windows' && 'zip' || 'tar.gz' }}
@@ -237,7 +239,7 @@ jobs:
       id-token: write
     steps:
       - name: Download archives
-        uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c # v8.0.1
+        uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
         with:
           pattern: kavryctl-*
           path: dist
@@ -327,7 +329,7 @@ jobs:
           helm push "dist/charts/kavrynt-${VERSION}.tgz" oci://registry-1.docker.io/kavrynt
 
       - name: Install Kind
-        uses: helm/kind-action@ef37e7f390d99f746eb8b610417061a60e82a6cc # v1
+        uses: helm/kind-action@1544676c07bb3570fcb70166beaa07c4528fd4aa # v1.15.1
         with:
           install_only: true
 
