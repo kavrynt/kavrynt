@@ -43,7 +43,10 @@ and `operator` repositories are archived and must not receive new changes.
   `Accepted` and `Ready`.
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
   into `status.tools` with a `ToolsDiscovered` condition that never affects
-  `Ready`. It does not yet send inventory to Kavrynt Cloud.
+  `Ready`.
+- Opt-in Operator connector (`cloud.enabled`) sends full inventory snapshots
+  (servers and tools) to Kavrynt Cloud `POST /v1/sync/mcpservers` with a
+  cluster token from a Secret. Traffic rollups are not uploaded yet.
 - Gateway watches `Ready` servers and proxies **HTTP only** at
   `/mcp/<namespace>.<name>`. `stdio` manifests validate but are not proxied.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
