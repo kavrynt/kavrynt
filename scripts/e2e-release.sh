@@ -103,6 +103,29 @@ wait_for_json() {
   fail "timed out waiting for ${expression} at ${url}"
 }
 
+# start_gateway_port_forward sets GATEWAY_URL. kubectl picks a free local
+# port: a fixed one may belong to another local cluster, whose Gateway would
+# then answer instead.
+start_gateway_port_forward() {
+  local log_file="${TEMP_DIR}/gateway-port-forward.log"
+  local port=""
+  local i
+  kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
+    port-forward --address 127.0.0.1 service/kavrynt-gateway :8080 \
+    >"${log_file}" 2>&1 &
+  PORT_FORWARD_PIDS+=("$!")
+  for ((i = 1; i <= 30; i++)); do
+    port="$(tr -d '\r' <"${log_file}" |
+      sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9][0-9]*\) -> .*/\1/p' | head -n 1)"
+    if [ -n "${port}" ]; then
+      GATEWAY_URL="http://127.0.0.1:${port}"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Gateway port-forward did not start: $(cat "${log_file}")"
+}
+
 for command in docker kind kubectl helm curl grep jq sed; do
   require_command "${command}"
 done
@@ -155,18 +178,15 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
 
 log "starting Gateway port-forward"
-kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
-  port-forward service/kavrynt-gateway 18080:8080 \
-  >"${TEMP_DIR}/gateway-port-forward.log" 2>&1 &
-PORT_FORWARD_PIDS+=("$!")
+start_gateway_port_forward
 
-wait_for_url "http://127.0.0.1:18080/readyz"
+wait_for_url "${GATEWAY_URL}/readyz"
 SERVER_ID="${E2E_NAMESPACE}.example-mcp-server"
-wait_for_json "http://127.0.0.1:18080/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 
 log "calling tools/list through Gateway route ${SERVER_ID}"
 MCP_RESPONSE="$(curl --fail --silent --show-error \
-  --request POST "http://127.0.0.1:18080/mcp/${SERVER_ID}" \
+  --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
   --header 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
@@ -174,6 +194,6 @@ printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo
 log "verifying deletion cleanup"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/example-mcp-server --wait=true --timeout=120s
-wait_for_json "http://127.0.0.1:18080/v1/routes" '.routes | length == 0' 30
+wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 
 log "published release ${RELEASE_VERSION} end-to-end workflow passed"

@@ -95,6 +95,29 @@ wait_for_json() {
   fail "timed out waiting for ${expression} at ${url}"
 }
 
+# start_gateway_port_forward sets GATEWAY_URL. kubectl picks a free local
+# port: a fixed one may belong to another local cluster, whose Gateway would
+# then answer instead.
+start_gateway_port_forward() {
+  local log_file="${TEMP_DIR}/gateway-port-forward.log"
+  local port=""
+  local i
+  kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
+    port-forward --address 127.0.0.1 service/kavrynt-gateway :8080 \
+    >"${log_file}" 2>&1 &
+  PORT_FORWARD_PIDS+=("$!")
+  for ((i = 1; i <= 30; i++)); do
+    port="$(tr -d '\r' <"${log_file}" |
+      sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9][0-9]*\) -> .*/\1/p' | head -n 1)"
+    if [ -n "${port}" ]; then
+      GATEWAY_URL="http://127.0.0.1:${port}"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "Gateway port-forward did not start: $(cat "${log_file}")"
+}
+
 for command in docker kind kubectl helm curl jq git grep sed; do
   require_command "${command}"
 done
@@ -104,6 +127,13 @@ docker info >/dev/null 2>&1 || fail "Docker is not reachable"
 if kind get clusters | grep --fixed-strings --line-regexp "${CLUSTER_NAME}" >/dev/null 2>&1; then
   fail "Kind cluster ${CLUSTER_NAME} already exists; delete it or set KIND_CLUSTER_NAME"
 fi
+
+# Helm installs every chart under charts/, so an old `helm dependency build`
+# package would deploy next to the vendored subcharts.
+for archive in "${ROOT_DIR}"/charts/kavrynt/charts/*.tgz; do
+  [ -e "${archive}" ] || continue
+  fail "stale packaged subchart ${archive}; subcharts are vendored as directories"
+done
 
 BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 
@@ -195,21 +225,44 @@ if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment
   fail "Operator logged a forbidden API request; check its RBAC"
 fi
 
+log "verifying the Operator records discovered tools in MCPServer status"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/example-mcp-server --for=condition=ToolsDiscovered --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/example-mcp-server -o json |
+  jq --exit-status '.status.tools | (map(.name) == ["echo"]) and (.[0].inputSchema.required == ["message"])' >/dev/null ||
+  fail "MCPServer status does not list the echo tool with its input schema"
+
+log "verifying a failed discovery leaves the server Ready"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: unreachable-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://unreachable-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/unreachable-mcp-server --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/unreachable-mcp-server \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  delete mcpserver/unreachable-mcp-server --wait=true --timeout=60s >/dev/null
+
 log "starting Gateway port-forward"
-kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
-  port-forward service/kavrynt-gateway 18080:8080 \
-  >"${TEMP_DIR}/gateway-port-forward.log" 2>&1 &
-PORT_FORWARD_PIDS+=("$!")
-wait_for_url "http://127.0.0.1:18080/readyz"
+start_gateway_port_forward
+wait_for_url "${GATEWAY_URL}/readyz"
 
 SERVER_ID="${E2E_NAMESPACE}.example-mcp-server"
-wait_for_json "http://127.0.0.1:18080/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 "${TEMP_DIR}/kavryctl" list --context "${KUBE_CONTEXT}" -A | grep --fixed-strings "/mcp/${SERVER_ID}" >/dev/null ||
   fail "kavryctl list does not show ${SERVER_ID}"
 
 log "calling tools/list through Gateway route ${SERVER_ID}"
 MCP_RESPONSE="$(curl --fail --silent --show-error \
-  --request POST "http://127.0.0.1:18080/mcp/${SERVER_ID}" \
+  --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
   --header 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
@@ -217,13 +270,13 @@ printf '%s' "${MCP_RESPONSE}" | jq --exit-status '.result.tools[0].name == "echo
 log "verifying MCP traffic metrics"
 call_tool() {
   curl --fail --silent --show-error \
-    --request POST "http://127.0.0.1:18080/mcp/${SERVER_ID}" \
+    --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
     --header 'Content-Type: application/json' \
     --data "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":{\"message\":\"secret-argument\"}}}"
 }
 call_tool echo | jq --exit-status '.result.content[0].text == "secret-argument"' >/dev/null
 call_tool missing_tool | jq --exit-status '.result.isError == true' >/dev/null
-METRICS="$(curl --fail --silent --show-error http://127.0.0.1:18080/metrics)"
+METRICS="$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"
 for series in \
   "kavrynt_gateway_mcp_requests_total{method=\"tools/list\",outcome=\"ok\",route=\"${SERVER_ID}\",tool=\"none\"}" \
   "kavrynt_gateway_mcp_requests_total{method=\"tools/call\",outcome=\"ok\",route=\"${SERVER_ID}\",tool=\"echo\"} 1" \
@@ -239,7 +292,7 @@ FORWARDED="$(curl --fail --silent --show-error \
   --header 'Authorization: Bearer caller-token' \
   --header 'Cookie: session=caller' \
   --header 'X-Kavrynt-Probe: kept' \
-  "http://127.0.0.1:18080/mcp/${SERVER_ID}/debug/headers")"
+  "${GATEWAY_URL}/mcp/${SERVER_ID}/debug/headers")"
 printf '%s' "${FORWARDED}" | jq --exit-status '
   (has("Authorization") | not) and (has("Cookie") | not) and
   (.["X-Kavrynt-Probe"] == ["kept"])' >/dev/null ||
@@ -259,20 +312,20 @@ MANIFEST
 "${TEMP_DIR}/kavryctl" validate "${TEMP_DIR}/kavryctl-server.yaml" >/dev/null
 "${TEMP_DIR}/kavryctl" register --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" "${TEMP_DIR}/kavryctl-server.yaml" >/dev/null
 SECOND_ID="${E2E_NAMESPACE}.kavryctl-mcp-server"
-wait_for_json "http://127.0.0.1:18080/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") != null"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") != null"
 "${TEMP_DIR}/kavryctl" inspect --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" kavryctl-mcp-server |
   jq --exit-status '.status.conditions | map(select(.type == "Ready")) | .[0].status == "True"' >/dev/null
 curl --fail --silent --show-error \
-  --request POST "http://127.0.0.1:18080/mcp/${SECOND_ID}" \
+  --request POST "${GATEWAY_URL}/mcp/${SECOND_ID}" \
   --header 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}' |
   jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
 "${TEMP_DIR}/kavryctl" unregister --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" kavryctl-mcp-server >/dev/null
-wait_for_json "http://127.0.0.1:18080/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") == null" 30
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") == null" 30
 
 log "verifying deletion cleanup"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/example-mcp-server --wait=true --timeout=120s
-wait_for_json "http://127.0.0.1:18080/v1/routes" '.routes | length == 0' 30
+wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 
 log "end-to-end workflow passed"

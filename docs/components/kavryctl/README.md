@@ -11,7 +11,7 @@ Client CLI for `MCPServer` resources. Source: `cmd/kavryctl`,
 | `kavryctl validate <file>` | Offline validation of a YAML or JSON `MCPServer` manifest |
 | `kavryctl register [-n NS] <file>` | Create or update the `MCPServer` |
 | `kavryctl unregister [-n NS] <name>` | Delete the `MCPServer` |
-| `kavryctl list [-n NS] [-A]` | Table with readiness and Gateway route (`-` until the server is `Ready`) |
+| `kavryctl list [-n NS] [-A]` | Table with readiness, Gateway route (`-` until the server is `Ready`), and tool count (`-` until the Operator has listed the tools) |
 | `kavryctl inspect [-n NS] <name>` | Full resource as JSON |
 
 Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
