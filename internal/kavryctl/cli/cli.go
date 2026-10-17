@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
@@ -250,7 +251,7 @@ func runList(args []string, stdout, stderr io.Writer) int {
 	}
 
 	tw := tabwriter.NewWriter(stdout, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "NAMESPACE\tNAME\tVERSION\tTRANSPORT\tREADY\tROUTE\tAGE")
+	fmt.Fprintln(tw, "NAMESPACE\tNAME\tVERSION\tTRANSPORT\tREADY\tROUTE\tTOOLS\tAGE")
 	now := time.Now()
 	for i := range servers.Items {
 		server := &servers.Items[i]
@@ -263,13 +264,19 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		if ready == string(metav1.ConditionTrue) {
 			route = "/mcp/" + server.RouteName()
 		}
-		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
+		// Tools are known once the Operator has listed them.
+		tools := "-"
+		if apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) {
+			tools = strconv.Itoa(len(server.Status.Tools))
+		}
+		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			server.Namespace,
 			server.Name,
 			server.Spec.Version,
 			server.Spec.Transport,
 			ready,
 			route,
+			tools,
 			duration.HumanDuration(now.Sub(server.CreationTimestamp.Time)),
 		)
 	}

@@ -12,11 +12,11 @@ import (
 	"io"
 	"mime"
 	"net/http"
-	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"github.com/kavrynt/kavrynt/internal/mcpmeta"
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/collectors"
 )
@@ -27,10 +27,10 @@ const (
 	// and classified as "unknown".
 	maxInspectBytes = 1 << 20
 
-	maxToolsPerRoute   = 200
+	maxToolsPerRoute   = mcpmeta.MaxToolsPerServer
 	maxMethodsPerRoute = 50
 	maxMethodLength    = 64
-	maxToolLength      = 128
+	maxToolLength      = mcpmeta.MaxToolNameLength
 
 	labelNone    = "none"
 	labelUnknown = "unknown"
@@ -50,8 +50,6 @@ const (
 	outcomeIncomplete          = "incomplete"
 	outcomeGatewayError        = "gateway_error"
 )
-
-var labelPattern = regexp.MustCompile(`^[A-Za-z0-9_./-]+$`)
 
 // mcpCall identifies what a client asked an MCP server to do.
 type mcpCall struct {
@@ -226,7 +224,7 @@ func sanitizeLabel(value string, maxLength int) string {
 	switch {
 	case value == "":
 		return labelNone
-	case len(value) > maxLength || !labelPattern.MatchString(value):
+	case !mcpmeta.ValidName(value, maxLength):
 		return labelInvalid
 	default:
 		return value

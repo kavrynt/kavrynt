@@ -13,9 +13,36 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | --- | --- | --- |
 | `Accepted` | spec is valid | `InvalidSpec` |
 | `Ready` | accepted, `transport: http`, and in a namespace the Gateway watches (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched` |
+| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable` |
 
-- Does not deploy MCP server workloads, manage secrets, or call external
-  services.
+- Lists the tools of each `Ready` server into `status.tools` (see
+  [Tool discovery](#tool-discovery)).
+- Does not deploy MCP server workloads, manage secrets, or proxy MCP traffic.
+
+## Tool discovery
+
+For each `Ready` server the Operator opens one short MCP session with
+`spec.endpoint` (`initialize`, `notifications/initialized`, `tools/list`)
+and records the result in `status.tools`: each tool's `name`, `description`,
+and `inputSchema`. It repeats this every `--tool-refresh-interval` and when
+the spec changes. `kavryctl list` shows the tool count; `kavryctl inspect`
+shows the tools.
+
+- Discovery never changes `Ready`. A server that rejects the session (for
+  example because it requires credentials) or cannot be reached keeps routing;
+  `ToolsDiscovered` is `False` with reason `DiscoveryFailed`, the last known
+  tools are kept, and the Operator retries with backoff (30 s, doubling, up to
+  the refresh interval).
+- The Operator sends no credentials and follows no redirects.
+- Tool metadata comes from the MCP server and is untrusted. Limits: 10 s per
+  session, 1 MiB per response, 5 `tools/list` pages, 200 tools; names up to
+  128 characters of `[A-Za-z0-9_./-]` (others are skipped); descriptions cut to
+  1024 characters; input schemas kept only when they are JSON objects of at
+  most 16 KiB; at most 256 KiB of tool data per server.
+- The Operator needs network access to each server's endpoint. Where it must
+  not reach MCP servers, disable discovery (`config.toolDiscovery.enabled:
+  false` in the operator subchart, `operator.config.toolDiscovery.enabled` in
+  the umbrella chart).
 
 ## Flags
 
@@ -25,6 +52,8 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | `--health-probe-bind-address` | `:8081` | `/healthz`, `/readyz` |
 | `--leader-elect` | `false` (chart: `true`) | Leader election through a Lease |
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
+| `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
+| `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |
 
 ## Manifests
 

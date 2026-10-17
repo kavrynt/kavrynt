@@ -15,6 +15,12 @@ config:
   metricsBindAddress: ":8080"
   healthProbeBindAddress: ":8081"
   leaderElect: true
+  # The Operator lists the tools of Ready MCPServers (MCP tools/list) into
+  # status. It needs network access to each server's spec.endpoint and sends
+  # no credentials. Disable where the Operator must not reach MCP servers.
+  toolDiscovery:
+    enabled: true
+    refreshInterval: 5m
 
 podSecurityContext:
   runAsNonRoot: true

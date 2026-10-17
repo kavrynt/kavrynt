@@ -2,9 +2,12 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"testing"
+	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/operator/discovery"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -117,6 +120,195 @@ func TestReconcileIsIdempotent(t *testing.T) {
 func TestReconcileIgnoresMissingServer(t *testing.T) {
 	k8sClient := newClient(t)
 	reconcile(t, k8sClient)
+}
+
+// fakeDiscoverer returns its configured tools or error and counts calls.
+type fakeDiscoverer struct {
+	tools []kavryntv1alpha1.MCPServerTool
+	err   error
+	calls int
+}
+
+func (f *fakeDiscoverer) ListTools(context.Context, string) (discovery.Result, error) {
+	f.calls++
+	if f.err != nil {
+		return discovery.Result{}, f.err
+	}
+	return discovery.Result{Tools: kavryntv1alpha1.CopyTools(f.tools)}, nil
+}
+
+func echoTool() kavryntv1alpha1.MCPServerTool {
+	return kavryntv1alpha1.MCPServerTool{
+		Name:        "echo",
+		Description: "Echo a message.",
+		InputSchema: &runtime.RawExtension{Raw: []byte(`{"properties":{"message":{"type":"string"}},"type":"object"}`)},
+	}
+}
+
+// testClock is a settable clock for refresh and backoff tests.
+type testClock struct{ now time.Time }
+
+func (c *testClock) Now() time.Time { return c.now }
+
+func newDiscoveringReconciler(k8sClient client.Client, discoverer ToolDiscoverer, clock *testClock) *MCPServerReconciler {
+	return &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Discoverer: discoverer, now: clock.Now}
+}
+
+func reconcileWith(t *testing.T, reconciler *MCPServerReconciler) ctrl.Result {
+	t.Helper()
+	result, err := reconciler.Reconcile(context.Background(), ctrl.Request{NamespacedName: key()})
+	if err != nil {
+		t.Fatal(err)
+	}
+	return result
+}
+
+func TestReconcileDiscoversToolsOfReadyServers(t *testing.T) {
+	k8sClient := newClient(t, newServer(validSpec()))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	clock := &testClock{now: time.Date(2026, 10, 17, 9, 0, 0, 0, time.UTC)}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+
+	result := reconcileWith(t, reconciler)
+	if result.RequeueAfter != DefaultToolRefreshInterval {
+		t.Fatalf("RequeueAfter = %s, want %s", result.RequeueAfter, DefaultToolRefreshInterval)
+	}
+	first := get(t, k8sClient)
+	if len(first.Status.Tools) != 1 || first.Status.Tools[0].Name != "echo" {
+		t.Fatalf("tools = %+v", first.Status.Tools)
+	}
+	discovered := apimeta.FindStatusCondition(first.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discovered == nil || discovered.Status != metav1.ConditionTrue || discovered.Reason != kavryntv1alpha1.ReasonDiscovered || discovered.Message != "Discovered 1 tools" {
+		t.Fatalf("ToolsDiscovered = %+v", discovered)
+	}
+
+	// The status write triggers another reconcile: no new discovery, no write.
+	reconcileWith(t, reconciler)
+	second := get(t, k8sClient)
+	if discoverer.calls != 1 {
+		t.Fatalf("discoverer called %d times before the refresh interval, want 1", discoverer.calls)
+	}
+	if first.ResourceVersion != second.ResourceVersion {
+		t.Fatalf("unchanged tools rewrote status: %s -> %s", first.ResourceVersion, second.ResourceVersion)
+	}
+
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	discoverer.tools = append(discoverer.tools, kavryntv1alpha1.MCPServerTool{Name: "search"})
+	reconcileWith(t, reconciler)
+	if discoverer.calls != 2 {
+		t.Fatalf("discoverer called %d times after the refresh interval, want 2", discoverer.calls)
+	}
+	if tools := get(t, k8sClient).Status.Tools; len(tools) != 2 {
+		t.Fatalf("tools after refresh = %+v", tools)
+	}
+}
+
+// The fake client re-encodes stored JSON, so this checks the comparison
+// directly with the formatting a real API server might return.
+func TestStatusUnchangedComparesSchemasCanonically(t *testing.T) {
+	desired := kavryntv1alpha1.MCPServerStatus{ObservedGeneration: 1, Tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	current := kavryntv1alpha1.MCPServerStatus{ObservedGeneration: 1, Tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	current.Tools[0].InputSchema = &runtime.RawExtension{Raw: []byte(`{ "type": "object", "properties": { "message": { "type": "string" } } }`)}
+
+	if !statusUnchanged(current, desired) {
+		t.Fatal("re-encoded schema reported as a change")
+	}
+	if string(current.Tools[0].InputSchema.Raw) == string(desired.Tools[0].InputSchema.Raw) {
+		t.Fatal("statusUnchanged modified its argument")
+	}
+	desired.Tools[0].InputSchema = &runtime.RawExtension{Raw: []byte(`{"type":"object"}`)}
+	if statusUnchanged(current, desired) {
+		t.Fatal("different schema reported as unchanged")
+	}
+}
+
+func TestReconcileKeepsServerReadyWhenDiscoveryFails(t *testing.T) {
+	server := newServer(validSpec())
+	server.Status.Tools = []kavryntv1alpha1.MCPServerTool{echoTool()}
+	k8sClient := newClient(t, server)
+	discoverer := &fakeDiscoverer{err: errors.New("tools/list returned HTTP 401")}
+	clock := &testClock{now: time.Now()}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+
+	result := reconcileWith(t, reconciler)
+	if result.RequeueAfter != firstRetryDelay {
+		t.Fatalf("RequeueAfter = %s, want %s", result.RequeueAfter, firstRetryDelay)
+	}
+	updated := get(t, k8sClient)
+	if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("discovery failure changed Ready")
+	}
+	discovered := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discovered == nil || discovered.Status != metav1.ConditionFalse || discovered.Reason != kavryntv1alpha1.ReasonDiscoveryFailed || discovered.Message != "tools/list returned HTTP 401" {
+		t.Fatalf("ToolsDiscovered = %+v", discovered)
+	}
+	if len(updated.Status.Tools) != 1 {
+		t.Fatalf("last known tools dropped on failure: %+v", updated.Status.Tools)
+	}
+
+	clock.now = clock.now.Add(firstRetryDelay)
+	if result := reconcileWith(t, reconciler); result.RequeueAfter != 2*firstRetryDelay {
+		t.Fatalf("second RequeueAfter = %s, want %s", result.RequeueAfter, 2*firstRetryDelay)
+	}
+}
+
+func TestReconcileRediscoversOnSpecChange(t *testing.T) {
+	k8sClient := newClient(t, newServer(validSpec()))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, &testClock{now: time.Now()})
+	reconcileWith(t, reconciler)
+
+	server := get(t, k8sClient)
+	server.Spec.Endpoint = "http://other.default.svc:8080/mcp"
+	server.Generation++
+	if err := k8sClient.Update(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	reconcileWith(t, reconciler)
+	if discoverer.calls != 2 {
+		t.Fatalf("discoverer called %d times, want 2 after a spec change", discoverer.calls)
+	}
+}
+
+func TestReconcileClearsToolsWhenDiscoveryIsDisabled(t *testing.T) {
+	server := newServer(validSpec())
+	server.Status.Tools = []kavryntv1alpha1.MCPServerTool{echoTool()}
+	server.Status.Conditions = []metav1.Condition{{
+		Type: kavryntv1alpha1.ConditionToolsDiscovered, Status: metav1.ConditionTrue, Reason: kavryntv1alpha1.ReasonDiscovered, LastTransitionTime: metav1.Now(),
+	}}
+	k8sClient := newClient(t, server)
+	reconcile(t, k8sClient)
+
+	updated := get(t, k8sClient)
+	if len(updated.Status.Tools) != 0 {
+		t.Fatalf("tools = %+v, want none with discovery disabled", updated.Status.Tools)
+	}
+	if apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) != nil {
+		t.Fatal("ToolsDiscovered kept with discovery disabled")
+	}
+}
+
+func TestReconcileSkipsDiscoveryForServersThatAreNotReady(t *testing.T) {
+	server := newServer(kavryntv1alpha1.MCPServerSpec{Version: "0.1.0", Transport: "stdio", Command: "demo"})
+	server.Status.Tools = []kavryntv1alpha1.MCPServerTool{echoTool()}
+	k8sClient := newClient(t, server)
+	discoverer := &fakeDiscoverer{}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, &testClock{now: time.Now()})
+
+	if result := reconcileWith(t, reconciler); result.RequeueAfter != 0 {
+		t.Fatalf("RequeueAfter = %s, want 0", result.RequeueAfter)
+	}
+	if discoverer.calls != 0 {
+		t.Fatal("discovered tools of a server that is not Ready")
+	}
+	updated := get(t, k8sClient)
+	if len(updated.Status.Tools) != 0 {
+		t.Fatalf("tools = %+v, want none", updated.Status.Tools)
+	}
+	discovered := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discovered == nil || discovered.Status != metav1.ConditionFalse || discovered.Reason != kavryntv1alpha1.ReasonNotRoutable {
+		t.Fatalf("ToolsDiscovered = %+v", discovered)
+	}
 }
 
 func validSpec() kavryntv1alpha1.MCPServerSpec {

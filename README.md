@@ -77,7 +77,7 @@ registers and routes to endpoints that already exist.
 | Component | Responsibility |
 | --- | --- |
 | `kavryctl` | Validate manifests and register, list, inspect, and remove `MCPServer` resources |
-| `operator` | Validate `MCPServer` resources and report `Accepted` and `Ready` conditions |
+| `operator` | Validate `MCPServer` resources, report `Accepted` and `Ready` conditions, and list each Ready server's tools into status |
 | `gateway` | Watch `Ready` `MCPServer` resources and proxy HTTP MCP requests |
 
 All components live in this repository, build from one Go module, and are

@@ -3,7 +3,7 @@
 This chart installs the Kavrynt Kubernetes runtime:
 
 - Gateway (watches `MCPServer` resources read-only and routes MCP traffic)
-- Kubernetes Operator (validates `MCPServer` resources, sets `Accepted`/`Ready`)
+- Kubernetes Operator (validates `MCPServer` resources, sets `Accepted`/`Ready`, lists their tools into status)
 - the `MCPServer` CRD (`crds/` of the operator subchart)
 
 Component subcharts are vendored under `charts/`, so no `helm dependency build`

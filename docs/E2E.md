@@ -17,12 +17,15 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 4. Confirms the CRD rejects an endpoint with embedded credentials.
 5. Confirms Gateway RBAC: `get/list/watch` on `MCPServer` only; no writes, no
    Secrets.
-6. Calls `tools/list` and `tools/call` through
+6. Confirms the Operator records the sample server's `echo` tool and input
+   schema in `status.tools`, and that a server it cannot reach stays `Ready`
+   with `ToolsDiscovered=False` (`DiscoveryFailed`).
+7. Calls `tools/list` and `tools/call` through
    `/mcp/kavrynt-e2e.example-mcp-server` and checks the MCP traffic metrics,
    including that tool arguments never appear in them.
-7. Registers, inspects, routes to, and unregisters a second server with
+8. Registers, inspects, routes to, and unregisters a second server with
    `kavryctl`.
-8. Deletes the `MCPServer` and confirms the route disappears.
+9. Deletes the `MCPServer` and confirms the route disappears.
 
 Expected final line: `==> end-to-end workflow passed`.
 

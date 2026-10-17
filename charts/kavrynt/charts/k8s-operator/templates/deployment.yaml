@@ -35,6 +35,9 @@ spec:
             {{- if .Values.config.leaderElect }}
             - --leader-elect
             {{- end }}
+            - --tool-discovery={{ .Values.config.toolDiscovery.enabled }}
+            - --tool-refresh-interval
+            - {{ .Values.config.toolDiscovery.refreshInterval | quote }}
             {{- with join "," ((.Values.global | default dict).watchNamespaces | default list) }}
             - --gateway-watch-namespaces
             - {{ . | quote }}
