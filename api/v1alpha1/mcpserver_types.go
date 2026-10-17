@@ -12,12 +12,18 @@ const (
 	ConditionAccepted = "Accepted"
 	// ConditionReady reports whether the Gateway can route to the server.
 	ConditionReady = "Ready"
+	// ConditionToolsDiscovered reports whether the Operator listed the
+	// server's tools. It never affects Ready.
+	ConditionToolsDiscovered = "ToolsDiscovered"
 
 	ReasonValid                = "Valid"
 	ReasonInvalidSpec          = "InvalidSpec"
 	ReasonRoutable             = "Routable"
 	ReasonUnsupportedTransport = "UnsupportedTransport"
 	ReasonNamespaceNotWatched  = "NamespaceNotWatched"
+	ReasonDiscovered           = "Discovered"
+	ReasonDiscoveryFailed      = "DiscoveryFailed"
+	ReasonNotRoutable          = "NotRoutable"
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
@@ -35,6 +41,16 @@ type MCPServerSpec struct {
 type MCPServerStatus struct {
 	ObservedGeneration int64              `json:"observedGeneration,omitempty"`
 	Conditions         []metav1.Condition `json:"conditions,omitempty"`
+	// Tools are the server's tools from MCP tools/list, bounded by the
+	// Operator. They come from the MCP server and are untrusted.
+	Tools []MCPServerTool `json:"tools,omitempty"`
+}
+
+// MCPServerTool is one tool reported by an MCP server.
+type MCPServerTool struct {
+	Name        string                `json:"name"`
+	Description string                `json:"description,omitempty"`
+	InputSchema *runtime.RawExtension `json:"inputSchema,omitempty"`
 }
 
 type MCPServer struct {
@@ -70,6 +86,22 @@ func (in *MCPServer) DeepCopyObject() runtime.Object {
 	}
 	if in.Status.Conditions != nil {
 		out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
+	}
+	out.Status.Tools = CopyTools(in.Status.Tools)
+	return out
+}
+
+// CopyTools returns a deep copy of tools.
+func CopyTools(tools []MCPServerTool) []MCPServerTool {
+	if tools == nil {
+		return nil
+	}
+	out := make([]MCPServerTool, len(tools))
+	for i, tool := range tools {
+		out[i] = tool
+		if tool.InputSchema != nil {
+			out[i].InputSchema = tool.InputSchema.DeepCopy()
+		}
 	}
 	return out
 }
