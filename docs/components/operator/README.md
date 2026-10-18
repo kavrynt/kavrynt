@@ -17,6 +17,8 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 
 - Lists the tools of each `Ready` server into `status.tools` (see
   [Tool discovery](#tool-discovery)).
+- Optionally sends the inventory to Kavrynt Cloud (see
+  [Kavrynt Cloud sync](#kavrynt-cloud-sync)).
 - Does not deploy MCP server workloads, manage secrets, or proxy MCP traffic.
 
 ## Tool discovery
@@ -44,6 +46,42 @@ shows the tools.
   false` in the operator subchart, `operator.config.toolDiscovery.enabled` in
   the umbrella chart).
 
+## Kavrynt Cloud sync
+
+Off unless `--cloud-sync` is set (chart: `cloud.enabled`). The leader replica
+sends a full snapshot of every `MCPServer` to `POST <cloud-url>/v1/sync/mcpservers`
+at start, every `--cloud-sync-interval`, and 5 s after a change.
+
+- Each server is sent with its name, namespace, transport, endpoint (query and
+  fragment removed), `spec.version`, namespace as owner, status (`ready` or
+  `not_ready` from the `Ready` condition), and `status.tools`. `spec.args`,
+  `spec.environment`, and annotations are never sent, nor are tenant or
+  cluster IDs: Cloud derives them from the token.
+- The snapshot is the whole inventory: Cloud marks servers and tools it no
+  longer lists as removed. A snapshot over 1 MiB (Cloud's request limit) is
+  sent without tool input schemas, then without descriptions; if it still does
+  not fit, it is not sent and the sync fails, because a partial snapshot would
+  remove servers in Cloud.
+- The cluster token is read from `--cloud-token-file` before every sync, so a
+  rotated Secret takes effect without a restart. It is never logged. Requests
+  are HTTPS only, follow no redirects, and time out after 30 s.
+- Failures back off exponentially with jitter (5 s up to 5 min) and honour
+  `Retry-After` on 429 and 503.
+- Metrics: `kavrynt_operator_cloud_sync_success_total`,
+  `kavrynt_operator_cloud_sync_failure_total{reason}` (`token`, `inventory`,
+  `too_large`, `network`, `rejected`, `throttled`, `server_error`), and
+  `kavrynt_operator_cloud_sync_last_success_timestamp_seconds`.
+
+Chart setup (umbrella chart: prefix with `operator.`):
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-cloud-token --from-literal=token="$CLUSTER_TOKEN"
+helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
+  --set operator.cloud.enabled=true \
+  --set operator.cloud.url="$KAVRYNT_CLOUD_URL" \
+  --set operator.cloud.tokenSecret.name=kavrynt-cloud-token
+```
+
 ## Flags
 
 | Flag | Default | Purpose |
@@ -54,6 +92,10 @@ shows the tools.
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |
+| `--cloud-sync` | `false` (chart: `cloud.enabled`) | Send the inventory to Kavrynt Cloud |
+| `--cloud-url` | none (chart: `cloud.url`) | Kavrynt Cloud base URL; https only |
+| `--cloud-token-file` | `/var/run/secrets/kavrynt/cloud/token` (chart: Secret `cloud.tokenSecret`) | Cluster token, re-read before every sync |
+| `--cloud-sync-interval` | `60s` (chart: `cloud.syncInterval`) | How often the inventory is sent without changes |
 
 ## Manifests
 

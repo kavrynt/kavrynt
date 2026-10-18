@@ -22,6 +22,20 @@ config:
     enabled: true
     refreshInterval: 5m
 
+# Kavrynt Cloud connector: sends every MCPServer and its discovered tools to
+# Kavrynt Cloud. Off by default. Create the Secret first, for example:
+#   kubectl create secret generic kavrynt-cloud-token --from-literal=token=<cluster token>
+# The token's tenant and cluster come from Cloud; nothing here sets them.
+cloud:
+  enabled: false
+  # Kavrynt Cloud base URL; https only.
+  url: ""
+  tokenSecret:
+    # Secret in the release namespace holding the cluster token.
+    name: ""
+    key: token
+  syncInterval: 60s
+
 podSecurityContext:
   runAsNonRoot: true
   runAsUser: 65532

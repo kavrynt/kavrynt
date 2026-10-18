@@ -9,6 +9,7 @@ import (
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/operator/build"
+	"github.com/kavrynt/kavrynt/internal/operator/cloudsync"
 	"github.com/kavrynt/kavrynt/internal/operator/controller"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -28,6 +29,10 @@ func main() {
 		gatewayNamespaces string
 		toolDiscovery     bool
 		toolRefresh       time.Duration
+		cloudSync         bool
+		cloudURL          string
+		cloudTokenFile    string
+		cloudInterval     time.Duration
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address")
@@ -36,6 +41,10 @@ func main() {
 	flag.StringVar(&gatewayNamespaces, "gateway-watch-namespaces", "", "Comma-separated namespaces the Gateway watches (empty means all); servers elsewhere are not Ready")
 	flag.BoolVar(&toolDiscovery, "tool-discovery", true, "List the tools of Ready MCP servers into MCPServer status")
 	flag.DurationVar(&toolRefresh, "tool-refresh-interval", controller.DefaultToolRefreshInterval, "How often tools are listed again")
+	flag.BoolVar(&cloudSync, "cloud-sync", false, "Send the MCPServer inventory to Kavrynt Cloud")
+	flag.StringVar(&cloudURL, "cloud-url", "", "Kavrynt Cloud base URL (https)")
+	flag.StringVar(&cloudTokenFile, "cloud-token-file", cloudsync.DefaultTokenFile, "File holding the Kavrynt Cloud cluster token; read before every sync")
+	flag.DurationVar(&cloudInterval, "cloud-sync-interval", cloudsync.DefaultInterval, "How often the inventory is sent without changes")
 	opts := zap.Options{Development: true}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
@@ -70,6 +79,23 @@ func main() {
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "error", err)
 		os.Exit(1)
+	}
+
+	if cloudSync {
+		syncer, err := cloudsync.New(mgr.GetClient(), mgr.GetCache(), cloudsync.Config{
+			URL:       cloudURL,
+			TokenFile: cloudTokenFile,
+			Interval:  cloudInterval,
+			Version:   build.Version,
+		})
+		if err != nil {
+			slog.Error("invalid Kavrynt Cloud sync configuration", "error", err)
+			os.Exit(1)
+		}
+		if err := mgr.Add(syncer); err != nil {
+			slog.Error("unable to add Kavrynt Cloud sync", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	if err := mgr.AddHealthzCheck("healthz", healthz.Ping); err != nil {

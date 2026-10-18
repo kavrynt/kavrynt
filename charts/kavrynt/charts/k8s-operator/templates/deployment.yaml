@@ -1,3 +1,12 @@
+{{- $cloud := .Values.cloud | default dict }}
+{{- if $cloud.enabled }}
+{{- if not (hasPrefix "https://" ($cloud.url | default "")) }}
+{{- fail "cloud.url must be an https URL when cloud.enabled is true" }}
+{{- end }}
+{{- if not ($cloud.tokenSecret | default dict).name }}
+{{- fail "cloud.tokenSecret.name is required when cloud.enabled is true" }}
+{{- end }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -38,6 +47,15 @@ spec:
             - --tool-discovery={{ .Values.config.toolDiscovery.enabled }}
             - --tool-refresh-interval
             - {{ .Values.config.toolDiscovery.refreshInterval | quote }}
+            {{- if $cloud.enabled }}
+            - --cloud-sync
+            - --cloud-url
+            - {{ $cloud.url | quote }}
+            - --cloud-token-file
+            - /var/run/secrets/kavrynt/cloud/token
+            - --cloud-sync-interval
+            - {{ $cloud.syncInterval | default "60s" | quote }}
+            {{- end }}
             {{- with join "," ((.Values.global | default dict).watchNamespaces | default list) }}
             - --gateway-watch-namespaces
             - {{ . | quote }}
@@ -59,6 +77,21 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if $cloud.enabled }}
+          volumeMounts:
+            - name: cloud-token
+              mountPath: /var/run/secrets/kavrynt/cloud
+              readOnly: true
+          {{- end }}
+      {{- if $cloud.enabled }}
+      volumes:
+        - name: cloud-token
+          secret:
+            secretName: {{ $cloud.tokenSecret.name | quote }}
+            items:
+              - key: {{ $cloud.tokenSecret.key | default "token" | quote }}
+                path: token
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}
