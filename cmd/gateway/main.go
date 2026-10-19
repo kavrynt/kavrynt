@@ -12,8 +12,10 @@ import (
 	"syscall"
 	"time"
 
+	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
+	"github.com/kavrynt/kavrynt/internal/gateway/console"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -23,7 +25,10 @@ func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
 	watchNamespaces := flag.String("watch-namespaces", getenv("KAVRYNT_WATCH_NAMESPACES", ""), "Comma-separated namespaces to watch for MCPServer resources (empty watches all)")
 	stripHeaders := flag.String("strip-request-headers", getenv("KAVRYNT_STRIP_REQUEST_HEADERS", ""), "Comma-separated extra request headers never forwarded upstream (Authorization, Cookie, and Proxy-Authorization are always removed)")
-	requestTimeout := flag.Duration("request-timeout", 30*time.Second, "Outbound request timeout")
+	requestTimeout := flag.Duration("request-timeout", api.DefaultRequestTimeout, "Upstream request timeout (event streams: until response headers)")
+	allowedOrigins := flag.String("allowed-origins", getenv("KAVRYNT_ALLOWED_ORIGINS", ""), "Comma-separated browser origins (scheme://host[:port]) allowed besides loopback; requests from other origins are rejected")
+	consoleEnabled := flag.Bool("console", true, "Serve the read-only web console at /ui/")
+	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
@@ -44,12 +49,19 @@ func main() {
 	}
 
 	table := routing.NewTable()
-	handler := api.NewHandler(table, &http.Client{Timeout: *requestTimeout}, api.Metadata{
+	// The request timeout is applied per request by the handler, so event
+	// streams can outlive it.
+	handler := api.NewHandler(table, &http.Client{Transport: egress.Transport(*allowLoopback)}, api.Metadata{
 		Version:   build.Version,
 		Commit:    build.Commit,
 		BuildDate: build.BuildDate,
 	})
 	handler.StripRequestHeaders(splitList(*stripHeaders)...)
+	handler.SetRequestTimeout(*requestTimeout)
+	handler.AllowOrigins(splitList(*allowedOrigins)...)
+	if *consoleEnabled {
+		handler.EnableConsole(console.Handler())
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -66,9 +78,10 @@ func main() {
 		Addr:              *addr,
 		Handler:           handler,
 		ReadHeaderTimeout: 5 * time.Second,
+		IdleTimeout:       2 * time.Minute,
 	}
 	go func() {
-		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "version", build.Version)
+		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "version", build.Version)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}

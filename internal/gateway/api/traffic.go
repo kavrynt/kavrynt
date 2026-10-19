@@ -153,6 +153,77 @@ func isJSON(contentType string) bool {
 	return err == nil && mediaType == "application/json"
 }
 
+func isEventStream(contentType string) bool {
+	mediaType, _, err := mime.ParseMediaType(contentType)
+	return err == nil && mediaType == "text/event-stream"
+}
+
+// recentTrafficSize is how many proxied requests /v1/traffic keeps.
+const recentTrafficSize = 500
+
+// TrafficRecord is one proxied request at /v1/traffic, with the same
+// metadata as the traffic metrics: never arguments, results, or bodies.
+type TrafficRecord struct {
+	ID         uint64    `json:"id"`
+	Time       time.Time `json:"time"`
+	Route      string    `json:"route"`
+	Method     string    `json:"method"`
+	Tool       string    `json:"tool"`
+	Outcome    string    `json:"outcome"`
+	Status     int       `json:"status"`
+	DurationMS float64   `json:"durationMs"`
+	BytesIn    int64     `json:"bytesIn"`
+	BytesOut   int64     `json:"bytesOut"`
+}
+
+// recentTraffic is a ring buffer of the latest proxied requests, for the
+// console's live view. It lives in memory and is per Gateway replica.
+type recentTraffic struct {
+	mu      sync.Mutex
+	records []TrafficRecord
+	next    int
+	seq     uint64
+}
+
+func newRecentTraffic(size int) *recentTraffic {
+	return &recentTraffic{records: make([]TrafficRecord, 0, size)}
+}
+
+func (t *recentTraffic) add(route string, call mcpCall, outcome string, status int, elapsed time.Duration, bytesIn, bytesOut int64) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.seq++
+	record := TrafficRecord{
+		ID:         t.seq,
+		Time:       time.Now().UTC(),
+		Route:      route,
+		Method:     sanitizeLabel(call.method, maxMethodLength),
+		Tool:       sanitizeLabel(call.tool, maxToolLength),
+		Outcome:    outcome,
+		Status:     status,
+		DurationMS: float64(elapsed.Microseconds()) / 1000,
+		BytesIn:    bytesIn,
+		BytesOut:   bytesOut,
+	}
+	if len(t.records) < cap(t.records) {
+		t.records = append(t.records, record)
+		return
+	}
+	t.records[t.next] = record
+	t.next = (t.next + 1) % len(t.records)
+}
+
+// list returns the records, newest first.
+func (t *recentTraffic) list() []TrafficRecord {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	out := make([]TrafficRecord, 0, len(t.records))
+	for i := len(t.records) - 1; i >= 0; i-- {
+		out = append(out, t.records[(t.next+i)%len(t.records)])
+	}
+	return out
+}
+
 // captureBuffer keeps the first limit bytes written to it and reports whether
 // more were discarded. Writes never fail, so it cannot interrupt a response.
 type captureBuffer struct {

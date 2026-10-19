@@ -46,7 +46,7 @@ const (
 	// MaxSnapshotBytes is the largest request body Cloud reads.
 	MaxSnapshotBytes = 1 << 20
 	// DefaultTokenFile is where the chart mounts the cluster token.
-	DefaultTokenFile = "/var/run/secrets/kavrynt/cloud/token"
+	DefaultTokenFile = "/var/run/secrets/kavrynt/cloud/token" // #nosec G101 -- a file path, not a credential.
 
 	minBackoff    = 5 * time.Second
 	maxBackoff    = 5 * time.Minute
@@ -482,7 +482,7 @@ func backoff(failures int) time.Duration {
 	if failures < 16 {
 		d = min(minBackoff<<(failures-1), maxBackoff)
 	}
-	return d/2 + rand.N(d/2+1)
+	return d/2 + rand.N(d/2+1) // #nosec G404 -- backoff jitter needs no cryptographic randomness.
 }
 
 // retryAfter parses a Retry-After header in seconds or as an HTTP date.

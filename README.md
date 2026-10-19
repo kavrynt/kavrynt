@@ -231,7 +231,17 @@ return:
 {"mock":true,"service":"example-mcp-server"}
 ```
 
-### 5. Clean up the example
+### 5. Open the console
+
+With the port-forward running, open <http://localhost:18080/ui/>. The
+read-only console (similar in spirit to the Argo CD UI) shows every
+`MCPServer`, why it is or is not routed, and its discovered tools; a
+**Playground** to call tools through the Gateway exactly as an agent would;
+and **Live traffic** with per-route error rate and latency. Point your own
+agent at `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls
+arrive. Details: [Gateway console](docs/components/gateway/README.md#console).
+
+### 6. Clean up the example
 
 ```bash
 kubectl delete -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
@@ -343,6 +353,12 @@ the current release is not production-security complete:
 - Gateway does not yet enforce actor, tool, or policy authorization.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
   else.
+- Gateway and Operator never connect to cloud metadata, link-local, or
+  loopback addresses, and the Gateway does not follow upstream redirects.
+- Gateway rejects browser requests from origins other than loopback and
+  `gateway.config.allowedOrigins`.
+- The console has no login; it is reachable by anyone who can reach the
+  Gateway. Disable it with `gateway.console.enabled=false`.
 - Gateway is single-replica by default.
 - Audit, policy, approval, and usage services are not part of the current
   runtime beta.

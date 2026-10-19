@@ -8,6 +8,7 @@ import (
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/operator/build"
 	"github.com/kavrynt/kavrynt/internal/operator/cloudsync"
 	"github.com/kavrynt/kavrynt/internal/operator/controller"
@@ -33,6 +34,7 @@ func main() {
 		cloudURL          string
 		cloudTokenFile    string
 		cloudInterval     time.Duration
+		allowLoopback     bool
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address")
@@ -41,6 +43,7 @@ func main() {
 	flag.StringVar(&gatewayNamespaces, "gateway-watch-namespaces", "", "Comma-separated namespaces the Gateway watches (empty means all); servers elsewhere are not Ready")
 	flag.BoolVar(&toolDiscovery, "tool-discovery", true, "List the tools of Ready MCP servers into MCPServer status")
 	flag.DurationVar(&toolRefresh, "tool-refresh-interval", controller.DefaultToolRefreshInterval, "How often tools are listed again")
+	flag.BoolVar(&allowLoopback, "allow-loopback-endpoints", false, "Allow tool discovery against endpoints that resolve to loopback addresses (local development only)")
 	flag.BoolVar(&cloudSync, "cloud-sync", false, "Send the MCPServer inventory to Kavrynt Cloud")
 	flag.StringVar(&cloudURL, "cloud-url", "", "Kavrynt Cloud base URL (https)")
 	flag.StringVar(&cloudTokenFile, "cloud-token-file", cloudsync.DefaultTokenFile, "File holding the Kavrynt Cloud cluster token; read before every sync")
@@ -74,7 +77,7 @@ func main() {
 		ToolRefreshInterval: toolRefresh,
 	}
 	if toolDiscovery {
-		reconciler.Discoverer = discovery.New(build.Version, nil)
+		reconciler.Discoverer = discovery.New(build.Version, egress.Transport(allowLoopback))
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "error", err)
