@@ -77,7 +77,7 @@ registers and routes to endpoints that already exist.
 | Component | Responsibility |
 | --- | --- |
 | `kavryctl` | Validate manifests and register, list, inspect, and remove `MCPServer` resources |
-| `operator` | Validate `MCPServer` resources and report `Accepted` and `Ready` conditions |
+| `operator` | Validate `MCPServer` resources, report `Accepted` and `Ready` conditions, and list each Ready server's tools into status |
 | `gateway` | Watch `Ready` `MCPServer` resources and proxy HTTP MCP requests |
 
 All components live in this repository, build from one Go module, and are
@@ -111,7 +111,7 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=0.0.3-beta.1
+export KAVRYNT_VERSION=0.0.4-beta.1
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
@@ -231,7 +231,17 @@ return:
 {"mock":true,"service":"example-mcp-server"}
 ```
 
-### 5. Clean up the example
+### 5. Open the console
+
+With the port-forward running, open <http://localhost:18080/ui/>. The
+read-only console (similar in spirit to the Argo CD UI) shows every
+`MCPServer`, why it is or is not routed, and its discovered tools; a
+**Playground** to call tools through the Gateway exactly as an agent would;
+and **Live traffic** with per-route error rate and latency. Point your own
+agent at `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls
+arrive. Details: [Gateway console](docs/components/gateway/README.md#console).
+
+### 6. Clean up the example
 
 ```bash
 kubectl delete -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
@@ -283,11 +293,11 @@ Important values:
 | Value | Default | Purpose |
 | --- | --- | --- |
 | `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
-| `gateway.image.tag` | `0.0.3-beta.1` | Gateway image tag |
+| `gateway.image.tag` | `0.0.4-beta.1` | Gateway image tag |
 | `global.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches Gateway RBAC to per-namespace Roles, and the Operator marks servers elsewhere `Ready=False` (`NamespaceNotWatched`). Replaces `gateway.config.watchNamespaces`. |
 | `gateway.rbac.create` | `true` | Create read-only `MCPServer` RBAC for the Gateway |
 | `operator.image.repository` | `kavrynt/operator` | Operator container repository |
-| `operator.image.tag` | `0.0.3-beta.1` | Operator image tag |
+| `operator.image.tag` | `0.0.4-beta.1` | Operator image tag |
 
 Review [`charts/kavrynt/values.yaml`](charts/kavrynt/values.yaml) and each
 component chart before production-oriented customization.
@@ -343,6 +353,12 @@ the current release is not production-security complete:
 - Gateway does not yet enforce actor, tool, or policy authorization.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
   else.
+- Gateway and Operator never connect to cloud metadata, link-local, or
+  loopback addresses, and the Gateway does not follow upstream redirects.
+- Gateway rejects browser requests from origins other than loopback and
+  `gateway.config.allowedOrigins`.
+- The console has no login; it is reachable by anyone who can reach the
+  Gateway. Disable it with `gateway.console.enabled=false`.
 - Gateway is single-replica by default.
 - Audit, policy, approval, and usage services are not part of the current
   runtime beta.

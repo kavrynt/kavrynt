@@ -1,10 +1,12 @@
 package api
 
 import (
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"net"
 	"net/http"
 	"net/url"
 	"strings"
@@ -28,6 +30,18 @@ type Metadata struct {
 // not reach another resource. See docs/ADR-0003-Runtime-Authorization.md.
 var credentialHeaders = []string{"Authorization", "Cookie", "Proxy-Authorization"}
 
+// routeHeader names the route on every forwarded request. A request that
+// already carries it has passed through a Gateway, so an endpoint pointing
+// back at a Gateway is reported instead of looping.
+const routeHeader = "X-Kavrynt-Route"
+
+// DefaultRequestTimeout bounds a proxied request until its response is
+// complete. Event-stream responses are bounded only until their headers
+// arrive, so they stay open as long as the client does.
+const DefaultRequestTimeout = 30 * time.Second
+
+var errRequestTimeout = errors.New("upstream request timed out")
+
 type Handler struct {
 	table    *routing.Table
 	client   *http.Client
@@ -35,12 +49,18 @@ type Handler struct {
 
 	// stripRequest holds canonical header names removed from proxied requests.
 	stripRequest map[string]struct{}
+	// allowedOrigins holds browser origins accepted besides loopback ones.
+	allowedOrigins map[string]struct{}
+	requestTimeout time.Duration
+	// console serves the web console under /ui/; nil disables it.
+	console http.Handler
 
 	requests         atomic.Uint64
 	proxied          atomic.Uint64
 	strippedRequests atomic.Uint64
 
 	traffic        *trafficMetrics
+	recent         *recentTraffic
 	metricsHandler http.Handler
 }
 
@@ -52,11 +72,18 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 	if client == nil {
 		client = http.DefaultClient
 	}
+	// A proxy passes redirects to the client. Following them would let an
+	// upstream send the Gateway to any address, bypassing endpoint validation.
+	proxyClient := *client
+	proxyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	h := &Handler{
-		table:        table,
-		client:       client,
-		metadata:     metadata,
-		stripRequest: map[string]struct{}{},
+		table:          table,
+		client:         &proxyClient,
+		metadata:       metadata,
+		stripRequest:   map[string]struct{}{},
+		allowedOrigins: map[string]struct{}{},
+		requestTimeout: DefaultRequestTimeout,
+		recent:         newRecentTraffic(recentTrafficSize),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
 	registry := h.newRegistry()
@@ -75,8 +102,38 @@ func (h *Handler) StripRequestHeaders(names ...string) {
 	}
 }
 
+// SetRequestTimeout bounds proxied requests; zero or less disables the bound.
+func (h *Handler) SetRequestTimeout(timeout time.Duration) {
+	h.requestTimeout = timeout
+}
+
+// AllowOrigins adds browser origins (scheme://host[:port]) whose requests are
+// accepted. Loopback origins are always accepted.
+func (h *Handler) AllowOrigins(origins ...string) {
+	for _, origin := range origins {
+		if origin = strings.TrimRight(strings.TrimSpace(origin), "/"); origin != "" {
+			h.allowedOrigins[strings.ToLower(origin)] = struct{}{}
+		}
+	}
+}
+
+// EnableConsole serves console under /ui/ and redirects / to it. The console
+// receives paths without the /ui prefix.
+func (h *Handler) EnableConsole(console http.Handler) {
+	h.console = http.StripPrefix("/ui", console)
+}
+
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.requests.Add(1)
+
+	// Browsers send Origin on cross-origin and state-changing requests. The
+	// Gateway does not authenticate callers yet, so a web page must not be
+	// able to drive MCP calls through it (MCP requires servers to validate
+	// Origin against DNS rebinding). Clients that are not browsers send none.
+	if !h.originAllowed(r.Header.Get("Origin")) {
+		writeError(w, http.StatusForbidden, errors.New("origin not allowed; add it with --allowed-origins"))
+		return
+	}
 
 	switch {
 	case r.Method == http.MethodGet && r.URL.Path == "/healthz":
@@ -89,8 +146,16 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		h.metrics(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/routes":
 		h.listRoutes(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/servers":
+		h.listServers(w, r)
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/traffic":
+		h.listTraffic(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):
 		h.proxy(w, r)
+	case h.console != nil && r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/ui"):
+		http.Redirect(w, r, "/ui/", http.StatusFound)
+	case h.console != nil && strings.HasPrefix(r.URL.Path, "/ui/"):
+		h.console.ServeHTTP(w, r)
 	default:
 		writeError(w, http.StatusNotFound, errors.New("not found"))
 	}
@@ -130,10 +195,50 @@ func (h *Handler) listRoutes(w http.ResponseWriter, _ *http.Request) {
 	writeJSON(w, http.StatusOK, map[string][]model.Route{"routes": h.table.List()})
 }
 
+func (h *Handler) listServers(w http.ResponseWriter, _ *http.Request) {
+	servers := h.table.Servers()
+	if servers == nil {
+		servers = []model.Server{}
+	}
+	writeJSON(w, http.StatusOK, map[string][]model.Server{"servers": servers})
+}
+
+func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
+	writeJSON(w, http.StatusOK, map[string][]TrafficRecord{"requests": h.recent.list()})
+}
+
+// originAllowed accepts requests without an Origin header, loopback origins
+// (a port-forwarded Gateway or console), and configured origins.
+func (h *Handler) originAllowed(origin string) bool {
+	if origin == "" {
+		return true
+	}
+	parsed, err := url.Parse(origin)
+	if err != nil || (parsed.Scheme != "http" && parsed.Scheme != "https") || parsed.Host == "" {
+		return false
+	}
+	if host := parsed.Hostname(); host == "localhost" || isLoopbackIP(host) {
+		return true
+	}
+	_, ok := h.allowedOrigins[strings.ToLower(parsed.Scheme+"://"+parsed.Host)]
+	return ok
+}
+
+func isLoopbackIP(host string) bool {
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
+}
+
 func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	name, suffix, ok := parseMCPPath(r.URL.Path)
 	if !ok {
 		writeError(w, http.StatusNotFound, errors.New("not found"))
+		return
+	}
+	// The suffix is appended to the endpoint path; dot segments would let a
+	// caller leave it for other paths on the same host.
+	if hasDotSegment(suffix) {
+		writeError(w, http.StatusBadRequest, errors.New("path must not contain . or .. segments"))
 		return
 	}
 
@@ -147,15 +252,19 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	call, body, err := inspectRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("read request body"))
-		h.traffic.observe(route.Name, call, outcomeClientError, time.Since(start), 0, 0)
+		h.observe(route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
 		return
 	}
 	upstreamBody := &countingReader{r: body}
 	gatewayError := func(status int, err error) {
 		writeError(w, status, err)
-		h.traffic.observe(route.Name, call, outcomeGatewayError, time.Since(start), upstreamBody.n, 0)
+		h.observe(route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
 	}
 
+	if r.Header.Get(routeHeader) != "" {
+		gatewayError(http.StatusLoopDetected, fmt.Errorf("request already passed through a Kavrynt Gateway; the endpoint of %q must not point at a Gateway", route.Name))
+		return
+	}
 	if route.Transport != "http" {
 		gatewayError(http.StatusBadGateway, fmt.Errorf("transport %q is not supported by gateway MVP", route.Transport))
 		return
@@ -167,11 +276,19 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	ctx, cancel := context.WithCancelCause(r.Context())
+	defer cancel(nil)
+	var timer *time.Timer
+	if h.requestTimeout > 0 {
+		timer = time.AfterFunc(h.requestTimeout, func() { cancel(errRequestTimeout) })
+		defer timer.Stop()
+	}
+
 	var forward io.Reader = upstreamBody
 	if body == http.NoBody {
 		forward = http.NoBody
 	}
-	req, err := http.NewRequestWithContext(r.Context(), r.Method, target, forward)
+	req, err := http.NewRequestWithContext(ctx, r.Method, target, forward)
 	if err != nil {
 		gatewayError(http.StatusBadGateway, err)
 		return
@@ -183,38 +300,66 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		h.strippedRequests.Add(1)
 	}
 	req.Host = req.URL.Host
-	req.Header.Set("X-Kavrynt-Route", route.Name)
+	req.Header.Set(routeHeader, route.Name)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
 	// #nosec G704 -- buildTargetURL restricts MCPServer-provided targets to validated HTTP(S) URLs.
 	resp, err := h.client.Do(req)
 	if err != nil {
-		writeError(w, http.StatusBadGateway, err)
-		h.traffic.observe(route.Name, call, classifyTransportError(err), time.Since(start), upstreamBody.n, 0)
+		// The error names the upstream URL; callers get a fixed message.
+		outcome, status, message := classifyTransportError(err), http.StatusBadGateway, "upstream request failed"
+		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+			outcome, status, message = outcomeTimeout, http.StatusGatewayTimeout, errRequestTimeout.Error()
+		}
+		writeError(w, status, errors.New(message))
+		h.observe(route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
 		return
 	}
 	defer resp.Body.Close()
 
+	stream := isEventStream(resp.Header.Get("Content-Type"))
+	if stream && timer != nil {
+		timer.Stop()
+	}
+
 	copyHeaders(w.Header(), resp.Header, responseStrip)
+	// Every route shares the Gateway origin, which also serves the console.
+	// Responses render in a sandbox (an opaque origin, no scripts) so an
+	// upstream cannot run code as the Gateway origin.
+	w.Header().Set("Content-Security-Policy", "sandbox")
+	w.Header().Set("X-Content-Type-Options", "nosniff")
 	w.WriteHeader(resp.StatusCode)
 
 	// JSON responses are also captured (bounded) to detect JSON-RPC and tool
-	// errors; streamed responses (text/event-stream) are not inspected.
+	// errors; streamed responses (text/event-stream) are not inspected but
+	// flushed as they arrive.
 	var captured *captureBuffer
 	var dst io.Writer = w
-	if isJSON(resp.Header.Get("Content-Type")) {
+	switch {
+	case isJSON(resp.Header.Get("Content-Type")):
 		captured = &captureBuffer{limit: maxInspectBytes}
 		dst = io.MultiWriter(w, captured)
+	case stream:
+		dst = &flushWriter{w: w, controller: http.NewResponseController(w)}
 	}
 	written, copyErr := io.Copy(dst, resp.Body)
 	outcome := classifyResponse(resp.StatusCode, captured)
 	if copyErr != nil {
 		outcome = outcomeIncomplete
+		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+			outcome = outcomeTimeout
+		}
 	}
-	h.traffic.observe(route.Name, call, outcome, time.Since(start), upstreamBody.n, written)
+	h.observe(route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
 	if copyErr == nil {
 		h.proxied.Add(1)
 	}
+}
+
+// observe records a proxied request in the metrics and the recent traffic.
+func (h *Handler) observe(route string, call mcpCall, outcome string, status int, elapsed time.Duration, bytesIn, bytesOut int64) {
+	h.traffic.observe(route, call, outcome, elapsed, bytesIn, bytesOut)
+	h.recent.add(route, call, outcome, status, elapsed, bytesIn, bytesOut)
 }
 
 func parseMCPPath(path string) (string, string, bool) {
@@ -230,6 +375,15 @@ func parseMCPPath(path string) (string, string, bool) {
 		return name, "", true
 	}
 	return name, "/" + suffix, true
+}
+
+func hasDotSegment(path string) bool {
+	for _, segment := range strings.Split(path, "/") {
+		if segment == "." || segment == ".." {
+			return true
+		}
+	}
+	return false
 }
 
 func buildTargetURL(endpoint, suffix, rawQuery string) (string, error) {
@@ -248,11 +402,27 @@ func buildTargetURL(endpoint, suffix, rawQuery string) (string, error) {
 	}
 	if suffix != "" {
 		parsed.Path = strings.TrimRight(parsed.Path, "/") + suffix
+		parsed.RawPath = ""
 	}
 	if rawQuery != "" {
 		parsed.RawQuery = rawQuery
 	}
 	return parsed.String(), nil
+}
+
+// flushWriter flushes after every write so server-sent events reach the
+// client as the upstream sends them.
+type flushWriter struct {
+	w          io.Writer
+	controller *http.ResponseController
+}
+
+func (f *flushWriter) Write(p []byte) (int, error) {
+	n, err := f.w.Write(p)
+	if err == nil {
+		err = f.controller.Flush()
+	}
+	return n, err
 }
 
 // responseStrip keeps upstream cookies from being set on the Gateway origin,

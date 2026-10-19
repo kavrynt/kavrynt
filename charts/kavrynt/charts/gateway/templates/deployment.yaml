@@ -47,6 +47,11 @@ spec:
             {{- end }}
             - --request-timeout
             - {{ .Values.config.requestTimeout | quote }}
+            {{- with .Values.config.allowedOrigins }}
+            - --allowed-origins
+            - {{ join "," . | quote }}
+            {{- end }}
+            - --console={{ (.Values.console | default dict).enabled | default false }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}

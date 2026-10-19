@@ -76,9 +76,13 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 		&kavryntv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "a", Namespace: "team-a"},
 			Spec:       kavryntv1alpha1.MCPServerSpec{Version: "1", Transport: "http", Endpoint: "http://a"},
-			Status: kavryntv1alpha1.MCPServerStatus{Conditions: []metav1.Condition{{
-				Type: kavryntv1alpha1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Routable", LastTransitionTime: metav1.Now(),
-			}}},
+			Status: kavryntv1alpha1.MCPServerStatus{
+				Conditions: []metav1.Condition{
+					{Type: kavryntv1alpha1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Routable", LastTransitionTime: metav1.Now()},
+					{Type: kavryntv1alpha1.ConditionToolsDiscovered, Status: metav1.ConditionTrue, Reason: "Discovered", LastTransitionTime: metav1.Now()},
+				},
+				Tools: []kavryntv1alpha1.MCPServerTool{{Name: "echo"}, {Name: "search"}},
+			},
 		},
 		&kavryntv1alpha1.MCPServer{
 			ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "team-b"},
@@ -97,6 +101,15 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 	}
 	if strings.Contains(out, "/mcp/team-b.b") {
 		t.Fatalf("list -A shows a route for a server that is not Ready:\n%s", out)
+	}
+	for _, line := range strings.Split(out, "\n") {
+		fields := strings.Fields(line)
+		switch {
+		case len(fields) > 0 && fields[0] == "team-a" && fields[6] != "2":
+			t.Fatalf("team-a TOOLS = %q, want 2:\n%s", fields[6], out)
+		case len(fields) > 0 && fields[0] == "team-b" && fields[6] != "-":
+			t.Fatalf("team-b TOOLS = %q, want - before discovery:\n%s", fields[6], out)
+		}
 	}
 
 	out, _, _ = run(t, "list")

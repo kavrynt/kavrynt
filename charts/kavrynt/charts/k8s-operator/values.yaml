@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: kavrynt/operator
-  tag: 0.0.3-beta.1
+  tag: 0.0.4-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -15,6 +15,26 @@ config:
   metricsBindAddress: ":8080"
   healthProbeBindAddress: ":8081"
   leaderElect: true
+  # The Operator lists the tools of Ready MCPServers (MCP tools/list) into
+  # status. It needs network access to each server's spec.endpoint and sends
+  # no credentials. Disable where the Operator must not reach MCP servers.
+  toolDiscovery:
+    enabled: true
+    refreshInterval: 5m
+
+# Kavrynt Cloud connector: sends every MCPServer and its discovered tools to
+# Kavrynt Cloud. Off by default. Create the Secret first, for example:
+#   kubectl create secret generic kavrynt-cloud-token --from-literal=token=<cluster token>
+# The token's tenant and cluster come from Cloud; nothing here sets them.
+cloud:
+  enabled: false
+  # Kavrynt Cloud base URL; https only.
+  url: ""
+  tokenSecret:
+    # Secret in the release namespace holding the cluster token.
+    name: ""
+    key: token
+  syncInterval: 60s
 
 podSecurityContext:
   runAsNonRoot: true

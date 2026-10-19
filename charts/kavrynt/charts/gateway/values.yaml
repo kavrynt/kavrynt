@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: kavrynt/gateway
-  tag: 0.0.3-beta.1
+  tag: 0.0.4-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -25,6 +25,16 @@ config:
   # Extra request headers never forwarded to MCP servers. Authorization,
   # Cookie, and Proxy-Authorization are always removed (no token passthrough).
   stripRequestHeaders: []
+  # Browser origins (scheme://host[:port]) allowed to call the Gateway, besides
+  # loopback origins such as a port-forward. Requests from other origins are
+  # rejected (MCP DNS-rebinding protection). Add the URL of any Ingress that
+  # serves the console, for example https://kavrynt.example.com.
+  allowedOrigins: []
+
+# Read-only web console at /ui/: MCP servers and their tools, a playground that
+# calls tools through the Gateway, and recent traffic. It needs no extra RBAC.
+console:
+  enabled: true
 
 # MCP traffic metrics on /metrics: requests, outcomes, and latency per MCP
 # server, method, and tool. Metadata only; bodies are never recorded.

@@ -3,7 +3,7 @@
 This chart installs the Kavrynt Kubernetes runtime:
 
 - Gateway (watches `MCPServer` resources read-only and routes MCP traffic)
-- Kubernetes Operator (validates `MCPServer` resources, sets `Accepted`/`Ready`)
+- Kubernetes Operator (validates `MCPServer` resources, sets `Accepted`/`Ready`, lists their tools into status, optionally syncs them to Kavrynt Cloud)
 - the `MCPServer` CRD (`crds/` of the operator subchart)
 
 Component subcharts are vendored under `charts/`, so no `helm dependency build`
@@ -19,7 +19,7 @@ Install from the published OCI chart after a tagged release:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 0.0.3-beta.1 \
+  --version 0.0.4-beta.1 \
   --namespace kavrynt-system \
   --create-namespace
 ```

@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Kavrynt Console</title>
+  <link rel="icon" href="logo.svg" type="image/svg+xml">
+  <link rel="stylesheet" href="app.css">
+  <script src="app.js" defer></script>
+</head>
+<body>
+  <div class="shell">
+    <nav class="sidebar" aria-label="Main">
+      <a class="brand" href="#/servers">
+        <img src="logo.svg" alt="" width="28" height="28">
+        <span>Kavrynt</span>
+      </a>
+      <ul class="nav">
+        <li><a href="#/servers" data-nav="servers"><span class="nav-icon" aria-hidden="true">&#9638;</span>Servers</a></li>
+        <li><a href="#/playground" data-nav="playground"><span class="nav-icon" aria-hidden="true">&#9654;</span>Playground</a></li>
+        <li><a href="#/traffic" data-nav="traffic"><span class="nav-icon" aria-hidden="true">&#8776;</span>Live traffic</a></li>
+      </ul>
+      <div class="sidebar-foot">
+        <div class="gw-status" id="gw-status"><span class="dot"></span><span>Connecting&hellip;</span></div>
+        <div class="gw-version" id="gw-version"></div>
+        <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle colour theme">&#9680;</button>
+      </div>
+    </nav>
+    <main id="main" class="main" tabindex="-1"></main>
+  </div>
+  <div id="toast" class="toast" role="status" aria-live="polite"></div>
+</body>
+</html>

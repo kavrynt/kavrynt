@@ -11,6 +11,7 @@ import (
 type Table struct {
 	mu        sync.RWMutex
 	routes    map[string]model.Route
+	servers   []model.Server
 	lastSync  time.Time
 	lastError string
 	ready     bool
@@ -39,6 +40,21 @@ func (t *Table) Replace(routes []model.Route, syncedAt time.Time) {
 	t.lastError = ""
 	t.ready = true
 	t.syncs++
+}
+
+// ReplaceServers swaps the server inventory shown in the console. The slice
+// must not be modified afterwards.
+func (t *Table) ReplaceServers(servers []model.Server) {
+	t.mu.Lock()
+	defer t.mu.Unlock()
+	t.servers = servers
+}
+
+// Servers returns the server inventory. Callers must not modify it.
+func (t *Table) Servers() []model.Server {
+	t.mu.RLock()
+	defer t.mu.RUnlock()
+	return t.servers
 }
 
 // MarkSyncError records a failed sync. Existing routes are kept.
