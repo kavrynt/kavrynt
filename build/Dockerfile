@@ -41,6 +41,7 @@ ARG COMMIT=unknown
 ARG BUILD_DATE=unknown
 
 LABEL org.opencontainers.image.vendor="Kavrynt" \
+      org.opencontainers.image.licenses="Apache-2.0" \
       org.opencontainers.image.url="https://kavrynt.com" \
       org.opencontainers.image.source="https://github.com/kavrynt/kavrynt" \
       org.opencontainers.image.version="${VERSION}" \

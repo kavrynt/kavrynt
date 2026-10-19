@@ -4,8 +4,9 @@ Kavrynt runtime: the Kubernetes-native MCP Control Plane that customers install
 in their own clusters. One Go module, one version, one Helm chart
 ([ADR-0001](docs/ADR-0001-Runtime-Monorepo.md)).
 
-This repository is **public** on GitHub and **source-available under the
-Elastic License 2.0**. Never describe it as open source. Everything committed
+This repository is **public** on GitHub and licensed under the **Apache
+License 2.0** ([ADR-0004](docs/ADR-0004-Apache-2.0-License.md)); releases up to
+`0.0.4-beta.1` remain under the Elastic License 2.0. Everything committed
 here, including this file, is publicly readable: keep internal infrastructure,
 cloud account details, pricing, and customer names out of it.
 
@@ -34,6 +35,8 @@ and `operator` repositories are archived and must not receive new changes.
   replaces the in-cluster Registry (removed in `0.0.2-beta.1`).
 - [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
   design. **Not implemented yet.**
+- [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
+  under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
   (ADR-0006, THREAT-0001).
 

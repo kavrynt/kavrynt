@@ -81,3 +81,4 @@ kavrynt/
 - The `LICENSE` file in this repository contains the Elastic License 2.0, a
   source-available licence. That conflicts with the rule that Kavrynt is not
   source-available. Replacing it is an owner and legal decision.
+  Resolved by [ADR-0004](ADR-0004-Apache-2.0-License.md): Apache-2.0.
