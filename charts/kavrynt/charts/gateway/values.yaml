@@ -2,7 +2,7 @@ replicaCount: 1
 
 image:
   repository: kavrynt/gateway
-  tag: 0.0.3-beta.1
+  tag: 0.0.4-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
