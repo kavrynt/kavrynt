@@ -426,3 +426,9 @@ may change before the first stable release.
 Use [GitHub issues](https://github.com/kavrynt/kavrynt/issues) for reproducible
 bugs and feature requests. Please include the Kavrynt version, Kubernetes
 version, installation method, relevant manifests, and sanitized logs.
+
+## License
+
+Kavrynt is licensed under the [Apache License 2.0](LICENSE). Releases up to
+and including `0.0.4-beta.1` were published under the Elastic License 2.0.
+See [ADR-0004](docs/ADR-0004-Apache-2.0-License.md).
