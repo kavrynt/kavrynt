@@ -396,14 +396,18 @@ test/e2e/            Kind end-to-end tests
 docs/                ADRs, runbooks, component docs
 ```
 
-Repository-specific engineering and contribution rules are documented in
-[`CLAUDE.md`](CLAUDE.md).
+To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md). Everyone taking part
+follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities
+privately as described in [SECURITY.md](SECURITY.md). Project roles and
+decisions are described in [GOVERNANCE.md](GOVERNANCE.md) and
+[MAINTAINERS.md](MAINTAINERS.md).
 
 The release process is documented in [`docs/RELEASE.md`](docs/RELEASE.md).
 
 ## Roadmap
 
-The next product milestones are:
+The full roadmap is in [ROADMAP.md](ROADMAP.md). The next product milestones
+are:
 
 1. Gateway authentication and no token passthrough
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
