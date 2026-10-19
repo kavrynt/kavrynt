@@ -6,6 +6,8 @@ import (
 	"context"
 	"errors"
 	"log/slog"
+	"net/url"
+	"sort"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
@@ -99,6 +101,7 @@ func (w *Watcher) sync(ctx context.Context) {
 		return
 	}
 	routes := Routes(servers.Items)
+	w.Table.ReplaceServers(Servers(servers.Items))
 	w.Table.Replace(routes, time.Now())
 	w.logger().Info("routes updated", "routes", len(routes))
 }
@@ -133,4 +136,68 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 		})
 	}
 	return routes
+}
+
+// Servers returns the console view of every MCPServer, routed or not, sorted
+// by namespace and name.
+func Servers(items []kavryntv1alpha1.MCPServer) []model.Server {
+	routed := map[string]bool{}
+	for _, route := range Routes(items) {
+		routed[route.Name] = true
+	}
+	servers := make([]model.Server, 0, len(items))
+	for i := range items {
+		item := &items[i]
+		server := model.Server{
+			Namespace:   item.Namespace,
+			Name:        item.Name,
+			Route:       item.RouteName(),
+			Description: item.Annotations[kavryntv1alpha1.DescriptionAnnotation],
+			Version:     item.Spec.Version,
+			Transport:   item.Spec.Transport,
+			Endpoint:    redactEndpoint(item.Spec.Endpoint),
+			Routed:      routed[item.RouteName()],
+			Conditions:  make([]model.Condition, 0, len(item.Status.Conditions)),
+			Tools:       make([]model.Tool, 0, len(item.Status.Tools)),
+			CreatedAt:   item.CreationTimestamp.Time,
+		}
+		for _, condition := range item.Status.Conditions {
+			server.Conditions = append(server.Conditions, model.Condition{
+				Type:               condition.Type,
+				Status:             string(condition.Status),
+				Reason:             condition.Reason,
+				Message:            condition.Message,
+				LastTransitionTime: condition.LastTransitionTime.Time,
+			})
+		}
+		for _, tool := range item.Status.Tools {
+			entry := model.Tool{Name: tool.Name, Description: tool.Description}
+			if tool.InputSchema != nil && len(tool.InputSchema.Raw) > 0 {
+				entry.InputSchema = append([]byte(nil), tool.InputSchema.Raw...)
+			}
+			server.Tools = append(server.Tools, entry)
+		}
+		servers = append(servers, server)
+	}
+	sort.Slice(servers, func(i, j int) bool {
+		if servers[i].Namespace != servers[j].Namespace {
+			return servers[i].Namespace < servers[j].Namespace
+		}
+		return servers[i].Name < servers[j].Name
+	})
+	return servers
+}
+
+// redactEndpoint drops the query and fragment, which may carry secrets.
+func redactEndpoint(raw string) string {
+	parsed, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	parsed.User = nil
+	parsed.RawQuery = ""
+	parsed.ForceQuery = false
+	parsed.Fragment = ""
+	parsed.RawFragment = ""
+	return parsed.String()
 }

@@ -36,6 +36,10 @@ shows the tools.
   tools are kept, and the Operator retries with backoff (30 s, doubling, up to
   the refresh interval).
 - The Operator sends no credentials and follows no redirects.
+- It never connects to unspecified, link-local (including
+  `169.254.169.254`), multicast, cloud metadata, or loopback addresses; such
+  servers get `DiscoveryFailed`. `--allow-loopback-endpoints` permits
+  loopback when the Operator runs on a workstation.
 - Tool metadata comes from the MCP server and is untrusted. Limits: 10 s per
   session, 1 MiB per response, 5 `tools/list` pages, 200 tools; names up to
   128 characters of `[A-Za-z0-9_./-]` (others are skipped); descriptions cut to
@@ -92,6 +96,7 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |
+| `--allow-loopback-endpoints` | `false` | Allow discovery against loopback endpoints; for running the Operator on a workstation only |
 | `--cloud-sync` | `false` (chart: `cloud.enabled`) | Send the inventory to Kavrynt Cloud |
 | `--cloud-url` | none (chart: `cloud.url`) | Kavrynt Cloud base URL; https only |
 | `--cloud-token-file` | `/var/run/secrets/kavrynt/cloud/token` (chart: Secret `cloud.tokenSecret`) | Cluster token, re-read before every sync |

@@ -298,6 +298,47 @@ printf '%s' "${FORWARDED}" | jq --exit-status '
   (.["X-Kavrynt-Probe"] == ["kept"])' >/dev/null ||
   fail "Gateway forwarded caller credentials upstream: ${FORWARDED}"
 
+log "verifying the Gateway rejects cross-origin browser requests"
+CROSS_ORIGIN_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}'   --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}"   --header 'Origin: https://attacker.example'   --header 'Content-Type: application/json'   --data '{"jsonrpc":"2.0","id":4,"method":"tools/list","params":{}}')"
+[ "${CROSS_ORIGIN_STATUS}" = "403" ] ||
+  fail "Gateway answered a cross-origin request with HTTP ${CROSS_ORIGIN_STATUS}, want 403"
+
+log "verifying the console and its read-only endpoints"
+curl --fail --silent --show-error "${GATEWAY_URL}/ui/" | grep --fixed-strings --quiet "Kavrynt Console" ||
+  fail "Gateway does not serve the console at /ui/"
+curl --fail --silent --show-error "${GATEWAY_URL}/v1/servers" |
+  jq --exit-status --arg route "${SERVER_ID}" '
+    .servers | map(select(.route == $route)) | .[0] |
+    .routed and (.tools | map(.name) == ["echo"])' >/dev/null ||
+  fail "/v1/servers does not list ${SERVER_ID} as routed with the echo tool"
+TRAFFIC="$(curl --fail --silent --show-error "${GATEWAY_URL}/v1/traffic")"
+printf '%s' "${TRAFFIC}" | jq --exit-status --arg route "${SERVER_ID}" '
+  .requests | any(.route == $route and .method == "tools/call" and .tool == "echo" and .outcome == "ok")' >/dev/null ||
+  fail "/v1/traffic does not record the echo tool call"
+if grep --fixed-strings --quiet "secret-argument" <<<"${TRAFFIC}"; then
+  fail "/v1/traffic contains tool arguments"
+fi
+
+log "verifying the Gateway refuses cloud metadata endpoints"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: metadata-endpoint
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://169.254.169.254/latest/meta-data/
+MANIFEST
+METADATA_ID="${E2E_NAMESPACE}.metadata-endpoint"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${METADATA_ID}\") != null"
+METADATA_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10   "${GATEWAY_URL}/mcp/${METADATA_ID}")"
+[ "${METADATA_STATUS}" = "502" ] ||
+  fail "Gateway answered a request to a metadata endpoint with HTTP ${METADATA_STATUS}, want 502"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}"   wait mcpserver/metadata-endpoint   --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}"   delete mcpserver/metadata-endpoint --wait=true --timeout=60s >/dev/null
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${METADATA_ID}\") == null" 30
+
 log "registering a second route with kavryctl"
 cat >"${TEMP_DIR}/kavryctl-server.yaml" <<MANIFEST
 apiVersion: kavrynt.io/v1alpha1

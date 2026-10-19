@@ -14,7 +14,7 @@ cloud account details, pricing, and customer names out of it.
 | Path | Owns |
 | --- | --- |
 | `cmd/kavryctl`, `internal/kavryctl` | Developer and platform CLI (`cli`, `manifest`) |
-| `cmd/gateway`, `internal/gateway` | MCP routing (`api`, `kube`, `model`, `routing`) and (future) enforcement |
+| `cmd/gateway`, `internal/gateway` | MCP routing (`api`, `kube`, `model`, `routing`), web console (`console`), and (future) enforcement |
 | `cmd/operator`, `internal/operator`, `api/v1alpha1`, `config/` | `MCPServer` CRD and reconciliation |
 | `charts/kavrynt` | Umbrella Helm chart; subcharts vendored in `charts/kavrynt/charts/{gateway,k8s-operator}` |
 | `build/Dockerfile` | All runtime images (`--target gateway`, `--target operator`) |
@@ -51,6 +51,14 @@ and `operator` repositories are archived and must not receive new changes.
   `/mcp/<namespace>.<name>`. `stdio` manifests validate but are not proxied.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
   forwarding and drops upstream `Set-Cookie`.
+- Gateway and Operator discovery refuse link-local, cloud metadata, and
+  loopback addresses at dial time (`internal/egress`); the Gateway passes
+  redirects to the client, rejects `..` path segments, cross-origin browser
+  requests (`--allowed-origins`), and Gateway loops, and sandboxes proxied
+  responses with CSP.
+- Read-only web console at `/ui/` on the Gateway (servers, tools, playground,
+  live traffic) backed by `GET /v1/servers` and `GET /v1/traffic`. It has no
+  login: it is exactly as exposed as the Gateway.
 - Not implemented: client authentication, token exchange, policy and tool
   authorization, audit, high availability. Never claim them in code comments,
   docs, or release notes until they are implemented and tested.
@@ -126,7 +134,11 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
   Operator never proxies traffic (tool discovery is its own MCP client
   session); `kavryctl` imports no server internals other than shared API
   types. Limits shared by the Gateway and the Operator live in
-  `internal/mcpmeta`.
+  `internal/mcpmeta`; their egress policy for MCP endpoints lives in
+  `internal/egress`.
+- The console (`internal/gateway/console/static`) is plain HTML, CSS, and
+  JavaScript embedded in the Gateway: no build step, no external assets.
+  Insert untrusted data with `textContent` only, never `innerHTML`.
 - Shared Kubernetes API types live only in `api/v1alpha1`. The CRD schema is
   hand-written (no controller-gen) and exists twice, kept identical:
   `config/crd/bases/kavrynt.io_mcpservers.yaml` and
@@ -166,6 +178,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
 7. A JSON-RPC `tools/list` call succeeds through Gateway.
 8. `kavryctl register`, `inspect`, and `unregister` work against the cluster.
 9. Deleting an `MCPServer` removes its Gateway route.
+10. The Gateway rejects cross-origin browser requests and refuses to proxy to
+    cloud metadata addresses; the console, `/v1/servers`, and `/v1/traffic`
+    work and never expose tool arguments.
 
 Keep the Kind workflow disposable and isolated from the user's current
 Kubernetes context. On macOS and Apple Silicon, build images locally and load
