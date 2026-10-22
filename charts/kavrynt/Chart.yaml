@@ -1,9 +1,22 @@
 apiVersion: v2
 name: kavrynt
-description: Kavrynt MCP Control Plane runtime chart
+description: Kubernetes-native control plane for registering, discovering, and routing Model Context Protocol (MCP) servers
 type: application
 version: 0.0.5-beta.1
 appVersion: 0.0.5-beta.1
+home: https://github.com/kavrynt/kavrynt
+icon: https://raw.githubusercontent.com/kavrynt/kavrynt/main/internal/gateway/console/static/logo.svg
+sources:
+  - https://github.com/kavrynt/kavrynt
+keywords:
+  - mcp
+  - model-context-protocol
+  - ai-agents
+  - gateway
+  - operator
+maintainers:
+  - name: Ravindra Kumar
+    url: https://github.com/Ravi041
 dependencies:
   - name: gateway
     version: 0.0.5-beta.1
@@ -12,3 +25,40 @@ dependencies:
     alias: operator
     version: 0.0.5-beta.1
     repository: file://charts/k8s-operator
+# Artifact Hub metadata: https://artifacthub.io/docs/topics/annotations/helm/
+# Image tags and the prerelease flag are part of the release contract
+# (scripts/verify-release-contract.sh).
+annotations:
+  artifacthub.io/license: Apache-2.0
+  artifacthub.io/category: ai-machine-learning
+  artifacthub.io/prerelease: "true"
+  artifacthub.io/operator: "true"
+  artifacthub.io/operatorCapabilities: Basic Install
+  artifacthub.io/images: |
+    - name: gateway
+      image: docker.io/kavrynt/gateway:0.0.5-beta.1
+    - name: operator
+      image: docker.io/kavrynt/operator:0.0.5-beta.1
+  artifacthub.io/crds: |
+    - kind: MCPServer
+      version: v1alpha1
+      name: mcpservers.kavrynt.io
+      displayName: MCP Server
+      description: An MCP server endpoint that the Operator validates and the Gateway routes.
+  artifacthub.io/crdsExamples: |
+    - apiVersion: kavrynt.io/v1alpha1
+      kind: MCPServer
+      metadata:
+        name: example-mcp-server
+        namespace: default
+      spec:
+        version: 0.1.0
+        transport: http
+        endpoint: http://example-mcp-server.default.svc.cluster.local:8080
+  artifacthub.io/links: |
+    - name: Documentation
+      url: https://github.com/kavrynt/kavrynt#readme
+    - name: Roadmap
+      url: https://github.com/kavrynt/kavrynt/blob/main/ROADMAP.md
+    - name: Security policy
+      url: https://github.com/kavrynt/kavrynt/blob/main/SECURITY.md

@@ -17,7 +17,7 @@ body:
     id: component
     attributes:
       label: Component
-      options: [kavryctl, gateway, operator, helm chart, docs, other]
+      options: [kavryctl, gateway, console, operator, helm chart, docs, other]
     validations:
       required: true
   - type: textarea

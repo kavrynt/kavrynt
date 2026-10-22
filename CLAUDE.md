@@ -22,6 +22,7 @@ cloud account details, pricing, and customer names out of it.
 | `test/e2e`, `scripts/` | Kind end-to-end tests, installers, release contract |
 | `examples/kavryctl` | Sample manifests; CI validates every file here with `kavryctl validate` |
 | `docs/` | ADRs, `RELEASE.md`, `E2E.md`, per-component docs in `docs/components/` |
+| `specs/` | Feature specifications with requirement IDs ([process](specs/README.md)) |
 
 Related repositories: the hosted control plane is `kavrynt-cloud`; cloud
 infrastructure is `kavrynt-platform`; the end-to-end lab is `kavrynt-labs`;
@@ -39,6 +40,21 @@ and `operator` repositories are archived and must not receive new changes.
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
   (ADR-0006, THREAT-0001).
+
+## Spec-Driven Development
+
+User-visible changes (the `MCPServer` API, Gateway endpoints and security
+behavior, the console, `kavryctl` commands, Helm values, the Cloud connector)
+start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
+
+- Before implementing, read the spec and `plan.md`. If the change has no
+  spec and needs one, write `spec.md` with status `Draft` and stop for
+  review; do not implement a `Draft` spec.
+- Every test that verifies a requirement cites its ID in a comment
+  (`// Verifies SPEC-0001-R03.`). Never renumber requirements.
+- Set a spec to `Implemented` only when all its requirements are tested;
+  `make spec-check` enforces this. Only then may docs describe the feature.
+- Bug fixes, refactors, dependency bumps, and docs need no spec.
 
 ## What Works Today (do not overstate)
 
@@ -94,8 +110,12 @@ only when the owner explicitly asks.
 
 ```bash
 make help            # list targets
-make qa              # release contract, gofmt, race tests, vet, staticcheck, gosec, govulncheck, helm lint/template
+make qa              # release contract, spec check, gofmt, race tests, vet, staticcheck, gosec, govulncheck, helm lint/template/unittest
 make test            # go test -race ./...
+make spec-check      # specs well formed; Implemented requirements cited by tests
+make spec-new NAME=x # scaffold specs/NNNN-x/spec.md
+make helm-plugins    # once: install the pinned helm-unittest plugin
+make helm-unittest   # chart unit tests (charts/kavrynt/tests)
 make build           # bin/kavryctl, bin/gateway, bin/operator
 make docker-build    # local images tagged $(LOCAL_VERSION)
 make e2e-kind        # disposable Kind cluster, full product loop (scripts/e2e-kind.sh)
@@ -103,7 +123,10 @@ make e2e-release RELEASE_VERSION=<v>   # validate published chart and images
 ```
 
 Run one package's tests: `go test -race ./internal/gateway/...`.
-Toolchain: Go 1.26+, Docker, Helm 3 or 4, kubectl, Kind.
+Toolchain: Go 1.26+, Docker, Helm 3 or 4 with the helm-unittest plugin,
+kubectl, Kind. Chart values are validated by hand-written
+`values.schema.json` files that reject unknown keys: add every new value to
+the schema and cover template changes in `charts/kavrynt/tests/`.
 
 ## CI and Release
 
@@ -126,6 +149,8 @@ version matches in all of these places:
 - `charts/kavrynt/Chart.yaml` `version` and `appVersion`
 - `charts/kavrynt/charts/gateway/Chart.yaml` and `charts/kavrynt/charts/k8s-operator/Chart.yaml` (`version`, `appVersion`)
 - both `tag:` lines in `charts/kavrynt/values.yaml`
+- the `artifacthub.io/images` tags in `charts/kavrynt/Chart.yaml`, and
+  `artifacthub.io/prerelease` (`"true"` for any `-alpha`/`-beta` version)
 - the operator image in `config/manager/deployment.yaml`
 - `v<version>` in `scripts/install.sh` and `scripts/install.ps1`
 

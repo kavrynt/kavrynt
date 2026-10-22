@@ -1,0 +1,70 @@
+suite: operator
+templates:
+  - charts/operator/templates/deployment.yaml
+release:
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0003-R07.
+  - it: hardens the Operator container by default
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          value: [ALL]
+
+  - it: does not sync to Kavrynt Cloud by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --cloud-sync
+      - notExists:
+          path: spec.template.spec.volumes
+
+  # Verifies SPEC-0003-R10.
+  - it: requires an https Cloud URL
+    set:
+      operator.cloud.enabled: true
+      operator.cloud.url: http://cloud.example.com
+      operator.cloud.tokenSecret.name: kavrynt-cloud-token
+    asserts:
+      - failedTemplate:
+          errorMessage: cloud.url must be an https URL when cloud.enabled is true
+
+  # Verifies SPEC-0003-R10.
+  - it: requires a token Secret name
+    set:
+      operator.cloud.enabled: true
+      operator.cloud.url: https://cloud.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: cloud.tokenSecret.name is required when cloud.enabled is true
+
+  # Verifies SPEC-0003-R10.
+  - it: mounts the Cloud token read-only from the named Secret
+    set:
+      operator.cloud.enabled: true
+      operator.cloud.url: https://cloud.example.com
+      operator.cloud.tokenSecret.name: kavrynt-cloud-token
+      operator.cloud.tokenSecret.key: cluster-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cloud-sync
+      - equal:
+          path: spec.template.spec.volumes[0].secret
+          value:
+            secretName: kavrynt-cloud-token
+            items:
+              - key: cluster-token
+                path: token
+      - equal:
+          path: spec.template.spec.containers[0].volumeMounts[0].readOnly
+          value: true

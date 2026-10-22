@@ -1,6 +1,9 @@
 # Kavrynt
 
 [![QA](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml/badge.svg)](https://github.com/kavrynt/kavrynt/actions/workflows/qa.yml)
+[![Release](https://img.shields.io/github/v/release/kavrynt/kavrynt?include_prereleases&sort=semver)](https://github.com/kavrynt/kavrynt/releases)
+[![OpenSSF Scorecard](https://api.scorecard.dev/projects/github.com/kavrynt/kavrynt/badge)](https://scorecard.dev/viewer/?uri=github.com/kavrynt/kavrynt)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache--2.0-blue.svg)](LICENSE)
 
 > [!IMPORTANT]
 > This is the source and release repository for the Kavrynt MCP Control Plane
@@ -27,6 +30,33 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 > loop works, but authentication, policy enforcement, and high availability are
 > not implemented yet. Run this version only
 > in trusted development or evaluation clusters.
+
+## TL;DR
+
+```bash
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version 0.0.5-beta.1 \
+  --namespace kavrynt-system \
+  --create-namespace
+
+kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
+# console: http://localhost:18080/ui/
+```
+
+## Contents
+
+- [Why Kavrynt](#why-kavrynt)
+- [Architecture](#architecture) and [Components](#components)
+- [Install on Kubernetes](#install-on-kubernetes)
+- [Try the complete product loop](#try-the-complete-product-loop)
+- [Use kavryctl](#use-kavryctl)
+- [Configuration](#configuration)
+- [Operate Kavrynt](#operate-kavrynt)
+- [Current security and durability boundaries](#current-security-and-durability-boundaries)
+- [Contributing](#contributing)
+- [Roadmap](#roadmap)
+- [Community and maintainers](#community-and-maintainers)
+- [License](#license)
 
 ## Why Kavrynt
 
@@ -101,7 +131,7 @@ supports HTTP endpoints only.
 ### Prerequisites
 
 - A conformant Kubernetes cluster.
-- Helm 3.
+- Helm 3.x or 4.x.
 - `kubectl` access with permission to create CRDs, Deployments, Services,
   ServiceAccounts, ClusterRoles, and ClusterRoleBindings.
 
@@ -294,19 +324,18 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --set operator.image.tag=<version>
 ```
 
-Important values:
+Commonly changed values:
 
 | Value | Default | Purpose |
 | --- | --- | --- |
-| `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
-| `gateway.image.tag` | `0.0.5-beta.1` | Gateway image tag |
 | `global.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches Gateway RBAC to per-namespace Roles, and the Operator marks servers elsewhere `Ready=False` (`NamespaceNotWatched`). Replaces `gateway.config.watchNamespaces`. |
-| `gateway.rbac.create` | `true` | Create read-only `MCPServer` RBAC for the Gateway |
-| `operator.image.repository` | `kavrynt/operator` | Operator container repository |
-| `operator.image.tag` | `0.0.5-beta.1` | Operator image tag |
+| `gateway.config.allowedOrigins` | `[]` | Browser origins accepted besides loopback, such as an Ingress that serves the console |
+| `gateway.console.enabled` | `true` | Serve the read-only web console at `/ui/` |
+| `operator.config.toolDiscovery.enabled` | `true` | List the tools of `Ready` servers into `status.tools` |
+| `operator.cloud.enabled` | `false` | Send inventory to Kavrynt Cloud |
 
-Review [`charts/kavrynt/values.yaml`](charts/kavrynt/values.yaml) and each
-component chart before production-oriented customization.
+Every value, with its type and default, is listed in the
+[chart README](charts/kavrynt/README.md#values).
 
 ## Operate Kavrynt
 
@@ -372,15 +401,12 @@ the current release is not production-security complete:
 Keep Gateway as an internal `ClusterIP` service, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
 
-## Development
+## Contributing
 
-Prerequisites:
-
-- Go 1.26+
-- Docker
-- Helm 3.x or 4.x
-- `kubectl`
-- Kind for disposable Kubernetes testing
+Contributions are welcome. [CONTRIBUTING.md](CONTRIBUTING.md) covers the
+toolchain, repository layout, tests, sign-off, and pull request process.
+User-visible changes are designed as specs first
+([specs/README.md](specs/README.md)).
 
 ```bash
 make help       # every target
@@ -389,26 +415,9 @@ make build      # kavryctl, gateway, and operator binaries
 make e2e-kind   # disposable Kind cluster, full product loop
 ```
 
-Repository layout:
-
-```text
-api/v1alpha1/        MCPServer CRD Go types
-cmd/<component>/     entry points: kavryctl, gateway, operator
-internal/<component>/ component packages
-build/Dockerfile     all runtime images (--target gateway|operator)
-charts/kavrynt/      the Helm chart, with vendored component subcharts
-config/              CRD and RBAC manifests
-test/e2e/            Kind end-to-end tests
-docs/                ADRs, runbooks, component docs
-```
-
-To contribute, read [CONTRIBUTING.md](CONTRIBUTING.md). Everyone taking part
-follows the [Code of Conduct](CODE_OF_CONDUCT.md). Report vulnerabilities
-privately as described in [SECURITY.md](SECURITY.md). Project roles and
-decisions are described in [GOVERNANCE.md](GOVERNANCE.md) and
-[MAINTAINERS.md](MAINTAINERS.md).
-
-The release process is documented in [`docs/RELEASE.md`](docs/RELEASE.md).
+Everyone taking part follows the [Code of Conduct](CODE_OF_CONDUCT.md).
+Report vulnerabilities privately as described in [SECURITY.md](SECURITY.md).
+The release process is documented in [docs/RELEASE.md](docs/RELEASE.md).
 
 ## Roadmap
 
@@ -428,10 +437,14 @@ Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this
 runtime repository.
 
-## Project status
+## Community and maintainers
 
 Kavrynt is under active development. APIs, chart values, and storage formats
 may change before the first stable release.
+
+The project is maintained by the people listed in
+[MAINTAINERS.md](MAINTAINERS.md); roles and decision making are described in
+[GOVERNANCE.md](GOVERNANCE.md).
 
 Use [GitHub issues](https://github.com/kavrynt/kavrynt/issues) for reproducible
 bugs and feature requests. Please include the Kavrynt version, Kubernetes

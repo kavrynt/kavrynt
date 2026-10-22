@@ -99,11 +99,20 @@ jobs:
       - name: Verify release contract
         run: make release-contract
 
+      - name: Verify specs and traceability
+        run: make spec-check
+
       - name: Lint chart
         run: make helm-lint
 
       - name: Render chart
         run: make helm-template
+
+      - name: Install helm-unittest
+        run: make helm-plugins
+
+      - name: Unit test chart
+        run: make helm-unittest
 
   image:
     name: Image ${{ matrix.image }} and Trivy

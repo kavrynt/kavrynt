@@ -1,0 +1,7 @@
+# Artifact Hub repository metadata for oci://ghcr.io/kavrynt/charts/kavrynt.
+# Pushed once as the OCI artifact tag `artifacthub.io`; see docs/RELEASE.md.
+# Add `repositoryID` after registering the repository on Artifact Hub to get
+# the Verified Publisher badge.
+owners:
+  - name: Ravindra Kumar
+    email: support@kavrynt.com
