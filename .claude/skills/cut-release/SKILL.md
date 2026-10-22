@@ -30,7 +30,7 @@ Stop if QA on `develop` is not green, and report the failing job.
 
 | File | What |
 | --- | --- |
-| `charts/kavrynt/Chart.yaml` | `version` and `appVersion` |
+| `charts/kavrynt/Chart.yaml` | `version`, `appVersion`, dependency versions, `artifacthub.io/images` tags, and `artifacthub.io/prerelease` (`"false"` only for a stable version) |
 | `charts/kavrynt/charts/gateway/Chart.yaml` | `version` and `appVersion` |
 | `charts/kavrynt/charts/k8s-operator/Chart.yaml` | `version` and `appVersion` |
 | `charts/kavrynt/values.yaml` | both image `tag:` lines |

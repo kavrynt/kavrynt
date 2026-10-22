@@ -1,0 +1,163 @@
+suite: values schema
+templates:
+  - charts/gateway/templates/deployment.yaml
+release:
+  namespace: kavrynt-system
+tests:
+  - it: renders with default values
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Verifies SPEC-0003-R01.
+  - it: rejects a mistyped gateway key
+    set:
+      gateway.consle.enabled: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'consle' not allowed"
+
+  # Verifies SPEC-0003-R01.
+  - it: rejects a mistyped top-level key
+    set:
+      gatway.replicaCount: 2
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'gatway' not allowed"
+
+  # Verifies SPEC-0003-R01.
+  - it: rejects a mistyped operator key
+    set:
+      operator.config.toolDiscovery.enable: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'enable' not allowed"
+
+  # Verifies SPEC-0003-R01.
+  - it: accepts platform-injected globals
+    set:
+      global.cattle.clusterId: c-abc
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Verifies SPEC-0003-R02.
+  - it: rejects a string replica count
+    set:
+      gateway.replicaCount: two
+    asserts:
+      - failedTemplate:
+          errorPattern: "got string, want integer"
+
+  # Verifies SPEC-0003-R02.
+  - it: rejects a non-boolean console switch
+    set:
+      gateway.console.enabled: "yes"
+    asserts:
+      - failedTemplate:
+          errorPattern: "got string, want boolean"
+
+  # Verifies SPEC-0003-R02.
+  - it: rejects an unknown pull policy
+    set:
+      operator.image.pullPolicy: Sometimes
+    asserts:
+      - failedTemplate:
+          errorPattern: "value must be one of"
+
+  # Verifies SPEC-0003-R03.
+  - it: rejects an origin with a path
+    set:
+      gateway.config.allowedOrigins:
+        - https://kavrynt.example.com/ui
+    asserts:
+      - failedTemplate:
+          errorPattern: "allowedOrigins/0"
+
+  # Verifies SPEC-0003-R03.
+  - it: rejects an origin without a scheme
+    set:
+      gateway.config.allowedOrigins:
+        - kavrynt.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "allowedOrigins/0"
+
+  # Verifies SPEC-0003-R03.
+  - it: rejects two origins in one entry
+    set:
+      gateway.config.allowedOrigins:
+        - https://a.example.com,https://b.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "allowedOrigins/0"
+
+  # Verifies SPEC-0003-R03.
+  - it: accepts an origin with a port and trailing slash
+    set:
+      gateway.config.allowedOrigins:
+        - https://kavrynt.example.com:8443/
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Verifies SPEC-0003-R04.
+  - it: rejects a request timeout without a unit
+    set:
+      gateway.config.requestTimeout: "30"
+    asserts:
+      - failedTemplate:
+          errorPattern: "requestTimeout"
+
+  # Verifies SPEC-0003-R04.
+  - it: rejects a malformed scrape interval
+    set:
+      gateway.metrics.serviceMonitor.interval: 30 seconds
+    asserts:
+      - failedTemplate:
+          errorPattern: "serviceMonitor/interval"
+
+  # Verifies SPEC-0003-R04.
+  - it: rejects a malformed tool refresh interval
+    set:
+      operator.config.toolDiscovery.refreshInterval: often
+    asserts:
+      - failedTemplate:
+          errorPattern: "toolDiscovery/refreshInterval"
+
+  # Verifies SPEC-0003-R04.
+  - it: rejects a malformed cloud sync interval
+    set:
+      operator.cloud.syncInterval: soon
+    asserts:
+      - failedTemplate:
+          errorPattern: "cloud/syncInterval"
+
+  # Verifies SPEC-0003-R04.
+  - it: accepts compound durations
+    set:
+      gateway.config.requestTimeout: 1m30s
+      operator.cloud.syncInterval: 90s
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Verifies SPEC-0003-R05.
+  - it: rejects an invalid namespace name
+    set:
+      global.watchNamespaces:
+        - team-a
+        - Team_B
+    asserts:
+      - failedTemplate:
+          errorPattern: "watchNamespaces/1"
+
+  # Verifies SPEC-0003-R05.
+  - it: rejects duplicate namespaces
+    set:
+      global.watchNamespaces:
+        - team-a
+        - team-a
+    asserts:
+      - failedTemplate:
+          errorPattern: "are equal"

@@ -303,6 +303,7 @@ CROSS_ORIGIN_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code
 [ "${CROSS_ORIGIN_STATUS}" = "403" ] ||
   fail "Gateway answered a cross-origin request with HTTP ${CROSS_ORIGIN_STATUS}, want 403"
 
+# Verifies SPEC-0001-R01, SPEC-0001-R06, SPEC-0001-R07, and SPEC-0001-R08.
 log "verifying the console and its read-only endpoints"
 curl --fail --silent --show-error "${GATEWAY_URL}/ui/" | grep --fixed-strings --quiet "Kavrynt Console" ||
   fail "Gateway does not serve the console at /ui/"

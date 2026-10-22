@@ -8,11 +8,14 @@ GO_DIRS := api cmd examples internal test
 STATICCHECK_VERSION ?= v0.8.0
 GOSEC_VERSION ?= v2.28.0
 GOVULNCHECK_VERSION ?= v1.7.0
+HELM_UNITTEST_VERSION ?= v1.1.2
 
 .PHONY: help
 help:
 	@printf "Kavrynt runtime targets:\n"
 	@printf "  make qa             Run all local quality and security gates\n"
+	@printf "  make spec-check     Check specs and requirement-to-test traceability\n"
+	@printf "  make spec-new NAME=x  Start a new spec from the template\n"
 	@printf "  make fmt-check      Check Go formatting\n"
 	@printf "  make test           Run unit tests with the race detector\n"
 	@printf "  make vet            Run go vet\n"
@@ -21,6 +24,8 @@ help:
 	@printf "  make vulncheck      Run govulncheck\n"
 	@printf "  make helm-lint      Lint the Helm chart\n"
 	@printf "  make helm-template  Render the Helm chart\n"
+	@printf "  make helm-unittest  Run the chart unit tests (helm-unittest)\n"
+	@printf "  make helm-plugins   Install the pinned helm-unittest plugin\n"
 	@printf "  make build          Build kavryctl, gateway, and operator binaries\n"
 	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
@@ -31,11 +36,19 @@ help:
 	@printf "  make demo-down      Delete the Kind demo cluster\n"
 
 .PHONY: qa
-qa: release-contract fmt-check test vet lint sast vulncheck helm-lint helm-template
+qa: release-contract spec-check fmt-check test vet lint sast vulncheck helm-lint helm-template helm-unittest
 
 .PHONY: release-contract
 release-contract:
 	bash ./scripts/verify-release-contract.sh
+
+.PHONY: spec-check
+spec-check:
+	bash ./scripts/verify-specs.sh
+
+.PHONY: spec-new
+spec-new:
+	bash ./scripts/new-spec.sh "$(NAME)"
 
 .PHONY: fmt-check
 fmt-check:
@@ -70,6 +83,22 @@ helm-lint:
 .PHONY: helm-template
 helm-template:
 	helm template kavrynt $(CHART) --namespace kavrynt-system >/dev/null
+
+.PHONY: helm-unittest
+helm-unittest:
+	@helm plugin list | grep -q '^unittest' || { printf "helm-unittest is not installed; run make helm-plugins\n"; exit 1; }
+	helm unittest $(CHART)
+
+# Helm 4 verifies plugin provenance by default; helm-unittest is installed
+# from its pinned Git tag, which carries none.
+.PHONY: helm-plugins
+helm-plugins:
+	@if helm plugin list | grep -q '^unittest'; then \
+		printf "helm-unittest already installed\n"; \
+	else \
+		verify=""; case "$$(helm version --short)" in v4*) verify="--verify=false" ;; esac; \
+		helm plugin install https://github.com/helm-unittest/helm-unittest --version $(HELM_UNITTEST_VERSION) $$verify; \
+	fi
 
 .PHONY: build
 build:
