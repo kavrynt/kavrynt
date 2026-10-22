@@ -249,6 +249,12 @@ kubectl delete service example-mcp-server
 kubectl delete deployment example-mcp-server
 ```
 
+## Run the demo
+
+`make demo-up` creates a disposable Kind cluster with Kavrynt and two demo MCP
+servers, and `make demo-walkthrough` presents the full product loop step by
+step, including what Kavrynt does not do yet. See [docs/DEMO.md](docs/DEMO.md).
+
 ## Use kavryctl
 
 kavryctl manages `MCPServer` resources through your kubeconfig. It does not
