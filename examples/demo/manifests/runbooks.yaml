@@ -1,0 +1,10 @@
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: runbooks
+  annotations:
+    kavrynt.io/description: Operational runbooks (demo data)
+spec:
+  version: 0.1.0
+  transport: http
+  endpoint: http://runbooks.team-platform.svc.cluster.local:8080

@@ -1,0 +1,11 @@
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: incidents
+  namespace: team-sre
+  annotations:
+    kavrynt.io/description: On-call incidents (demo data)
+spec:
+  version: 0.1.0
+  transport: http
+  endpoint: http://incidents.team-sre.svc.cluster.local:8080

@@ -38,6 +38,17 @@ done
   fail "umbrella image tags do not all match ${VERSION}"
 
 for component in gateway operator; do
+  grep --quiet --fixed-strings "image: docker.io/kavrynt/${component}:${VERSION}" "${UMBRELLA_CHART}" ||
+    fail "Artifact Hub image annotation for ${component} does not match ${VERSION}"
+done
+case "${VERSION}" in
+  *-*) PRERELEASE=true ;;
+  *) PRERELEASE=false ;;
+esac
+grep --quiet --fixed-strings "artifacthub.io/prerelease: \"${PRERELEASE}\"" "${UMBRELLA_CHART}" ||
+  fail "Artifact Hub prerelease annotation must be \"${PRERELEASE}\" for ${VERSION}"
+
+for component in gateway operator; do
   grep --quiet --fixed-strings "repository: kavrynt/${component}" "${ROOT_DIR}/charts/kavrynt/values.yaml" ||
     fail "umbrella values do not use kavrynt/${component}"
 done

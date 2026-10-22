@@ -1,0 +1,45 @@
+name: Bug report
+description: Something in kavryctl, the Gateway, the Operator, or the Helm chart does not work as documented.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report security vulnerabilities here. Use [private vulnerability reporting](https://github.com/kavrynt/kavrynt/security/advisories/new) instead.
+  - type: input
+    id: version
+    attributes:
+      label: Kavrynt version
+      placeholder: 0.0.5-beta.1
+    validations:
+      required: true
+  - type: dropdown
+    id: component
+    attributes:
+      label: Component
+      options: [kavryctl, gateway, console, operator, helm chart, docs, other]
+    validations:
+      required: true
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened, and what did you expect?
+    validations:
+      required: true
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: Steps to reproduce
+      description: Include the MCPServer manifest and commands, with secrets removed.
+    validations:
+      required: true
+  - type: textarea
+    id: environment
+    attributes:
+      label: Environment
+      description: Kubernetes distribution and version, Helm version, OS and architecture.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant logs
+      render: text

@@ -1,0 +1,132 @@
+suite: gateway
+release:
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0003-R06.
+  - it: grants cluster-wide read-only access to MCPServers by default
+    template: charts/gateway/templates/rbac.yaml
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: ClusterRole
+        documentIndex: 0
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [kavrynt.io]
+              resources: [mcpservers]
+              verbs: [get, list, watch]
+        documentIndex: 0
+      - isKind:
+          of: ClusterRoleBinding
+        documentIndex: 1
+
+  # Verifies SPEC-0003-R06.
+  - it: grants per-namespace read-only access when namespaces are listed
+    template: charts/gateway/templates/rbac.yaml
+    set:
+      global.watchNamespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments:
+          count: 4
+      - isKind:
+          of: Role
+        documentIndex: 0
+      - equal:
+          path: metadata.namespace
+          value: team-a
+        documentIndex: 0
+      - equal:
+          path: rules
+          value:
+            - apiGroups: [kavrynt.io]
+              resources: [mcpservers]
+              verbs: [get, list, watch]
+        documentIndex: 0
+      - isKind:
+          of: RoleBinding
+        documentIndex: 1
+      - isKind:
+          of: Role
+        documentIndex: 2
+      - equal:
+          path: metadata.namespace
+          value: team-b
+        documentIndex: 2
+
+  # Verifies SPEC-0003-R07.
+  - it: hardens the Gateway container by default
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.template.spec.securityContext.runAsNonRoot
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.readOnlyRootFilesystem
+          value: true
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.allowPrivilegeEscalation
+          value: false
+      - equal:
+          path: spec.template.spec.containers[0].securityContext.capabilities.drop
+          value: [ALL]
+
+  # Verifies SPEC-0003-R07.
+  - it: disables token automounting on the Gateway service account
+    template: charts/gateway/templates/serviceaccount.yaml
+    asserts:
+      - equal:
+          path: automountServiceAccountToken
+          value: false
+
+  # Verifies SPEC-0003-R08.
+  - it: enables the console by default
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --console=true
+
+  # Verifies SPEC-0003-R08.
+  - it: disables the console on request
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.console.enabled: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --console=false
+
+  # Verifies SPEC-0003-R09.
+  - it: passes allowed origins and stripped headers as comma-separated flags
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.config.allowedOrigins:
+        - https://a.example.com
+        - https://b.example.com
+      gateway.config.stripRequestHeaders:
+        - X-Api-Key
+        - X-Tenant
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --allowed-origins
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: https://a.example.com,https://b.example.com
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --strip-request-headers
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: X-Api-Key,X-Tenant
+
+  # Verifies SPEC-0003-R11.
+  - it: refuses the removed gateway.config.watchNamespaces
+    template: charts/gateway/templates/rbac.yaml
+    set:
+      gateway.config.watchNamespaces: [team-a]
+    asserts:
+      - failedTemplate:
+          errorPattern: "replaced by global.watchNamespaces"

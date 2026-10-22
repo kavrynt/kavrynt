@@ -23,6 +23,22 @@ Trivy scan passes.
 | `DOCKERHUB_USERNAME`, `DOCKERHUB_TOKEN` | Repository or `release` environment secrets | Docker Hub mirror for images and chart. Use an access token scoped to the `kavrynt` namespace with read/write |
 | Actions write access for `kavrynt/kavrynt` | GHCR package settings for `gateway`, `operator`, `charts/kavrynt` → Manage Actions access | Packages created by the archived component repositories are linked to them |
 | Public Docker Hub repositories `kavrynt/gateway`, `kavrynt/operator`, `kavrynt/kavrynt` | Docker Hub | Trial users pull anonymously |
+| Artifact Hub repository for `oci://ghcr.io/kavrynt/charts/kavrynt` | [artifacthub.io](https://artifacthub.io/) → Control Panel → Add repository (kind Helm charts, OCI URL) | Chart discovery. Then push the ownership metadata once, and again whenever `charts/artifacthub-repo.yml` changes (see below) |
+
+Artifact Hub ownership metadata (requires [ORAS](https://oras.land/) and a
+GHCR login with package write access). Add the `repositoryID` Artifact Hub
+shows to `charts/artifacthub-repo.yml` first to get the Verified Publisher
+badge:
+
+```bash
+oras push ghcr.io/kavrynt/charts/kavrynt:artifacthub.io \
+  --config /dev/null:application/vnd.cncf.artifacthub.config.v1+yaml \
+  charts/artifacthub-repo.yml:application/vnd.cncf.artifacthub.repository-metadata.layer.v1.yaml
+```
+
+Chart metadata shown on Artifact Hub (license, images, CRDs, links,
+prerelease flag) lives in the `annotations` of `charts/kavrynt/Chart.yaml`.
+The image tags and the prerelease flag are part of the release contract.
 
 On the GitHub Free plan, environment secrets and required reviewers are not
 available for private repositories. Use repository secrets until the

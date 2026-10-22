@@ -194,6 +194,7 @@ func TestProxiedResponsesAreSandboxed(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0001-R06, SPEC-0001-R07, and SPEC-0001-R08.
 func TestServersAndTrafficEndpoints(t *testing.T) {
 	handler, _ := demoHandler(t, okResponse)
 	handler.table.ReplaceServers([]model.Server{{Namespace: "team-a", Name: "demo", Route: "team-a.demo", Routed: true,
@@ -225,6 +226,7 @@ func TestServersAndTrafficEndpoints(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0001-R07.
 func TestRecentTrafficKeepsNewestFirst(t *testing.T) {
 	recent := newRecentTraffic(3)
 	for i := 1; i <= 5; i++ {
@@ -236,6 +238,7 @@ func TestRecentTrafficKeepsNewestFirst(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0001-R01, SPEC-0001-R02, and SPEC-0001-R04.
 func TestConsole(t *testing.T) {
 	handler, _ := demoHandler(t, okResponse)
 
