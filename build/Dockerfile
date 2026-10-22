@@ -3,7 +3,7 @@
 # Builds every Kavrynt runtime image from the repository root.
 # Select the image with --target: gateway or operator.
 
-ARG GO_IMAGE=golang:1.26-alpine@sha256:c95332c2af86b6d89b91bd0500f4b9529ccbd090a0d1855c6d1ceaa142ae8615
+ARG GO_IMAGE=golang:1.26-alpine@sha256:5cb67f19c5e7994dcb80c074f7cfca8aeeada45bbdca035f73df269cefdcce61
 ARG DISTROLESS_IMAGE=gcr.io/distroless/static-debian12:nonroot@sha256:afa5c872c891853ca7fcf1f12c3edb23f7eeef36189728842dd51042ff57f7ab
 
 FROM --platform=$BUILDPLATFORM ${GO_IMAGE} AS source
