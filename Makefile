@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-LOCAL_VERSION ?= 0.0.4-beta.1-local
+LOCAL_VERSION ?= 0.0.5-beta.1-local
 IMAGES := gateway operator
 CHART := charts/kavrynt
 GO_DIRS := api cmd examples internal test
