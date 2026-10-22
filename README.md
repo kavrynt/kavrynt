@@ -111,7 +111,7 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=0.0.4-beta.1
+export KAVRYNT_VERSION=0.0.5-beta.1
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
@@ -249,6 +249,12 @@ kubectl delete service example-mcp-server
 kubectl delete deployment example-mcp-server
 ```
 
+## Run the demo
+
+`make demo-up` creates a disposable Kind cluster with Kavrynt and two demo MCP
+servers, and `make demo-walkthrough` presents the full product loop step by
+step, including what Kavrynt does not do yet. See [docs/DEMO.md](docs/DEMO.md).
+
 ## Use kavryctl
 
 kavryctl manages `MCPServer` resources through your kubeconfig. It does not
@@ -293,11 +299,11 @@ Important values:
 | Value | Default | Purpose |
 | --- | --- | --- |
 | `gateway.image.repository` | `kavrynt/gateway` | Gateway container repository |
-| `gateway.image.tag` | `0.0.4-beta.1` | Gateway image tag |
+| `gateway.image.tag` | `0.0.5-beta.1` | Gateway image tag |
 | `global.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches Gateway RBAC to per-namespace Roles, and the Operator marks servers elsewhere `Ready=False` (`NamespaceNotWatched`). Replaces `gateway.config.watchNamespaces`. |
 | `gateway.rbac.create` | `true` | Create read-only `MCPServer` RBAC for the Gateway |
 | `operator.image.repository` | `kavrynt/operator` | Operator container repository |
-| `operator.image.tag` | `0.0.4-beta.1` | Operator image tag |
+| `operator.image.tag` | `0.0.5-beta.1` | Operator image tag |
 
 Review [`charts/kavrynt/values.yaml`](charts/kavrynt/values.yaml) and each
 component chart before production-oriented customization.

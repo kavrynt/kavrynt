@@ -1,9 +1,9 @@
 SHELL := /bin/bash
 
-LOCAL_VERSION ?= 0.0.4-beta.1-local
+LOCAL_VERSION ?= 0.0.5-beta.1-local
 IMAGES := gateway operator
 CHART := charts/kavrynt
-GO_DIRS := api cmd internal test
+GO_DIRS := api cmd examples internal test
 
 STATICCHECK_VERSION ?= v0.8.0
 GOSEC_VERSION ?= v2.28.0
@@ -25,6 +25,10 @@ help:
 	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
 	@printf "  make e2e-release    Validate a published chart and runtime images\n"
+	@printf "  make demo-up        Create the Kind demo cluster (docs/DEMO.md)\n"
+	@printf "  make demo-walkthrough  Run the narrated demo (DEMO_AUTO=1 to rehearse unattended)\n"
+	@printf "  make demo-forward   Port-forward the Gateway console of the demo cluster\n"
+	@printf "  make demo-down      Delete the Kind demo cluster\n"
 
 .PHONY: qa
 qa: release-contract fmt-check test vet lint sast vulncheck helm-lint helm-template
@@ -41,6 +45,7 @@ fmt-check:
 .PHONY: test
 test:
 	go test -race ./...
+	cd examples/demo/mcp-server && go test -race ./...
 
 .PHONY: vet
 vet:
@@ -91,6 +96,19 @@ helm-package:
 .PHONY: e2e-kind
 e2e-kind:
 	LOCAL_VERSION="$(LOCAL_VERSION)" ./scripts/e2e-kind.sh
+
+.PHONY: demo-up demo-walkthrough demo-forward demo-down
+demo-up:
+	./scripts/demo-kind.sh up
+
+demo-walkthrough:
+	./scripts/demo-kind.sh walkthrough
+
+demo-forward:
+	./scripts/demo-kind.sh forward
+
+demo-down:
+	./scripts/demo-kind.sh down
 
 .PHONY: e2e-release
 e2e-release:
