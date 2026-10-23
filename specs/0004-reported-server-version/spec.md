@@ -94,6 +94,11 @@ copies (`config/crd/bases` and the chart) and in `api/v1alpha1`. No Helm
 value, RBAC, or flag change. Servers discovered before the upgrade show no
 reported version until their next discovery.
 
+Helm does not upgrade CRDs. Upgrades must apply the new CRD before
+`helm upgrade`, as the chart README describes; without it the API server
+prunes `status.serverInfo` and the console shows no reported version. The
+release notes must call this out.
+
 ## Documentation
 
 When `Implemented`: the `MCPServer` API reference (status fields), the
