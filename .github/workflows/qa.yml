@@ -188,7 +188,10 @@ jobs:
 
   e2e:
     name: Kind End-to-End
-    runs-on: ubuntu-latest
+    # Pinned: the console smoke test's Playwright (test/console-smoke) cannot
+    # install its browser on ubuntu-latest (26.04). Move back to
+    # ubuntu-latest together with a Playwright release that supports it.
+    runs-on: ubuntu-24.04
     needs: [go, helm]
     if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
     timeout-minutes: 25
