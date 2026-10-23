@@ -40,7 +40,8 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --create-namespace
 
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
-# console: http://localhost:18080/ui/
+# console: http://localhost:18080/ui/  user: admin  password:
+kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
 
 ## Contents
@@ -263,13 +264,22 @@ return:
 
 ### 5. Open the console
 
-With the port-forward running, open <http://localhost:18080/ui/>. The
-read-only console (similar in spirit to the Argo CD UI) shows every
-`MCPServer`, why it is or is not routed, and its discovered tools; a
-**Playground** to call tools through the Gateway exactly as an agent would;
-and **Live traffic** with per-route error rate and latency. Point your own
-agent at `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls
-arrive. Details: [Gateway console](docs/components/gateway/README.md#console).
+With the port-forward running, open <http://localhost:18080/ui/> and sign in
+as `admin`. Like Argo CD, the chart generated the password into a Secret:
+
+```bash
+kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
+```
+
+The read-only console opens on an **Overview** of what needs attention:
+servers that are not routed, whose tool discovery failed, or whose calls are
+failing, and the tools that fail most. **Servers** and **Tools** list every
+`MCPServer` and every discovered tool; the **Playground** calls tools through
+the Gateway exactly as an agent would; **Traffic** shows recent calls with
+per-tool error rate and latency. Point your own agent at
+`http://localhost:18080/mcp/<namespace>.<name>` and watch its calls arrive.
+The login protects the console only: MCP routes are not authenticated yet.
+Details: [Gateway console](docs/components/gateway/README.md#console).
 
 ### 6. Clean up the example
 
@@ -331,6 +341,8 @@ Commonly changed values:
 | `global.watchNamespaces` | `[]` (all) | Namespaces the Gateway watches; a list switches Gateway RBAC to per-namespace Roles, and the Operator marks servers elsewhere `Ready=False` (`NamespaceNotWatched`). Replaces `gateway.config.watchNamespaces`. |
 | `gateway.config.allowedOrigins` | `[]` | Browser origins accepted besides loopback, such as an Ingress that serves the console |
 | `gateway.console.enabled` | `true` | Serve the read-only web console at `/ui/` |
+| `gateway.console.auth.enabled` | `true` | Require the console admin login (password generated into a Secret) |
+| `gateway.console.auth.existingSecret` | `""` | Your own Secret with `password` and `sessionKey`, for GitOps renders |
 | `operator.config.toolDiscovery.enabled` | `true` | List the tools of `Ready` servers into `status.tools` |
 | `operator.cloud.enabled` | `false` | Send inventory to Kavrynt Cloud |
 
@@ -392,8 +404,9 @@ the current release is not production-security complete:
   loopback addresses, and the Gateway does not follow upstream redirects.
 - Gateway rejects browser requests from origins other than loopback and
   `gateway.config.allowedOrigins`.
-- The console has no login; it is reachable by anyone who can reach the
-  Gateway. Disable it with `gateway.console.enabled=false`.
+- The console has a single `admin` login with a generated password. It
+  protects the console and the endpoints it reads, not MCP routes: anyone
+  who can reach the Gateway can still call every routed tool.
 - Gateway is single-replica by default.
 - Audit, policy, approval, and usage services are not part of the current
   runtime beta.

@@ -350,6 +350,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .scope-note { color: var(--muted); font-size: 12px; margin: -8px 0 14px; }
 .panel > .scope-note { margin: 8px 16px 0; }
 .body.muted { margin: 0; }
+.body.flush > p.body { padding: 14px 16px; }
 .more { display: flex; gap: 10px; align-items: center; flex-wrap: wrap; padding: 10px 12px; border-top: 1px solid var(--border); }
 .filters { margin-bottom: 10px; }
 .filters-active { margin: 0 0 10px; font-size: 13px; }
@@ -362,6 +363,20 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .attention p { margin: 4px 0 0 16px; font-size: 13px; overflow-wrap: anywhere; }
 .attention-link { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; color: var(--text); }
 .dot.warn { background: var(--warn); }
+
+/* Login */
+.login-wrap { display: flex; justify-content: center; padding: 6vh 0; }
+.login { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: var(--shadow); padding: 24px; }
+.login h1 { margin: 0 0 4px; font-size: 22px; }
+.login > p.muted { margin: 0 0 18px; }
+.login input { width: 100%; }
+.login .btn.primary { width: 100%; justify-content: center; margin-top: 4px; }
+.login-help { margin-top: 16px; }
+.login-help p { font-size: 13px; margin: 8px 0; }
+.user { display: flex; align-items: center; gap: 10px; margin-top: 8px; }
+.user[hidden] { display: none; }
+.user-name { color: #fff; font-weight: 600; }
+.sidebar .linkish { color: var(--sidebar-text); }
 .spaced { display: flex; justify-content: space-between; align-items: center; gap: 8px; flex-wrap: wrap; }
 .stack > * + * { margin-top: 12px; }
 .bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; min-width: 60px; }
@@ -374,6 +389,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
   .brand { padding: 12px 16px; }
   .sidebar-foot { order: 2; margin: 0 0 0 auto; padding: 8px 16px; border: none; display: flex; align-items: center; gap: 10px; }
   .gw-version { margin: 0; }
+  .user { margin: 0; }
   .theme-toggle { margin: 0; }
   .nav { order: 3; display: flex; margin: 0; padding: 0 8px 8px; width: 100%; overflow-x: auto; }
   .nav a { white-space: nowrap; }

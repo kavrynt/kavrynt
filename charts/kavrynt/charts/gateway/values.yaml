@@ -35,6 +35,21 @@ config:
 # calls tools through the Gateway, and recent traffic. It needs no extra RBAC.
 console:
   enabled: true
+  # Admin login for the console and the endpoints it reads (/v1/servers,
+  # /v1/traffic), like Argo CD's initial admin password. Username: admin.
+  # Password: kubectl -n <namespace> get secret <release>-gateway-console-admin
+  #   -o jsonpath='{.data.password}' | base64 -d
+  # It does not protect MCP routes: anyone who can reach the Gateway can still
+  # call every routed tool (client authentication is not implemented yet).
+  auth:
+    enabled: true
+    # Secret with keys "password" and "sessionKey" to use instead of the
+    # generated one. Set it when the chart is rendered without cluster access
+    # (helm template, GitOps), where a generated password would change on
+    # every render.
+    existingSecret: ""
+    # Session lifetime; changing the password also ends every session.
+    sessionTTL: 12h
 
 # MCP traffic metrics on /metrics: requests, outcomes, and latency per MCP
 # server, method, and tool. Metadata only; bodies are never recorded.

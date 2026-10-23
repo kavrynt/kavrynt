@@ -8,14 +8,14 @@
 "use strict";
 
 (() => {
-  const { h, put, clear, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
+  const { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
   const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
   const {
     SCOPE_NOTE, OUTCOMES, outcomeClass, condition, serverHealth, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
   } = Kavrynt.stats;
-  const { parseHash, formatHash, isLoopbackHost, createPoller } = Kavrynt.state;
-  const { renderPlayground, closePlayground } = Kavrynt.playground;
+  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage } = Kavrynt.state;
+  const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
   const TRAFFIC_POLL_MS = 2000;
@@ -34,6 +34,9 @@
     version: null,
     ready: null,
     routes: null,
+    // Console admin login (SPEC-0005). checked is false until GET
+    // /v1/session answers; nothing is drawn or fetched before that.
+    auth: { checked: false, enabled: false, signedIn: false, username: "", expiresAt: "" },
   };
 
   const main = () => document.getElementById("main");
@@ -46,11 +49,21 @@
 
   async function getJSON(path) {
     const res = await fetch(path, { headers: { Accept: "application/json" }, cache: "no-store" });
+    if (res.status === 401 && state.auth.enabled) {
+      signedOut("Your session ended. Sign in again.");
+      throw new Error("login required");
+    }
     if (!res.ok) throw new Error(path + " returned HTTP " + res.status);
     return res.json();
   }
 
+  // needsLogin is true while the console must show only the login form.
+  function needsLogin() {
+    return !state.auth.checked || (state.auth.enabled && !state.auth.signedIn);
+  }
+
   async function refreshServers() {
+    if (needsLogin()) return;
     try {
       const data = await getJSON("/v1/servers");
       state.servers = data.servers || [];
@@ -63,7 +76,7 @@
   }
 
   async function refreshTraffic() {
-    if (state.trafficPaused) return;
+    if (state.trafficPaused || needsLogin()) return;
     try {
       const data = await getJSON("/v1/traffic");
       const records = data.requests || [];
@@ -90,6 +103,99 @@
     update("status");
   }
 
+  // ---------------------------------------------------------------- login
+
+  async function checkSession() {
+    let next = null;
+    try {
+      const res = await fetch("/v1/session", { headers: { Accept: "application/json" }, cache: "no-store" });
+      next = sessionState(res.status, await res.json().catch(() => null));
+    } catch { /* treated as login required below */ }
+    // Fail closed: an unexpected answer shows the login form, not data.
+    Object.assign(state.auth, next || { enabled: true, signedIn: false, username: "", expiresAt: "" }, { checked: true });
+    drawUser();
+    initNotice();
+  }
+
+  // signedOut forgets everything the session showed, so no server, tool,
+  // traffic, or Playground data stays on screen or in memory (SPEC-0005-R14).
+  function signedOut(message) {
+    const wasSignedIn = state.auth.signedIn;
+    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
+    Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set() });
+    resetPlayground();
+    drawUser();
+    render();
+    if (wasSignedIn && message) toast(message);
+  }
+
+  async function signedIn() {
+    await checkSession();
+    render();
+    refreshServers();
+    refreshTraffic();
+  }
+
+  async function logout() {
+    try { await fetch("/v1/session", { method: "DELETE", cache: "no-store" }); } catch { /* the cookie also expires */ }
+    signedOut("Signed out.");
+  }
+
+  // drawUser shows the signed-in user and Log out (SPEC-0005-R15).
+  function drawUser() {
+    const el = document.getElementById("user");
+    clear(el);
+    el.hidden = !(state.auth.enabled && state.auth.signedIn);
+    if (el.hidden) return;
+    put(el, h("span", { class: "user-name", text: state.auth.username, title: state.auth.expiresAt ? "Session ends " + new Date(state.auth.expiresAt).toLocaleString() : undefined }),
+      h("button", { type: "button", class: "linkish", onclick: logout }, "Log out"));
+  }
+
+  function renderLogin(root) {
+    const user = h("input", { type: "text", id: "login-user", name: "username", value: "admin", autocomplete: "username", required: true });
+    const password = h("input", { type: "password", id: "login-password", name: "password", autocomplete: "current-password", required: true });
+    const error = h("p", { class: "error-text", role: "alert" });
+    const submit = h("button", { type: "submit", class: "btn primary" }, "Sign in");
+    const form = h("form", {
+      class: "login",
+      onsubmit: async (e) => {
+        e.preventDefault();
+        error.textContent = "";
+        submit.disabled = true;
+        let res = null;
+        try {
+          res = await fetch("/v1/session", {
+            method: "POST", cache: "no-store",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ username: user.value, password: password.value }),
+          });
+        } catch { /* reported below */ }
+        // The password lives only in the form field (SPEC-0005-R15).
+        password.value = "";
+        submit.disabled = false;
+        if (res && res.status === 204) {
+          signedIn();
+          return;
+        }
+        error.textContent = loginMessage(res ? res.status : 0, res && res.headers.get("Retry-After"));
+        password.focus();
+      },
+    },
+    h("h1", { text: "Sign in" }),
+    h("p", { class: "muted", text: "Sign in as admin to see MCP servers, tools, and traffic." }),
+    h("div", { class: "field" }, h("label", { for: "login-user", text: "Username" }), user),
+    h("div", { class: "field" }, h("label", { for: "login-password", text: "Password" }), password),
+    error,
+    submit,
+    h("details", { class: "login-help" },
+      h("summary", { text: "Where is the password?" }),
+      h("p", { text: "Helm generates it into a Secret when it installs Kavrynt. Read it with:" }),
+      codeBlock("kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin \\\n  -o jsonpath='{.data.password}' | base64 -d"),
+      h("p", { class: "muted small", text: "Use your release namespace and name if they differ, or the Secret set in gateway.console.auth.existingSecret." })));
+    put(root, h("div", { class: "login-wrap" }, form));
+    setTimeout(() => password.focus(), 0);
+  }
+
   async function loadVersion() {
     try {
       state.version = await getJSON("/version");
@@ -113,6 +219,14 @@
   };
 
   function render() {
+    if (needsLogin()) {
+      document.querySelectorAll("[data-nav]").forEach((a) => { a.classList.remove("active"); a.removeAttribute("aria-current"); });
+      const root = clear(main());
+      current = { page: "login", update: null };
+      if (state.auth.checked) renderLogin(root);
+      else put(root, emptyState("Loading…"));
+      return;
+    }
     const { page: requested, rest, params } = parseHash(location.hash);
     const page = views[requested] ? requested : "overview";
     document.querySelectorAll("[data-nav]").forEach((a) => {
@@ -634,25 +748,39 @@
 
   // ---------------------------------------------------------------- start
 
-  // The console has no login (SPEC-0002-R12). Say so wherever it is reachable
-  // from more than this machine.
+  // Say what is not protected wherever the console is reachable from more
+  // than this machine: without login, the console and MCP routes
+  // (SPEC-0002-R12); with login, still the MCP routes (SPEC-0005-R16).
   function initNotice() {
-    if (isLoopbackHost(location.hostname)) return;
     const el = document.getElementById("notice");
-    put(clear(el), h("strong", { text: "No login. " }),
-      "Anyone who can reach this Gateway can use this console and call every routed tool. Keep the Gateway Service internal until client authentication is available.");
+    if (isLoopbackHost(location.hostname)) {
+      el.hidden = true;
+      return;
+    }
+    if (state.auth.enabled) {
+      put(clear(el), h("strong", { text: "MCP routes are not authenticated. " }),
+        "This login protects the console only. Anyone who can reach this Gateway can call every routed tool. Keep the Gateway Service internal until client authentication is available.");
+    } else {
+      put(clear(el), h("strong", { text: "No login. " }),
+        "Anyone who can reach this Gateway can use this console and call every routed tool. Keep the Gateway Service internal until client authentication is available.");
+    }
     el.hidden = false;
   }
 
-  initTheme();
-  initNotice();
-  window.addEventListener("hashchange", render);
-  window.addEventListener("pagehide", closePlayground);
-  render();
-  loadVersion();
-  createPoller(document, [
-    { fn: refreshServers, ms: SERVER_POLL_MS },
-    { fn: refreshStatus, ms: SERVER_POLL_MS },
-    { fn: refreshTraffic, ms: TRAFFIC_POLL_MS },
-  ]).start();
+  async function start() {
+    initTheme();
+    window.addEventListener("hashchange", render);
+    window.addEventListener("pagehide", closePlayground);
+    render();
+    loadVersion();
+    await checkSession();
+    render();
+    createPoller(document, [
+      { fn: refreshServers, ms: SERVER_POLL_MS },
+      { fn: refreshStatus, ms: SERVER_POLL_MS },
+      { fn: refreshTraffic, ms: TRAFFIC_POLL_MS },
+    ]).start();
+  }
+
+  start();
 })();

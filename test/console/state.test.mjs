@@ -99,3 +99,26 @@ test("a poller started in a hidden page waits until it is visible", () => {
   doc.setHidden(false);
   assert.equal(n, 1);
 });
+
+test("session responses map to login off, signed in, or login required, and fail closed", () => {
+  const { sessionState } = state;
+  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "" });
+  assert.deepEqual(sessionState(200, { enabled: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z" }),
+    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z" });
+  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "" });
+  // Anything unexpected is not a session; the console then shows the login form.
+  for (const [status, body] of [[200, {}], [200, null], [500, null], [403, { error: "origin not allowed" }]]) {
+    assert.equal(sessionState(status, body), null, status + " " + JSON.stringify(body));
+  }
+});
+
+test("login failures are explained without revealing which field was wrong", () => {
+  const { loginMessage } = state;
+  assert.equal(loginMessage(401), "Wrong username or password.");
+  assert.equal(loginMessage(429, "42"), "Too many failed attempts. Try again in 42 s.");
+  assert.equal(loginMessage(429, null), "Too many failed attempts. Try again in a minute.");
+  assert.match(loginMessage(403), /--allowed-origins/);
+  assert.match(loginMessage(503), /not configured/);
+  assert.match(loginMessage(0), /did not answer/);
+  assert.equal(loginMessage(500), "Login failed (HTTP 500).");
+});

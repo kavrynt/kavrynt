@@ -145,22 +145,20 @@ The Gateway's Go code and its endpoints do not change.
 | SPEC-0002-R04, R05 | `stats.test.mjs` catalog, search, and playability |
 | SPEC-0002-R06, R07 | `stats.test.mjs` filters and per-tool summary |
 | SPEC-0002-R08 | `outcomes_test.go` every outcome constant is defined in `stats.js` and the Gateway doc; `stats.test.mjs` definitions are non-empty |
-| SPEC-0002-R09 | Not yet: needs the browser smoke test |
+| SPEC-0002-R09 | `test/console-smoke/smoke.mjs` scope note on Overview, Traffic, and server traffic |
 | SPEC-0002-R10 | `state.test.mjs` hash round trip |
 | SPEC-0002-R11 | `stats.test.mjs` diagnostics omit query string, inputs, and other routes |
 | SPEC-0002-R12 | `state.test.mjs` host classification |
 | SPEC-0002-R13 | `console_test.go` storage scan |
 | SPEC-0002-R14 | `state.test.mjs` with a fake document and timers |
-| SPEC-0002-R15, R17 | Not yet: needs the browser smoke test (keyboard-only pass, 360 px viewport) |
+| SPEC-0002-R15, R17 | `test/console-smoke/smoke.mjs` accessible names, Tab with visible focus, 360 px on every view |
 | SPEC-0002-R16 | `contrast_test.go` computes WCAG ratios of the theme tokens |
 | SPEC-0002-R18 | `console_test.go` size, file types, and no external references |
 | SPEC-0002-R19 | `stats.test.mjs` server health thresholds and attention filter |
-| SPEC-0002-R20 | Not yet: paging is view code; needs the browser smoke test |
+| SPEC-0002-R20 | `test/console-smoke/smoke.mjs` 100 rows, then Show all |
 
-Node's built-in test runner was chosen for the pure modules (spec
-"Decisions"). A headless-browser smoke test in the Kind job would cover R09,
-R15, R17, and R20; it needs a browser download in CI and is the remaining
-decision before the spec can be `Implemented`.
+Node's built-in test runner covers the pure modules; a Playwright smoke test
+in the Kind job (`E2E_BROWSER=1` in CI) covers R09, R15, R17, and R20.
 
 ## Rollout
 

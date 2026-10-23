@@ -1,0 +1,10 @@
+{
+  "name": "kavrynt-console-smoke",
+  "private": true,
+  "description": "Headless-browser smoke test of the Gateway console, run by scripts/e2e-kind.sh",
+  "type": "module",
+  "license": "Apache-2.0",
+  "devDependencies": {
+    "playwright": "1.56.1"
+  }
+}

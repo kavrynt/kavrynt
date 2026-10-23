@@ -24,8 +24,11 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
    `/mcp/kavrynt-e2e.example-mcp-server` and checks the MCP traffic metrics,
    including that tool arguments never appear in them.
 8. Confirms the Gateway rejects a cross-origin browser request (`403`),
-   serves the console, lists the server and its tools at `/v1/servers`,
-   records the tool call at `/v1/traffic` without its arguments, and refuses
+   answers `/v1/servers` and `/v1/traffic` with `401` until it signs in with
+   the generated console admin password, serves the console, lists the
+   server and its tools at `/v1/servers`, records the tool call at
+   `/v1/traffic` without its arguments, runs the console browser smoke test
+   (`test/console-smoke`, when installed; always in CI), and refuses
    an `MCPServer` whose endpoint is `169.254.169.254` (`502`, and
    `DiscoveryFailed` in the Operator).
 9. Registers, inspects, routes to, and unregisters a second server with

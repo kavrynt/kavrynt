@@ -78,5 +78,29 @@
     };
   }
 
-  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller });
+  // sessionState reads a GET /v1/session response (SPEC-0005-R07): login off,
+  // signed in, or a login required.
+  function sessionState(status, body) {
+    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "" };
+    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || "") };
+    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "" };
+    return null;
+  }
+
+  // loginMessage explains a failed POST /v1/session to the person signing in.
+  function loginMessage(status, retryAfter) {
+    switch (status) {
+      case 401: return "Wrong username or password.";
+      case 429: {
+        const seconds = Number(retryAfter);
+        return "Too many failed attempts. Try again in " + (seconds > 0 ? seconds + " s" : "a minute") + ".";
+      }
+      case 403: return "This Gateway does not accept logins from this address. Add it to --allowed-origins (Helm: gateway.config.allowedOrigins).";
+      case 503: return "Login is not configured on this Gateway: the admin Secret is not mounted.";
+      case 0: return "The Gateway did not answer. Check that it is running and reachable.";
+      default: return "Login failed (HTTP " + status + ").";
+    }
+  }
+
+  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).state = {}));

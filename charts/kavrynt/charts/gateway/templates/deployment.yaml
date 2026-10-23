@@ -52,6 +52,13 @@ spec:
             - {{ join "," . | quote }}
             {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
+            {{- if include "gateway.consoleAuthEnabled" . }}
+            - --console-auth=true
+            - --console-auth-dir=/etc/kavrynt/console-auth
+            - --console-session-ttl={{ .Values.console.auth.sessionTTL | default "12h" }}
+            {{- else }}
+            - --console-auth=false
+            {{- end }}
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -67,6 +74,21 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+          {{- if include "gateway.consoleAuthEnabled" . }}
+          # The kubelet mounts the admin Secret; the Gateway's service account
+          # has no RBAC on Secrets.
+          volumeMounts:
+            - name: console-auth
+              mountPath: /etc/kavrynt/console-auth
+              readOnly: true
+          {{- end }}
+      {{- if include "gateway.consoleAuthEnabled" . }}
+      volumes:
+        - name: console-auth
+          secret:
+            secretName: {{ include "gateway.consoleAuthSecret" . }}
+            defaultMode: 0444
+      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

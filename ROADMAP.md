@@ -10,7 +10,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - Operator validation with `Accepted`, `Ready`, and `ToolsDiscovered`
   conditions, and tool discovery into `status.tools`.
 - Gateway HTTP routing at `/mcp/<namespace>.<name>`, credential header
-  stripping, egress restrictions, and a read-only web console.
+  stripping, egress restrictions, and a read-only web console with an
+  overview of failing servers and tools and a single admin login.
 - Signed multi-architecture images and an OCI Helm chart.
 
 ## Next
