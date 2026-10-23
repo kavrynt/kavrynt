@@ -109,6 +109,18 @@ Never force-push shared branches. Inspect `git status` before editing and
 preserve the owner's uncommitted changes. Commit, push, merge, tag, or publish
 only when the owner explicitly asks.
 
+Merging, when the owner asks for it:
+
+- Merge pull requests into `develop` with a merge commit
+  (`gh pr merge <n> --merge --delete-branch`), only after every CI check on
+  that pull request has passed. `develop` has no branch protection, so check
+  `gh pr checks <n>` yourself.
+- Merge stacked pull requests from the bottom up. After each merge, wait for
+  the next pull request to retarget to `develop` and for its CI to pass.
+- After merging, delete the feature branch on the remote and locally
+  (`git branch -d`), switch to `develop`, and pull. Never delete `develop`,
+  `main`, or `release/*` branches.
+
 ## Commands
 
 ```bash
