@@ -1,7 +1,7 @@
 # SPEC-0002 plan: Console v2: operations UI
 
-Proposed design for review alongside the Draft spec. It becomes binding when
-the spec is `Accepted`.
+The design for the `Accepted` spec. Sections marked "as built" record where
+the implementation settled a choice the proposal left open.
 
 ## Information architecture
 
@@ -76,11 +76,25 @@ in one column, and tables scroll inside their panel (R17).
 
 ## Design
 
-- **Modules.** Split `app.js` (about 1,100 lines) into ES modules loaded with
-  `<script type="module">`, which the current CSP (`script-src 'self'`)
-  already allows: `dom.js` (`h`, `put`, `clear`), `state.js` (polling,
-  visibility, URL state), `stats.js` (pure: percentiles, per-tool summary,
-  attention list, outcome definitions), and one module per view. No bundler.
+- **Modules (as built).** `app.js` is split into files with no bundler. They
+  are classic deferred scripts sharing one `Kavrynt` namespace, not ES
+  modules: browsers fetch module scripts with an `Origin` header even from
+  the same origin, and the Gateway rejects origins outside
+  `--allowed-origins`, so behind an Ingress without that setting the console
+  loaded blank. The pure files also assign to `module.exports`, so Node's
+  test runner loads them directly. A Go test keeps `index.html` free of
+  module scripts and in dependency order:
+  - `stats.js` (pure): outcome definitions, server state and health,
+    attention list, per-tool summary, failing tools, filters, catalog,
+    diagnostics.
+  - `state.js` (pure): URL hash parsing and formatting, loopback host check,
+    visibility-aware poller with injectable document and timers.
+  - `format.js` (pure): number, size, time formatting.
+  - `dom.js`: `h`, `put`, `clear`, and small text-only building blocks.
+  - `playground.js`: MCP session, schema forms, results.
+  - `app.js`: router, polling, theme, and the Overview, Servers, server
+    detail, Tools, and Traffic views. Views stay in one module: they share
+    helpers and are each small.
 - **Pure logic first.** Everything R01–R11 compute lives in `stats.js` and
   `state.js` as functions of `/v1/servers` and `/v1/traffic` JSON, so it can
   be tested without a browser.
@@ -89,6 +103,16 @@ in one column, and tables scroll inside their panel (R17).
   `internal/gateway/api/traffic.go` has a definition, so the two cannot drift.
 - **Polling** (R14) listens to `visibilitychange`; hidden pages clear their
   timers.
+- **Redraws keep focus (as built).** Views rebuild their content on each
+  poll; the update dispatcher moves keyboard focus back to the control with
+  the same link, label, or id. The Traffic filters are rebuilt only when
+  their options change, so an open dropdown is not closed by a poll.
+- **Server health (R19, as built).** A routed server needs attention when
+  `ToolsDiscovered` is `False` or at least half of at least five recent
+  requests failed. The thresholds are constants in `stats.js`. Cards show
+  the recent request count and error rate; the detail view shows a callout.
+- **Traffic paging (R20, as built).** 100 rows, then "Show 100 more" and
+  "Show all". Filters reset the page.
 - **Storage** (R13): only the theme preference is stored. A Go test scans the
   static files and fails on any `localStorage`, `sessionStorage`,
   `indexedDB`, or `document.cookie` use outside the theme helper.
@@ -100,14 +124,16 @@ in one column, and tables scroll inside their panel (R17).
 
 | Path | Change |
 | --- | --- |
-| `internal/gateway/console/static/index.html` | Overview and Tools nav, module script, notice slot |
+| `internal/gateway/console/static/index.html` | Overview and Tools nav, module script, notice slot, skip link |
 | `internal/gateway/console/static/*.js` | Split into modules; new Overview and Tools views |
-| `internal/gateway/console/static/app.css` | Notice banner, narrow layout, focus styles |
-| `internal/gateway/console/console_test.go` | Storage, size, and module checks |
-| `internal/gateway/api/traffic_test.go` | Outcome definitions match outcome constants |
-| `internal/gateway/console/static/*.test.mjs` | Node tests for pure modules (if approved) |
-| `scripts/e2e-kind.sh` | Headless smoke test of each view (if approved) |
-| `docs/components/gateway/README.md` | Console section |
+| `internal/gateway/console/static/app.css` | Notice, health states, narrow layout, focus styles, AA tokens |
+| `internal/gateway/console/console_test.go` | Storage scan, size and self-containment budget, module media type |
+| `internal/gateway/console/contrast_test.go` | WCAG AA contrast of the theme tokens in both themes |
+| `internal/gateway/api/outcomes_test.go` | Outcome definitions match outcome constants and the Gateway doc |
+| `test/console/*.test.mjs` | Node tests for the pure modules (`make console-test`) |
+| `Makefile`, `.github/workflows/qa.yml` | `console-test` in `make qa` and the Go QA job (Node 22) |
+| `scripts/e2e-kind.sh` | Headless smoke test of each view (not decided) |
+| `docs/components/gateway/README.md` | Console section, when `Implemented` |
 
 The Gateway's Go code and its endpoints do not change.
 
@@ -115,23 +141,26 @@ The Gateway's Go code and its endpoints do not change.
 
 | Requirement | Test |
 | --- | --- |
-| SPEC-0002-R01, R02, R03 | `stats.test.mjs` overview and attention cases; e2e smoke opens `#/overview` |
-| SPEC-0002-R04, R05 | `stats.test.mjs` catalog search; e2e smoke |
+| SPEC-0002-R01, R02, R03 | `stats.test.mjs` overview, attention, and failing-tools cases |
+| SPEC-0002-R04, R05 | `stats.test.mjs` catalog, search, and playability |
 | SPEC-0002-R06, R07 | `stats.test.mjs` filters and per-tool summary |
-| SPEC-0002-R08 | `traffic_test.go` every outcome has a definition |
-| SPEC-0002-R09 | e2e smoke checks the scope note on traffic views |
+| SPEC-0002-R08 | `outcomes_test.go` every outcome constant is defined in `stats.js` and the Gateway doc; `stats.test.mjs` definitions are non-empty |
+| SPEC-0002-R09 | Not yet: needs the browser smoke test |
 | SPEC-0002-R10 | `state.test.mjs` hash round trip |
-| SPEC-0002-R11 | `stats.test.mjs` diagnostics omit query string and inputs |
-| SPEC-0002-R12 | `state.test.mjs` host classification; e2e smoke through a non-loopback host |
-| SPEC-0002-R13 | `console_test.go` storage scan; e2e smoke inspects storage after a call |
-| SPEC-0002-R14 | `state.test.mjs` with a fake document visibility |
-| SPEC-0002-R15, R16, R17 | e2e smoke with keyboard-only navigation, contrast check of theme tokens, 360 px viewport |
-| SPEC-0002-R18 | `console_test.go` size budget |
+| SPEC-0002-R11 | `stats.test.mjs` diagnostics omit query string, inputs, and other routes |
+| SPEC-0002-R12 | `state.test.mjs` host classification |
+| SPEC-0002-R13 | `console_test.go` storage scan |
+| SPEC-0002-R14 | `state.test.mjs` with a fake document and timers |
+| SPEC-0002-R15, R17 | Not yet: needs the browser smoke test (keyboard-only pass, 360 px viewport) |
+| SPEC-0002-R16 | `contrast_test.go` computes WCAG ratios of the theme tokens |
+| SPEC-0002-R18 | `console_test.go` size, file types, and no external references |
+| SPEC-0002-R19 | `stats.test.mjs` server health thresholds and attention filter |
+| SPEC-0002-R20 | Not yet: paging is view code; needs the browser smoke test |
 
-The test tooling choice is the spec's open question. The alternative to Node
-and a headless browser is Go-only checks plus a manual release checklist for
-R15–R17, which would leave those requirements untraceable and therefore keep
-the spec out of `Implemented`.
+Node's built-in test runner was chosen for the pure modules (spec
+"Decisions"). A headless-browser smoke test in the Kind job would cover R09,
+R15, R17, and R20; it needs a browser download in CI and is the remaining
+decision before the spec can be `Implemented`.
 
 ## Rollout
 
