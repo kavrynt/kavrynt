@@ -115,8 +115,11 @@ Merging, when the owner asks for it:
   (`gh pr merge <n> --merge --delete-branch`), only after every CI check on
   that pull request has passed. `develop` has no branch protection, so check
   `gh pr checks <n>` yourself.
-- Merge stacked pull requests from the bottom up. After each merge, wait for
-  the next pull request to retarget to `develop` and for its CI to pass.
+- Merge stacked pull requests from the bottom up. Before merging one,
+  retarget the pull request stacked on it to `develop`
+  (`gh pr edit <next> --base develop`): GitHub closes, not retargets, a pull
+  request whose base branch is deleted. Then wait for that pull request's CI
+  to pass before merging it.
 - After merging, delete the feature branch on the remote and locally
   (`git branch -d`), switch to `develop`, and pull. Never delete `develop`,
   `main`, or `release/*` branches.
