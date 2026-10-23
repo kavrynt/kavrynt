@@ -126,5 +126,6 @@ against the assistant's summary of them.
 | Spec | Title | Status |
 | --- | --- | --- |
 | [0001](0001-gateway-console/spec.md) | Gateway web console | Implemented |
-| [0002](0002-console-v2/spec.md) | Console v2: operations UI | Draft |
+| [0002](0002-console-v2/spec.md) | Console v2: operations UI | Accepted |
 | [0003](0003-helm-chart-validation/spec.md) | Helm chart values validation and unit tests | Implemented |
+| [0004](0004-reported-server-version/spec.md) | Reported MCP server version | Draft |

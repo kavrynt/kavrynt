@@ -42,6 +42,7 @@ one Go module and ships under one version in one Helm chart
 | Tool | Minimum version | Purpose |
 | --- | --- | --- |
 | [Go](https://go.dev/doc/install) | 1.26 | Building and unit testing |
+| [Node.js](https://nodejs.org/) | 22 | Web console unit tests (`make console-test`); no npm packages are installed |
 | [Docker](https://docs.docker.com/get-docker/) | any recent | Building runtime images |
 | [Helm](https://helm.sh/docs/intro/install/) | 3.x or 4.x | Chart linting, templating, and installs |
 | [helm-unittest](https://github.com/helm-unittest/helm-unittest) plugin | pinned in the Makefile | Chart unit tests; install with `make helm-plugins` |
@@ -142,7 +143,7 @@ make spec-new NAME=console-tool-catalog   # creates specs/NNNN-console-tool-cata
 | Helm values | The subchart `values.yaml` and its hand-written `values.schema.json` (unknown keys are rejected, so a new value without a schema entry fails lint), the umbrella `charts/kavrynt/values.yaml` if exposed there, the values tables in [charts/kavrynt/README.md](charts/kavrynt/README.md), and a test in `charts/kavrynt/tests/` |
 | Chart templates | A helm-unittest case in `charts/kavrynt/tests/` for the behavior you change |
 | Gateway or Operator flags | The component doc in `docs/components/` |
-| The console (`internal/gateway/console/static`) | Plain HTML, CSS, and JavaScript only: no build step, no external assets, untrusted data through `textContent` only |
+| The console (`internal/gateway/console/static`) | Plain HTML, CSS, and JavaScript only: no build step, no external assets, untrusted data through `textContent` only. Classic scripts, not ES modules: module scripts send an `Origin` header that the Gateway rejects outside `--allowed-origins` |
 | Sample manifests in `examples/kavryctl` | They must pass `kavryctl validate` (CI checks every file) |
 | User-visible behavior | README, `docs/components/`, and `ROADMAP.md` once the spec is `Implemented` |
 
@@ -186,6 +187,14 @@ go test -race -run TestConsole ./internal/gateway/api
 
 Tests must run without network access: use fake `http.RoundTripper`s and
 `t.TempDir()`.
+
+The console's logic (`stats.js`, `state.js`, `format.js` in
+`internal/gateway/console/static`) has no DOM access and is tested with
+Node's built-in test runner:
+
+```bash
+make console-test                           # node --test 'test/console/*.test.mjs'
+```
 
 ### Running lint and security checks
 

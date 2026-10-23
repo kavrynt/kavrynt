@@ -110,8 +110,9 @@ only when the owner explicitly asks.
 
 ```bash
 make help            # list targets
-make qa              # release contract, spec check, gofmt, race tests, vet, staticcheck, gosec, govulncheck, helm lint/template/unittest
+make qa              # release contract, spec check, gofmt, race tests, console tests, vet, staticcheck, gosec, govulncheck, helm lint/template/unittest
 make test            # go test -race ./...
+make console-test    # web console unit tests (node --test, no npm packages)
 make spec-check      # specs well formed; Implemented requirements cited by tests
 make spec-new NAME=x # scaffold specs/NNNN-x/spec.md
 make helm-plugins    # once: install the pinned helm-unittest plugin
@@ -123,7 +124,7 @@ make e2e-release RELEASE_VERSION=<v>   # validate published chart and images
 ```
 
 Run one package's tests: `go test -race ./internal/gateway/...`.
-Toolchain: Go 1.26+, Docker, Helm 3 or 4 with the helm-unittest plugin,
+Toolchain: Go 1.26+, Node 22+ (console tests only), Docker, Helm 3 or 4 with the helm-unittest plugin,
 kubectl, Kind. Chart values are validated by hand-written
 `values.schema.json` files that reject unknown keys: add every new value to
 the schema and cover template changes in `charts/kavrynt/tests/`.
@@ -166,7 +167,11 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
   `internal/egress`.
 - The console (`internal/gateway/console/static`) is plain HTML, CSS, and
   JavaScript embedded in the Gateway: no build step, no external assets.
-  Insert untrusted data with `textContent` only, never `innerHTML`.
+  Insert untrusted data with `textContent` only, never `innerHTML`. Use
+  classic scripts, not ES modules: browsers send `Origin` on module script
+  requests and the Gateway rejects origins outside `--allowed-origins`.
+  Keep logic in the DOM-free files (`stats.js`, `state.js`, `format.js`) so
+  `make console-test` covers it.
 - Shared Kubernetes API types live only in `api/v1alpha1`. The CRD schema is
   hand-written (no controller-gen) and exists twice, kept identical:
   `config/crd/bases/kavrynt.io_mcpservers.yaml` and
