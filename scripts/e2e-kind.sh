@@ -233,6 +233,17 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/example-
   jq --exit-status '.status.tools | (map(.name) == ["echo"]) and (.[0].inputSchema.required == ["message"])' >/dev/null ||
   fail "MCPServer status does not list the echo tool with its input schema"
 
+# Verifies SPEC-0004-R01 and SPEC-0004-R05.
+log "verifying the Operator records the reported server version"
+REPORTED_VERSION="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  get mcpserver/example-mcp-server -o jsonpath='{.status.serverInfo.name} {.status.serverInfo.version}')"
+[ "${REPORTED_VERSION}" = "kavrynt-alpha0 0.0.1-beta.1" ] ||
+  fail "status.serverInfo is '${REPORTED_VERSION}', want the name and version the server reports"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/example-mcp-server |
+  awk 'NR == 1 { for (i = 1; i <= NF; i++) if ($i == "REPORTED") col = i } NR == 2 { print $col }' |
+  grep --fixed-strings --quiet "0.0.1-beta.1" ||
+  fail "kubectl get mcpservers does not show the reported version"
+
 log "verifying a failed discovery leaves the server Ready"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
 apiVersion: kavrynt.io/v1alpha1

@@ -26,7 +26,16 @@ type Server struct {
 	Routed      bool        `json:"routed"`
 	Conditions  []Condition `json:"conditions"`
 	Tools       []Tool      `json:"tools"`
-	CreatedAt   time.Time   `json:"createdAt"`
+	// ServerInfo is the name and version the server reported to the
+	// Operator in MCP initialize. Self-reported and untrusted.
+	ServerInfo *ServerInfo `json:"serverInfo,omitempty"`
+	CreatedAt  time.Time   `json:"createdAt"`
+}
+
+// ServerInfo is an MCP server's reported name and version.
+type ServerInfo struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
 }
 
 type Condition struct {

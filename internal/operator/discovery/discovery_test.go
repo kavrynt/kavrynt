@@ -12,6 +12,7 @@ import (
 	"testing"
 	"unicode/utf8"
 
+	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/mcpmeta"
 )
 
@@ -26,8 +27,10 @@ type fakeServer struct {
 	toolsCap  bool
 	pages     [][]any
 	handle    func(method string, w http.ResponseWriter) bool
-	requests  []*http.Request
-	methods   []string
+	// serverInfo is sent in the initialize result when set.
+	serverInfo any
+	requests   []*http.Request
+	methods    []string
 }
 
 func newFakeServer(tools ...any) *fakeServer {
@@ -72,7 +75,11 @@ func (f *fakeServer) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if f.toolsCap {
 			capabilities["tools"] = map[string]any{}
 		}
-		result = map[string]any{"protocolVersion": "2025-03-26", "capabilities": capabilities}
+		initialized := map[string]any{"protocolVersion": "2025-03-26", "capabilities": capabilities}
+		if f.serverInfo != nil {
+			initialized["serverInfo"] = f.serverInfo
+		}
+		result = initialized
 		if f.sessionID != "" {
 			w.Header().Set("Mcp-Session-Id", f.sessionID)
 		}
@@ -355,5 +362,39 @@ func TestCanonicalJSON(t *testing.T) {
 	}
 	if _, err := CanonicalJSON([]byte(`{} {}`)); err == nil {
 		t.Fatal("trailing data accepted")
+	}
+}
+
+// Verifies SPEC-0004-R01.
+func TestListToolsRecordsBoundedServerInfo(t *testing.T) {
+	long := strings.Repeat("v", MaxServerInfoLength+1)
+	exact := strings.Repeat("é", MaxServerInfoLength)
+	cases := []struct {
+		name       string
+		serverInfo any
+		toolsCap   bool
+		want       *kavryntv1alpha1.MCPServerInfo
+	}{
+		{"name and version", map[string]any{"name": "kavrynt-demo-incidents", "version": "0.2.0"}, true, &kavryntv1alpha1.MCPServerInfo{Name: "kavrynt-demo-incidents", Version: "0.2.0"}},
+		{"without the tools capability", map[string]any{"name": "notes", "version": "1.0.0"}, false, &kavryntv1alpha1.MCPServerInfo{Name: "notes", Version: "1.0.0"}},
+		{"128 characters", map[string]any{"name": "x", "version": exact}, true, &kavryntv1alpha1.MCPServerInfo{Name: "x", Version: exact}},
+		{"too long", map[string]any{"name": "x", "version": long}, true, &kavryntv1alpha1.MCPServerInfo{Name: "x"}},
+		{"control characters", map[string]any{"name": "evil\x1b[2Jname", "version": "1.0\n"}, true, nil},
+		{"blank", map[string]any{"name": "  ", "version": ""}, true, nil},
+		{"not strings", map[string]any{"name": 42, "version": map[string]any{"major": 1}}, true, nil},
+		{"missing", nil, true, nil},
+		{"wrong type", "server", true, nil},
+	}
+	for _, c := range cases {
+		server := newFakeServer(tool("echo"))
+		server.toolsCap = c.toolsCap
+		server.serverInfo = c.serverInfo
+		result, err := listTools(t, server)
+		if err != nil {
+			t.Fatalf("%s: %v", c.name, err)
+		}
+		if (result.ServerInfo == nil) != (c.want == nil) || (c.want != nil && *result.ServerInfo != *c.want) {
+			t.Fatalf("%s: serverInfo = %+v, want %+v", c.name, result.ServerInfo, c.want)
+		}
 	}
 }

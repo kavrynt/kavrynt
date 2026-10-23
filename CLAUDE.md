@@ -62,7 +62,8 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   `Accepted` and `Ready`.
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
   into `status.tools` with a `ToolsDiscovered` condition that never affects
-  `Ready`.
+  `Ready`, and records the reported `serverInfo` name and version in
+  `status.serverInfo`.
 - Opt-in Operator connector (`cloud.enabled`) sends full inventory snapshots
   (servers and tools) to Kavrynt Cloud `POST /v1/sync/mcpservers` with a
   cluster token from a Secret. Traffic rollups are not uploaded yet.
@@ -107,6 +108,21 @@ GitFlow:
 Never force-push shared branches. Inspect `git status` before editing and
 preserve the owner's uncommitted changes. Commit, push, merge, tag, or publish
 only when the owner explicitly asks.
+
+Merging, when the owner asks for it:
+
+- Merge pull requests into `develop` with a merge commit
+  (`gh pr merge <n> --merge --delete-branch`), only after every CI check on
+  that pull request has passed. `develop` has no branch protection, so check
+  `gh pr checks <n>` yourself.
+- Merge stacked pull requests from the bottom up. Before merging one,
+  retarget the pull request stacked on it to `develop`
+  (`gh pr edit <next> --base develop`): GitHub closes, not retargets, a pull
+  request whose base branch is deleted. Then wait for that pull request's CI
+  to pass before merging it.
+- After merging, delete the feature branch on the remote and locally
+  (`git branch -d`), switch to `develop`, and pull. Never delete `develop`,
+  `main`, or `release/*` branches.
 
 ## Commands
 

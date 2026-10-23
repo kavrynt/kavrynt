@@ -44,6 +44,24 @@ type MCPServerStatus struct {
 	// Tools are the server's tools from MCP tools/list, bounded by the
 	// Operator. They come from the MCP server and are untrusted.
 	Tools []MCPServerTool `json:"tools,omitempty"`
+	// ServerInfo is the name and version the server reported in MCP
+	// initialize, bounded by the Operator. Self-reported and untrusted.
+	ServerInfo *MCPServerInfo `json:"serverInfo,omitempty"`
+}
+
+// MCPServerInfo is the serverInfo an MCP server reports in initialize.
+type MCPServerInfo struct {
+	Name    string `json:"name,omitempty"`
+	Version string `json:"version,omitempty"`
+}
+
+// CopyServerInfo returns a copy of info.
+func CopyServerInfo(info *MCPServerInfo) *MCPServerInfo {
+	if info == nil {
+		return nil
+	}
+	out := *info
+	return &out
 }
 
 // MCPServerTool is one tool reported by an MCP server.
@@ -88,6 +106,7 @@ func (in *MCPServer) DeepCopyObject() runtime.Object {
 		out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	}
 	out.Status.Tools = CopyTools(in.Status.Tools)
+	out.Status.ServerInfo = CopyServerInfo(in.Status.ServerInfo)
 	return out
 }
 

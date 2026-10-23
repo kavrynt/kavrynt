@@ -21,6 +21,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 	"unicode/utf8"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
@@ -45,6 +46,9 @@ const (
 	MaxSchemaBytes = 16 << 10
 	// MaxStatusBytes bounds the tools written to one MCPServer status.
 	MaxStatusBytes = 256 << 10
+	// MaxServerInfoLength bounds the reported serverInfo name and version in
+	// characters; the CRD enforces the same limit.
+	MaxServerInfoLength = 128
 
 	closeTimeout = 2 * time.Second
 )
@@ -65,6 +69,9 @@ type Result struct {
 	Truncated bool
 	// SchemasDropped is set when input schemas were omitted to fit status.
 	SchemasDropped bool
+	// ServerInfo is the bounded serverInfo from initialize; nil when the
+	// server reported no usable name or version.
+	ServerInfo *kavryntv1alpha1.MCPServerInfo
 }
 
 // Summary describes the result for a condition message.
@@ -117,6 +124,7 @@ func (c *Client) ListTools(ctx context.Context, endpoint string) (Result, error)
 		Capabilities    struct {
 			Tools json.RawMessage `json:"tools"`
 		} `json:"capabilities"`
+		ServerInfo json.RawMessage `json:"serverInfo"`
 	}
 	params := map[string]any{
 		"protocolVersion": ProtocolVersion,
@@ -134,8 +142,9 @@ func (c *Client) ListTools(ctx context.Context, endpoint string) (Result, error)
 	}
 	s.notify(ctx, "notifications/initialized")
 
+	serverInfo := boundServerInfo(initialized.ServerInfo)
 	if len(initialized.Capabilities.Tools) == 0 || string(initialized.Capabilities.Tools) == "null" {
-		return Result{NoToolsCapability: true}, nil
+		return Result{NoToolsCapability: true, ServerInfo: serverInfo}, nil
 	}
 
 	var raw []json.RawMessage
@@ -166,7 +175,40 @@ func (c *Client) ListTools(ctx context.Context, endpoint string) (Result, error)
 
 	result := buildResult(raw)
 	result.Truncated = result.Truncated || truncated
+	result.ServerInfo = serverInfo
 	return result, nil
+}
+
+// boundServerInfo keeps a reported name and version only when each is a
+// non-blank string of at most MaxServerInfoLength printable characters
+// (SPEC-0004-R01). It is decoded apart from the rest of the initialize
+// result so a malformed value cannot fail the whole discovery.
+func boundServerInfo(raw json.RawMessage) *kavryntv1alpha1.MCPServerInfo {
+	var fields struct {
+		Name    json.RawMessage `json:"name"`
+		Version json.RawMessage `json:"version"`
+	}
+	if json.Unmarshal(raw, &fields) != nil {
+		return nil
+	}
+	info := kavryntv1alpha1.MCPServerInfo{Name: boundInfoField(fields.Name), Version: boundInfoField(fields.Version)}
+	if info.Name == "" && info.Version == "" {
+		return nil
+	}
+	return &info
+}
+
+func boundInfoField(raw json.RawMessage) string {
+	var value string
+	if json.Unmarshal(raw, &value) != nil || strings.TrimSpace(value) == "" || utf8.RuneCountInString(value) > MaxServerInfoLength {
+		return ""
+	}
+	for _, r := range value {
+		if r == utf8.RuneError || !unicode.IsPrint(r) {
+			return ""
+		}
+	}
+	return value
 }
 
 // buildResult validates and bounds raw tools/list entries.

@@ -127,6 +127,10 @@ cmd_up() {
   kind load docker-image --name "${CLUSTER_NAME}" "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${DEMO_IMAGE}"
 
   log "installing the Kavrynt control plane"
+  # Helm installs CRDs only on first install. A reused cluster needs the
+  # checkout's CRD first, or new status fields are pruned.
+  kubectl apply --server-side --force-conflicts \
+    -f "${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml" >/dev/null
   helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
     --namespace "${CONTROL_NAMESPACE}" \
     --create-namespace \

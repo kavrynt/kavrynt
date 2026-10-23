@@ -118,6 +118,15 @@ spec:
                       inputSchema:
                         type: object
                         x-kubernetes-preserve-unknown-fields: true
+                serverInfo:
+                  type: object
+                  properties:
+                    name:
+                      type: string
+                      maxLength: 128
+                    version:
+                      type: string
+                      maxLength: 128
       additionalPrinterColumns:
         - name: Transport
           type: string
@@ -125,6 +134,9 @@ spec:
         - name: Version
           type: string
           jsonPath: .spec.version
+        - name: Reported
+          type: string
+          jsonPath: .status.serverInfo.version
         - name: Ready
           type: string
           jsonPath: .status.conditions[?(@.type=="Ready")].status
