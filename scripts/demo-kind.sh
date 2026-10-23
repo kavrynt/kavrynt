@@ -29,6 +29,9 @@ export KUBECONFIG="${STATE_DIR}/kubeconfig"
 export PATH="${STATE_DIR}/bin:${PATH}"
 GW="http://127.0.0.1:${DEMO_PORT}"
 PORT_FORWARD_PID=""
+# Console session for the walkthrough's curl calls to /v1/traffic.
+CONSOLE_COOKIES=".kavrynt/demo/console-cookies"
+PASSWORD_COMMAND="kubectl -n ${CONTROL_NAMESPACE} get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d"
 
 if [ -t 1 ]; then
   BOLD=$'\033[1m' DIM=$'\033[2m' CYAN=$'\033[36m' YELLOW=$'\033[33m' RESET=$'\033[0m'
@@ -124,6 +127,10 @@ cmd_up() {
   kind load docker-image --name "${CLUSTER_NAME}" "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${DEMO_IMAGE}"
 
   log "installing the Kavrynt control plane"
+  # Helm installs CRDs only on first install. A reused cluster needs the
+  # checkout's CRD first, or new status fields are pruned.
+  kubectl apply --server-side --force-conflicts \
+    -f "${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml" >/dev/null
   helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
     --namespace "${CONTROL_NAMESPACE}" \
     --create-namespace \
@@ -188,9 +195,20 @@ start_port_forward() {
   fail "Gateway did not become reachable at ${GW}"
 }
 
+# console_login signs the walkthrough in to the console API, as the browser
+# does, with the generated admin password.
+console_login() {
+  kubectl -n "${CONTROL_NAMESPACE}" get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' |
+    base64 --decode |
+    jq --raw-input '{username: "admin", password: .}' |
+    curl --fail --silent --show-error --cookie-jar "${ROOT_DIR}/${CONSOLE_COOKIES}" \
+      --header 'Content-Type: application/json' --data @- "${GW}/v1/session" ||
+    fail "console login with the generated admin password failed"
+}
+
 cmd_forward() {
   require_demo_cluster
-  log "Gateway on ${GW} (console ${GW}/ui/); Ctrl-C to stop"
+  log "Gateway on ${GW} (console ${GW}/ui/, user admin, password: ${PASSWORD_COMMAND}); Ctrl-C to stop"
   exec kubectl -n "${CONTROL_NAMESPACE}" port-forward --address 127.0.0.1 \
     service/kavrynt-gateway "${DEMO_PORT}:8080"
 }
@@ -281,6 +299,7 @@ cmd_walkthrough() {
   log "resetting demo state"
   reset_demo_state
   start_port_forward
+  console_login
 
   printf '\n%sKavrynt: a Kubernetes-native control plane for MCP servers%s\n' "${BOLD}" "${RESET}"
   printf 'Gateway: %s   Console: %s/ui/\n' "${GW}" "${GW}"
@@ -293,6 +312,11 @@ CMD
   run <<'CMD'
 kubectl get crd mcpservers.kavrynt.io
 CMD
+  say "The console has an admin login, like Argo CD. Helm generated the password:"
+  run <<'CMD'
+kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d; echo
+CMD
+  say "Sign in at $GW/ui/ as admin. The login protects the console; MCP routes stay open to anyone who can reach the Gateway."
   pause
 
   step "Two teams, two MCP servers, no routes" "Plain Deployments and Services. Kavrynt does not run them; it registers and routes to them."
@@ -362,14 +386,14 @@ CMD
 
   step "Live traffic" "The Gateway records method, tool, outcome, and latency. Never tool arguments."
   run <<'CMD'
-curl -s $GW/v1/traffic | jq '[.requests[] | {route, method, tool, outcome}] | .[:5]'
+curl -s -b .kavrynt/demo/console-cookies $GW/v1/traffic | jq '[.requests[] | {route, method, tool, outcome}] | .[:5]'
 CMD
   expect "tool_error"
   run <<'CMD'
 curl -s $GW/metrics | grep '^kavrynt_gateway_mcp_requests_total'
 CMD
   expect 'tool="list_incidents"'
-  say "Console > Live traffic shows the same calls; Playground calls tools from the browser."
+  say "Console > Traffic shows the same calls; Playground calls tools from the browser."
   pause
 
   step "Guardrails that exist today" "Defense in depth while authentication is still on the roadmap."

@@ -37,3 +37,6 @@ kubeconfig
 /operator
 /gateway
 /kavryctl
+
+# Console smoke test dependencies (npm ci in test/console-smoke)
+node_modules/

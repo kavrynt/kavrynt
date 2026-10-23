@@ -6,27 +6,42 @@
   <title>Kavrynt Console</title>
   <link rel="icon" href="logo.svg" type="image/svg+xml">
   <link rel="stylesheet" href="app.css">
+  <!-- Classic scripts, run in this order. Module scripts would be fetched
+       with an Origin header, which the Gateway rejects for origins outside
+       --allowed-origins, leaving the console blank behind an Ingress. -->
+  <script src="format.js" defer></script>
+  <script src="stats.js" defer></script>
+  <script src="state.js" defer></script>
+  <script src="dom.js" defer></script>
+  <script src="playground.js" defer></script>
   <script src="app.js" defer></script>
 </head>
 <body>
+  <a class="skip-link" href="#main">Skip to content</a>
   <div class="shell">
     <nav class="sidebar" aria-label="Main">
-      <a class="brand" href="#/servers">
+      <a class="brand" href="#/overview">
         <img src="logo.svg" alt="" width="28" height="28">
         <span>Kavrynt</span>
       </a>
       <ul class="nav">
+        <li><a href="#/overview" data-nav="overview"><span class="nav-icon" aria-hidden="true">&#9673;</span>Overview</a></li>
         <li><a href="#/servers" data-nav="servers"><span class="nav-icon" aria-hidden="true">&#9638;</span>Servers</a></li>
+        <li><a href="#/tools" data-nav="tools"><span class="nav-icon" aria-hidden="true">&#9881;</span>Tools</a></li>
         <li><a href="#/playground" data-nav="playground"><span class="nav-icon" aria-hidden="true">&#9654;</span>Playground</a></li>
-        <li><a href="#/traffic" data-nav="traffic"><span class="nav-icon" aria-hidden="true">&#8776;</span>Live traffic</a></li>
+        <li><a href="#/traffic" data-nav="traffic"><span class="nav-icon" aria-hidden="true">&#8776;</span>Traffic</a></li>
       </ul>
       <div class="sidebar-foot">
-        <div class="gw-status" id="gw-status"><span class="dot"></span><span>Connecting&hellip;</span></div>
+        <div class="gw-status" id="gw-status" role="status"><span class="dot"></span><span>Connecting&hellip;</span></div>
         <div class="gw-version" id="gw-version"></div>
+        <div class="user" id="user" hidden></div>
         <button type="button" class="theme-toggle" id="theme-toggle" aria-label="Toggle colour theme">&#9680;</button>
       </div>
     </nav>
-    <main id="main" class="main" tabindex="-1"></main>
+    <div class="content">
+      <div id="notice" class="notice" role="note" hidden></div>
+      <main id="main" class="main" tabindex="-1"></main>
+    </div>
   </div>
   <div id="toast" class="toast" role="status" aria-live="polite"></div>
 </body>

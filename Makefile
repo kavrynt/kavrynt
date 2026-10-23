@@ -18,6 +18,7 @@ help:
 	@printf "  make spec-new NAME=x  Start a new spec from the template\n"
 	@printf "  make fmt-check      Check Go formatting\n"
 	@printf "  make test           Run unit tests with the race detector\n"
+	@printf "  make console-test   Run the web console unit tests (Node 22+)\n"
 	@printf "  make vet            Run go vet\n"
 	@printf "  make lint           Run staticcheck\n"
 	@printf "  make sast           Run gosec\n"
@@ -36,7 +37,7 @@ help:
 	@printf "  make demo-down      Delete the Kind demo cluster\n"
 
 .PHONY: qa
-qa: release-contract spec-check fmt-check test vet lint sast vulncheck helm-lint helm-template helm-unittest
+qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck helm-lint helm-template helm-unittest
 
 .PHONY: release-contract
 release-contract:
@@ -59,6 +60,12 @@ fmt-check:
 test:
 	go test -race ./...
 	cd examples/demo/mcp-server && go test -race ./...
+
+# The console's pure modules are tested with Node's built-in test runner; no
+# npm packages are installed.
+.PHONY: console-test
+console-test:
+	node --test 'test/console/*.test.mjs'
 
 .PHONY: vet
 vet:

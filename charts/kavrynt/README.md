@@ -80,9 +80,15 @@ kubectl delete crd mcpservers.kavrynt.io
 
 ## Security notes
 
-- The Gateway does not authenticate clients yet, and the console has no
-  login. Keep the Gateway Service `ClusterIP` and disable the console with
-  `gateway.console.enabled=false` where it is not needed.
+- The Gateway does not authenticate clients yet: anyone who can reach it can
+  call every routed tool through `/mcp/`. Keep the Gateway Service
+  `ClusterIP`.
+- The console has a single `admin` login. The chart generates its password
+  into the Secret `kavrynt-gateway-console-admin` (kept on uninstall); read it
+  with `kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d`. The login protects the console and
+  `/v1/servers`, `/v1/traffic`, not MCP routes. With `helm template` or GitOps,
+  set `gateway.console.auth.existingSecret`, because a render without cluster
+  access generates a new password each time.
 - The Gateway has read-only access to `MCPServer` resources and no Secret
   access. Containers run as non-root with a read-only root filesystem.
 
@@ -131,6 +137,9 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.config.stripRequestHeaders` | list | `[]` | Extra request headers never forwarded. `Authorization`, `Cookie`, and `Proxy-Authorization` are always removed. |
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.console.enabled` | bool | `true` | Serve the read-only web console at `/ui/` |
+| `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
+| `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
+| `gateway.console.auth.sessionTTL` | string | `12h` | Console session lifetime |
 | `gateway.metrics.scrapeAnnotations` | bool | `true` | Add `prometheus.io/*` pod annotations |
 | `gateway.metrics.serviceMonitor.enabled` | bool | `false` | Create a Prometheus Operator `ServiceMonitor` (requires its CRDs) |
 | `gateway.metrics.serviceMonitor.interval` | string | `30s` | Scrape interval |

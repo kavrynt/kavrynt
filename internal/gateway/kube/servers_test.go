@@ -46,3 +46,22 @@ func TestServersLeavesOutSecretsAndKeepsTools(t *testing.T) {
 		}
 	}
 }
+
+// Verifies SPEC-0004-R03.
+func TestServersIncludeReportedServerInfo(t *testing.T) {
+	reported := server("team-a", "reported", "http", "http://reported:8080/mcp", "True")
+	reported.Status.ServerInfo = &kavryntv1alpha1.MCPServerInfo{Name: "reported-mcp", Version: "0.2.0"}
+	silent := server("team-a", "silent", "http", "http://silent:8080/mcp", "True")
+
+	servers := Servers([]kavryntv1alpha1.MCPServer{reported, silent})
+	encoded, err := json.Marshal(servers)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(string(encoded), `"serverInfo":{"name":"reported-mcp","version":"0.2.0"}`) {
+		t.Fatalf("/v1/servers view lacks the reported serverInfo: %s", encoded)
+	}
+	if strings.Count(string(encoded), "serverInfo") != 1 {
+		t.Fatalf("a server without serverInfo must not carry the field: %s", encoded)
+	}
+}

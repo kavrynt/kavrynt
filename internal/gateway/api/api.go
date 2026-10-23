@@ -54,6 +54,9 @@ type Handler struct {
 	requestTimeout time.Duration
 	// console serves the web console under /ui/; nil disables it.
 	console http.Handler
+	// auth is the console admin login; nil leaves /v1/servers and
+	// /v1/traffic open (SPEC-0005-R03).
+	auth ConsoleAuth
 
 	requests         atomic.Uint64
 	proxied          atomic.Uint64
@@ -117,6 +120,19 @@ func (h *Handler) AllowOrigins(origins ...string) {
 	}
 }
 
+// ConsoleAuth is the console admin login (internal/gateway/auth).
+type ConsoleAuth interface {
+	http.Handler
+	Authorized(*http.Request) bool
+}
+
+// EnableConsoleAuth requires a console session for the endpoints the console
+// reads and serves /v1/session. MCP routes, /v1/routes, health, version, and
+// metrics are unaffected: the login is not MCP client authentication.
+func (h *Handler) EnableConsoleAuth(auth ConsoleAuth) {
+	h.auth = auth
+}
+
 // EnableConsole serves console under /ui/ and redirects / to it. The console
 // receives paths without the /ui prefix.
 func (h *Handler) EnableConsole(console http.Handler) {
@@ -147,9 +163,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/routes":
 		h.listRoutes(w, r)
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/servers":
-		h.listServers(w, r)
+		if h.authorized(w, r) {
+			h.listServers(w, r)
+		}
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/traffic":
-		h.listTraffic(w, r)
+		if h.authorized(w, r) {
+			h.listTraffic(w, r)
+		}
+	case r.URL.Path == "/v1/session":
+		h.session(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):
 		h.proxy(w, r)
 	case h.console != nil && r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/ui"):
@@ -201,6 +223,31 @@ func (h *Handler) listServers(w http.ResponseWriter, _ *http.Request) {
 		servers = []model.Server{}
 	}
 	writeJSON(w, http.StatusOK, map[string][]model.Server{"servers": servers})
+}
+
+// authorized reports whether r may read console data, answering 401 when
+// it may not.
+func (h *Handler) authorized(w http.ResponseWriter, r *http.Request) bool {
+	if h.auth == nil || h.auth.Authorized(r) {
+		return true
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeError(w, http.StatusUnauthorized, errors.New("login required"))
+	return false
+}
+
+// session serves /v1/session. Without console login it only reports that
+// login is off.
+func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
+	if h.auth != nil {
+		h.auth.ServeHTTP(w, r)
+		return
+	}
+	if r.Method != http.MethodGet {
+		writeError(w, http.StatusNotFound, errors.New("console login is disabled"))
+		return
+	}
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false})
 }
 
 func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {

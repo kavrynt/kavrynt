@@ -1,5 +1,6 @@
-// Kavrynt Console: read-only views of the Gateway's JSON endpoints and a
-// playground that calls MCP tools through the Gateway's own /mcp/ routes.
+// Kavrynt Console: read-only views of the Gateway's JSON endpoints
+// (/v1/servers, /v1/traffic, /readyz, /version) and a playground that calls
+// MCP tools through the Gateway's own /mcp/ routes.
 //
 // Everything shown here that comes from MCP servers (tool names,
 // descriptions, schemas, results) is untrusted. It is only ever inserted as
@@ -7,10 +8,19 @@
 "use strict";
 
 (() => {
-  const PROTOCOL_VERSION = "2025-06-18";
+  const { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
+  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
+  const {
+    SCOPE_NOTE, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
+    filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
+  } = Kavrynt.stats;
+  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage } = Kavrynt.state;
+  const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
+
   const SERVER_POLL_MS = 5000;
   const TRAFFIC_POLL_MS = 2000;
-  const MAX_RAW_BYTES = 2 << 20;
+  const TRAFFIC_PAGE = 100;
+  const THEME_KEY = "kavrynt-theme";
 
   const state = {
     servers: [],
@@ -23,167 +33,242 @@
     trafficHideBefore: 0,
     version: null,
     ready: null,
-    filters: { search: "", namespace: "", status: "" },
-    trafficFilters: { route: "", outcome: "" },
+    routes: null,
+    // Console admin login (SPEC-0005). checked is false until GET
+    // /v1/session answers; nothing is drawn or fetched before that.
+    auth: { checked: false, enabled: false, signedIn: false, username: "", expiresAt: "" },
   };
-
-  // Playground state survives page switches.
-  const pg = {
-    route: "",
-    session: null,
-    tools: [],
-    selected: null,
-    mode: "form",
-    busy: false,
-    last: null,
-    history: [],
-    log: [],
-  };
-
-  // ---------------------------------------------------------------- DOM
-
-  function h(tag, props, ...children) {
-    const el = document.createElement(tag);
-    if (props) {
-      for (const [key, value] of Object.entries(props)) {
-        if (value === undefined || value === null || value === false) continue;
-        if (key === "class") el.className = value;
-        else if (key === "text") el.textContent = value;
-        // The CSP forbids style attributes; CSSOM assignments are allowed.
-        else if (key === "style") el.style.cssText = value;
-        else if (key.startsWith("on") && typeof value === "function") el.addEventListener(key.slice(2), value);
-        else if (key === "value") el.value = value;
-        else if (key === "checked") el.checked = Boolean(value);
-        else el.setAttribute(key, value === true ? "" : String(value));
-      }
-    }
-    append(el, children);
-    return el;
-  }
-
-  function append(el, children) {
-    for (const child of children.flat(Infinity)) {
-      if (child === null || child === undefined || child === false) continue;
-      el.append(child instanceof Node ? child : document.createTextNode(String(child)));
-    }
-    return el;
-  }
-
-  // put appends children like append above: arrays are flattened and null,
-  // undefined, and false skipped. Native Element.append would print them.
-  function put(el, ...children) {
-    return append(el, children);
-  }
-
-  function clear(el) {
-    while (el.firstChild) el.removeChild(el.firstChild);
-    return el;
-  }
 
   const main = () => document.getElementById("main");
 
-  function toast(message) {
-    const el = document.getElementById("toast");
-    el.textContent = message;
-    el.classList.add("show");
-    clearTimeout(toast.timer);
-    toast.timer = setTimeout(() => el.classList.remove("show"), 1800);
-  }
-
-  async function copy(text) {
-    try {
-      await navigator.clipboard.writeText(text);
-    } catch {
-      const area = h("textarea", { style: "position:fixed;opacity:0" });
-      area.value = text;
-      document.body.append(area);
-      area.select();
-      try { document.execCommand("copy"); } catch { /* ignore */ }
-      area.remove();
-    }
-    toast("Copied to clipboard");
-  }
-
-  function copyRow(text) {
-    return h("div", { class: "copy-row" },
-      h("code", { text }),
-      h("button", { class: "btn small", type: "button", onclick: () => copy(text) }, "Copy"));
-  }
-
-  function badge(text, cls) {
-    return h("span", { class: "badge" + (cls ? " " + cls : "") }, text);
-  }
-
-  function codeBlock(text) {
-    return h("pre", { class: "code" }, text);
-  }
-
-  function emptyState(title, body, code) {
-    return h("div", { class: "empty" }, h("h3", { text: title }), body ? h("p", { text: body }) : null, code ? codeBlock(code) : null);
-  }
-
-  // ---------------------------------------------------------------- format
-
-  function pretty(value) {
-    try { return JSON.stringify(value, null, 2); } catch { return String(value); }
-  }
-
-  function fmtBytes(n) {
-    if (!n) return "0 B";
-    const units = ["B", "KiB", "MiB", "GiB"];
-    let i = 0;
-    while (n >= 1024 && i < units.length - 1) { n /= 1024; i++; }
-    return (i === 0 ? n : n.toFixed(1)) + " " + units[i];
-  }
-
-  function fmtMs(ms) {
-    if (ms === null || ms === undefined || Number.isNaN(ms)) return "–";
-    if (ms < 1) return ms.toFixed(2) + " ms";
-    if (ms < 1000) return Math.round(ms) + " ms";
-    return (ms / 1000).toFixed(2) + " s";
-  }
-
-  function ago(iso) {
-    const t = Date.parse(iso);
-    if (!t || t < 0) return "–";
-    const s = Math.max(0, Math.round((Date.now() - t) / 1000));
-    if (s < 60) return s + "s ago";
-    if (s < 3600) return Math.floor(s / 60) + "m ago";
-    if (s < 86400) return Math.floor(s / 3600) + "h ago";
-    return Math.floor(s / 86400) + "d ago";
-  }
-
-  function clock(iso) {
-    const d = new Date(iso);
-    return isNaN(d) ? "–" : d.toLocaleTimeString([], { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
-  }
-
-  function percentile(values, p) {
-    if (!values.length) return null;
-    const sorted = [...values].sort((a, b) => a - b);
-    return sorted[Math.min(sorted.length - 1, Math.floor(p * sorted.length))];
+  function gatewayURL(route) {
+    return location.origin + "/mcp/" + route;
   }
 
   // ---------------------------------------------------------------- data
 
   async function getJSON(path) {
     const res = await fetch(path, { headers: { Accept: "application/json" }, cache: "no-store" });
+    if (res.status === 401 && state.auth.enabled) {
+      signedOut("Your session ended. Sign in again.");
+      throw new Error("login required");
+    }
     if (!res.ok) throw new Error(path + " returned HTTP " + res.status);
     return res.json();
   }
 
-  function condition(server, type) {
-    return (server.conditions || []).find((c) => c.type === type) || null;
+  // needsLogin is true while the console must show only the login form.
+  function needsLogin() {
+    return !state.auth.checked || (state.auth.enabled && !state.auth.signedIn);
   }
 
-  function serverState(server) {
-    if (server.routed) return { cls: "ok", label: "Routed", detail: "The Gateway routes this server." };
-    const ready = condition(server, "Ready");
-    if (!ready) return { cls: "warn", label: "Pending", detail: "The Operator has not reported this server yet." };
-    if (ready.status === "True") return { cls: "warn", label: "Syncing", detail: "Ready, waiting for the Gateway route." };
-    const cls = ready.reason === "InvalidSpec" ? "bad" : "warn";
-    const labels = { InvalidSpec: "Invalid spec", UnsupportedTransport: "Not proxied (" + server.transport + ")", NamespaceNotWatched: "Namespace not watched" };
-    return { cls, label: labels[ready.reason] || ready.reason || "Not ready", detail: ready.message };
+  async function refreshServers() {
+    if (needsLogin()) return;
+    try {
+      const data = await getJSON("/v1/servers");
+      state.servers = data.servers || [];
+      state.serversError = null;
+    } catch (err) {
+      state.serversError = err.message;
+    }
+    state.serversLoaded = true;
+    update("servers");
+  }
+
+  async function refreshTraffic() {
+    if (state.trafficPaused || needsLogin()) return;
+    try {
+      const data = await getJSON("/v1/traffic");
+      const records = data.requests || [];
+      state.freshIds = new Set(records.filter((r) => r.id > state.seenTrafficId && state.seenTrafficId > 0).map((r) => r.id));
+      if (records.length) state.seenTrafficId = Math.max(state.seenTrafficId, records[0].id);
+      state.traffic = records;
+    } catch { /* the status indicator reports Gateway problems */ }
+    update("traffic");
+  }
+
+  async function refreshStatus() {
+    const el = document.getElementById("gw-status");
+    try {
+      const res = await fetch("/readyz", { cache: "no-store" });
+      const body = await res.json();
+      state.ready = res.ok;
+      state.routes = body.routes;
+      put(clear(el), h("span", { class: "dot " + (res.ok ? "ok" : "bad") }),
+        h("span", { text: res.ok ? "Gateway ready · " + body.routes + (body.routes === 1 ? " route" : " routes") : "Gateway not ready" }));
+    } catch {
+      state.ready = false;
+      put(clear(el), h("span", { class: "dot bad" }), h("span", { text: "Gateway unreachable" }));
+    }
+    update("status");
+  }
+
+  // ---------------------------------------------------------------- login
+
+  async function checkSession() {
+    let next = null;
+    try {
+      const res = await fetch("/v1/session", { headers: { Accept: "application/json" }, cache: "no-store" });
+      next = sessionState(res.status, await res.json().catch(() => null));
+    } catch { /* treated as login required below */ }
+    // Fail closed: an unexpected answer shows the login form, not data.
+    Object.assign(state.auth, next || { enabled: true, signedIn: false, username: "", expiresAt: "" }, { checked: true });
+    drawUser();
+    initNotice();
+  }
+
+  // signedOut forgets everything the session showed, so no server, tool,
+  // traffic, or Playground data stays on screen or in memory (SPEC-0005-R14).
+  function signedOut(message) {
+    const wasSignedIn = state.auth.signedIn;
+    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
+    Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set() });
+    resetPlayground();
+    drawUser();
+    render();
+    if (wasSignedIn && message) toast(message);
+  }
+
+  async function signedIn() {
+    await checkSession();
+    render();
+    refreshServers();
+    refreshTraffic();
+  }
+
+  async function logout() {
+    try { await fetch("/v1/session", { method: "DELETE", cache: "no-store" }); } catch { /* the cookie also expires */ }
+    signedOut("Signed out.");
+  }
+
+  // drawUser shows the signed-in user and Log out (SPEC-0005-R15).
+  function drawUser() {
+    const el = document.getElementById("user");
+    clear(el);
+    el.hidden = !(state.auth.enabled && state.auth.signedIn);
+    if (el.hidden) return;
+    put(el, h("span", { class: "user-name", text: state.auth.username, title: state.auth.expiresAt ? "Session ends " + new Date(state.auth.expiresAt).toLocaleString() : undefined }),
+      h("button", { type: "button", class: "linkish", onclick: logout }, "Log out"));
+  }
+
+  function renderLogin(root) {
+    const user = h("input", { type: "text", id: "login-user", name: "username", value: "admin", autocomplete: "username", required: true });
+    const password = h("input", { type: "password", id: "login-password", name: "password", autocomplete: "current-password", required: true });
+    const error = h("p", { class: "error-text", role: "alert" });
+    const submit = h("button", { type: "submit", class: "btn primary" }, "Sign in");
+    const form = h("form", {
+      class: "login",
+      onsubmit: async (e) => {
+        e.preventDefault();
+        error.textContent = "";
+        submit.disabled = true;
+        let res = null;
+        try {
+          res = await fetch("/v1/session", {
+            method: "POST", cache: "no-store",
+            headers: { "Content-Type": "application/json", Accept: "application/json" },
+            body: JSON.stringify({ username: user.value, password: password.value }),
+          });
+        } catch { /* reported below */ }
+        // The password lives only in the form field (SPEC-0005-R15).
+        password.value = "";
+        submit.disabled = false;
+        if (res && res.status === 204) {
+          signedIn();
+          return;
+        }
+        error.textContent = loginMessage(res ? res.status : 0, res && res.headers.get("Retry-After"));
+        password.focus();
+      },
+    },
+    h("h1", { text: "Sign in" }),
+    h("p", { class: "muted", text: "Sign in as admin to see MCP servers, tools, and traffic." }),
+    h("div", { class: "field" }, h("label", { for: "login-user", text: "Username" }), user),
+    h("div", { class: "field" }, h("label", { for: "login-password", text: "Password" }), password),
+    error,
+    submit,
+    h("details", { class: "login-help" },
+      h("summary", { text: "Where is the password?" }),
+      h("p", { text: "Helm generates it into a Secret when it installs Kavrynt. Read it with:" }),
+      codeBlock("kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin \\\n  -o jsonpath='{.data.password}' | base64 -d"),
+      h("p", { class: "muted small", text: "Use your release namespace and name if they differ, or the Secret set in gateway.console.auth.existingSecret." })));
+    put(root, h("div", { class: "login-wrap" }, form));
+    setTimeout(() => password.focus(), 0);
+  }
+
+  async function loadVersion() {
+    try {
+      state.version = await getJSON("/version");
+      document.getElementById("gw-version").textContent = "v" + (state.version.version || "dev");
+    } catch { /* optional */ }
+    update("status");
+  }
+
+  // ---------------------------------------------------------------- router
+
+  let current = { page: "", update: null };
+
+  const views = {
+    overview: (root) => renderOverview(root),
+    servers: (root, rest, params) => (rest[0] ? renderServer(root, rest[0], rest[1] || "overview") : renderServers(root, params)),
+    tools: (root, rest, params) => renderTools(root, params),
+    playground: (root, rest) => renderPlayground(root, rest[0], rest[1], {
+      state, refreshTraffic, rerender: render, isCurrent: () => parseHash(location.hash).page === "playground",
+    }),
+    traffic: (root, rest, params) => renderTraffic(root, params),
+  };
+
+  function render() {
+    if (needsLogin()) {
+      document.querySelectorAll("[data-nav]").forEach((a) => { a.classList.remove("active"); a.removeAttribute("aria-current"); });
+      const root = clear(main());
+      current = { page: "login", update: null };
+      if (state.auth.checked) renderLogin(root);
+      else put(root, emptyState("Loading…"));
+      return;
+    }
+    const { page: requested, rest, params } = parseHash(location.hash);
+    const page = views[requested] ? requested : "overview";
+    document.querySelectorAll("[data-nav]").forEach((a) => {
+      const active = a.dataset.nav === page;
+      a.classList.toggle("active", active);
+      if (active) a.setAttribute("aria-current", "page");
+      else a.removeAttribute("aria-current");
+    });
+    const root = clear(main());
+    current = { page, update: null };
+    current.update = views[page](root, rest, params) || null;
+    root.focus({ preventScroll: true });
+  }
+
+  // update redraws the current view after a poll. Views rebuild their content,
+  // so focus moves back to the control with the same link, label, or id.
+  function update(what) {
+    if (!current.update) return;
+    const el = document.activeElement;
+    const key = el && el !== document.body && focusKey(el);
+    current.update(what);
+    if (key && !el.isConnected) {
+      const match = [...main().querySelectorAll("a, button, select, input, textarea, [tabindex]")].find((c) => focusKey(c) === key);
+      if (match) match.focus({ preventScroll: true });
+    }
+  }
+
+  function focusKey(el) {
+    return el.getAttribute("href") || el.getAttribute("aria-label") || el.id || null;
+  }
+
+  // setParams records a view's filters in the URL without a new history entry
+  // or a redraw, so reloading or sharing the URL restores the view.
+  function setParams(params) {
+    const { page, rest } = parseHash(location.hash);
+    history.replaceState(null, "", formatHash(page || "overview", rest, params));
+  }
+
+  // ---------------------------------------------------------------- shared
+
+  function healthBadge(health) {
+    return badge(health.label, health.cls, health.detail || undefined);
   }
 
   function toolsBadge(server) {
@@ -193,110 +278,165 @@
     return null;
   }
 
-  function gatewayURL(route) {
-    return location.origin + "/mcp/" + route;
+  function rateCell(rate) {
+    const pct = rate === null ? 0 : rate * 100;
+    return h("td", { class: "rate" },
+      h("span", { class: "num-label", text: fmtPct(rate) }),
+      h("span", { class: "bar" + (pct > 0 ? " bad" : ""), "aria-hidden": "true" }, h("span", { style: "width:" + Math.max(pct, pct > 0 ? 3 : 0) + "%" })));
   }
 
-  async function refreshServers() {
-    try {
-      const data = await getJSON("/v1/servers");
-      state.servers = data.servers || [];
-      state.serversError = null;
-    } catch (err) {
-      state.serversError = err.message;
+  function table(headers, rows, empty) {
+    return h("div", { class: "table-wrap" }, h("table", {},
+      h("thead", {}, h("tr", {}, headers.map((c) => h("th", { scope: "col", class: c.num ? "num" : "", text: c.label || c })))),
+      h("tbody", {}, rows.length ? rows : h("tr", {}, h("td", { colspan: String(headers.length), class: "muted", text: empty || "Nothing to show." })))));
+  }
+
+  // toolSummaryPanel is the per-tool table of SPEC-0002-R07.
+  function toolSummaryPanel(records, showRoute) {
+    const rows = toolSummary(records).map((row) => h("tr", {},
+      h("td", { class: "mono" }, row.isTool ? row.name : h("span", { class: "muted", text: row.name })),
+      showRoute ? h("td", { class: "mono", text: row.route }) : null,
+      h("td", { class: "num", text: String(row.calls) }),
+      h("td", { class: "num", text: String(row.errors) }),
+      rateCell(row.rate),
+      h("td", { class: "num", text: fmtMs(row.p50) }),
+      h("td", { class: "num", text: fmtMs(row.p95) }),
+      h("td", { text: ago(row.last), title: row.last })));
+    const headers = ["Tool or method", showRoute ? "Route" : null, { label: "Calls", num: true }, { label: "Errors", num: true }, "Error rate",
+      { label: "p50", num: true }, { label: "p95", num: true }, "Last call"].filter(Boolean);
+    return panel("Per tool", h("div", { class: "body flush" }, table(headers, rows, "No requests match.")),
+      h("span", { class: "muted small", text: "Methods without a tool, such as tools/list, are shown in grey." }));
+  }
+
+  // trafficTable lists requests, at most limit of them (SPEC-0002-R20).
+  function trafficTable(records, opts) {
+    if (!records.length) {
+      return panel("Requests", emptyState("No traffic yet", opts.empty || "Call a tool from the Playground or point your agent at a Gateway route. Requests appear here within two seconds."));
     }
-    state.serversLoaded = true;
-    if (current.update) current.update("servers");
+    const shown = records.slice(0, opts.limit);
+    const rows = shown.map((r) => h("tr", { class: state.freshIds.has(r.id) ? "fresh" : "" },
+      h("td", { class: "mono", text: clock(r.time), title: r.time }),
+      opts.showRoute ? h("td", { class: "mono", text: r.route }) : null,
+      h("td", { class: "mono", text: r.method }),
+      h("td", { class: "mono", text: r.tool === "none" ? "–" : r.tool }),
+      h("td", {}, badge(r.outcome, outcomeClass(r.outcome), OUTCOMES[r.outcome] ? OUTCOMES[r.outcome].definition : undefined)),
+      h("td", { class: "num", text: String(r.status || "–") }),
+      h("td", { class: "num", text: fmtMs(r.durationMs) }),
+      h("td", { class: "num", text: fmtBytes(r.bytesIn) }),
+      h("td", { class: "num", text: fmtBytes(r.bytesOut) })));
+    const headers = ["Time", opts.showRoute ? "Route" : null, "Method", "Tool", "Outcome", { label: "HTTP", num: true }, { label: "Latency", num: true },
+      { label: "In", num: true }, { label: "Out", num: true }].filter(Boolean);
+    const more = records.length > shown.length ? h("div", { class: "more" },
+      h("span", { class: "muted", text: "Showing " + shown.length + " of " + records.length + " requests." }),
+      h("button", { type: "button", class: "btn small", onclick: () => opts.onMore(opts.limit + TRAFFIC_PAGE) }, "Show " + Math.min(TRAFFIC_PAGE, records.length - shown.length) + " more"),
+      h("button", { type: "button", class: "btn small", onclick: () => opts.onMore(records.length) }, "Show all")) : null;
+    return panel("Requests", h("div", { class: "body flush" }, table(headers, rows), more),
+      h("span", { class: "muted small", text: records.length + (records.length === 1 ? " request" : " requests") }));
   }
 
-  async function refreshTraffic() {
-    if (state.trafficPaused) return;
-    try {
-      const data = await getJSON("/v1/traffic");
-      const records = data.requests || [];
-      state.freshIds = new Set(records.filter((r) => r.id > state.seenTrafficId && state.seenTrafficId > 0).map((r) => r.id));
-      if (records.length) state.seenTrafficId = Math.max(state.seenTrafficId, records[0].id);
-      state.traffic = records;
-    } catch { /* the status indicator reports Gateway problems */ }
-    if (current.update) current.update("traffic");
+  function outcomeHelp() {
+    return h("details", { class: "outcomes" },
+      h("summary", { text: "What do the outcomes mean?" }),
+      h("dl", { class: "kv" }, Object.entries(OUTCOMES).map(([name, o]) => [
+        h("dt", {}, badge(name, o.cls)), h("dd", { text: o.definition })])));
   }
 
-  async function refreshStatus() {
-    const el = document.getElementById("gw-status");
-    try {
-      const res = await fetch("/readyz", { cache: "no-store" });
-      const body = await res.json();
-      state.ready = res.ok;
-      put(clear(el), h("span", { class: "dot " + (res.ok ? "ok" : "bad") }),
-        h("span", { text: res.ok ? "Gateway ready · " + body.routes + (body.routes === 1 ? " route" : " routes") : "Gateway not ready" }));
-    } catch {
-      state.ready = false;
-      put(clear(el), h("span", { class: "dot bad" }), h("span", { text: "Gateway unreachable" }));
+  function select(label, value, options, onchange) {
+    const el = h("select", { "aria-label": label, onchange: (e) => onchange(e.target.value) },
+      options.map((o) => h("option", { value: o.value }, o.label)));
+    el.value = options.some((o) => o.value === value) ? value : "";
+    return el;
+  }
+
+  // ---------------------------------------------------------------- overview
+
+  function renderOverview(root) {
+    const head = h("div", { class: "page-head" },
+      h("div", {}, h("h1", { text: "Overview" }), h("p", { text: "What needs attention across the MCP servers this Gateway watches." })));
+    const tiles = h("div", { class: "tiles" });
+    const body = h("div");
+    put(root, head, tiles, body);
+
+    function draw() {
+      const o = overview(state.servers, state.traffic);
+      const gateway = state.ready === null ? "…" : state.ready ? "Ready" : "Not ready";
+      put(clear(tiles),
+        tile("Gateway", gateway, "version " + ((state.version && state.version.version) || "unknown"), state.ready === false ? "bad" : ""),
+        tile("Servers", o.servers, o.namespaces + (o.namespaces === 1 ? " namespace" : " namespaces")),
+        tile("Routed", o.routed + " of " + o.servers, o.servers - o.routed + " not routed"),
+        tile("Tools", o.tools, "discovered by the Operator"),
+        tile("Requests", o.requests, o.requests ? fmtPct(o.errorRate) + " errors · p95 " + fmtMs(o.p95) : "no traffic yet"));
+
+      clear(body);
+      if (state.serversError) {
+        put(body, emptyState("Cannot load servers", state.serversError));
+        return;
+      }
+      const items = attention(state.servers, state.traffic);
+      const attentionBody = items.length ? h("ul", { class: "attention" }, items.map(({ server, health }) => h("li", {},
+        h("a", { href: formatHash("servers", [server.route]), class: "attention-link" },
+          h("span", { class: "dot " + (health.cls === "bad" ? "bad" : "warn") }),
+          h("span", { class: "mono", text: server.route }),
+          badge(health.label, health.cls)),
+        h("p", { class: "muted", text: health.detail || "" })))) :
+        h("p", { class: "body muted", text: state.serversLoaded ? "Every server is routed, its tools were discovered, and its recent requests succeed." : "Loading…" });
+
+      const failing = failingTools(state.traffic);
+      const failingRows = failing.map((row) => h("tr", {},
+        h("td", { class: "mono", text: row.name }),
+        h("td", {}, h("a", { class: "mono", href: formatHash("traffic", [], { route: row.route, tool: row.name }), text: row.route })),
+        h("td", { class: "num", text: row.errors + " of " + row.calls }),
+        rateCell(row.rate),
+        h("td", { class: "num", text: fmtMs(row.p95) })));
+
+      put(body,
+        panel("Needs attention", attentionBody, items.length ? badge(String(items.length), "warn") : badge("none", "ok")),
+        h("section", { class: "panel" },
+          h("header", {}, h("h2", { text: "Failing tools" }), h("a", { href: formatHash("traffic", [], { outcome: "errors" }), text: "All errors →" })),
+          scopeNote(SCOPE_NOTE),
+          h("div", { class: "body flush" }, failing.length ?
+            table(["Tool", "Route", { label: "Failed", num: true }, "Error rate", { label: "p95", num: true }], failingRows) :
+            h("p", { class: "body muted", text: state.traffic.length ? "No tool call failed in the recent requests." : "No traffic yet." }))));
     }
-  }
 
-  async function loadVersion() {
-    try {
-      state.version = await getJSON("/version");
-      document.getElementById("gw-version").textContent = "v" + (state.version.version || "dev");
-    } catch { /* optional */ }
-  }
-
-  // ---------------------------------------------------------------- router
-
-  let current = { name: "", update: null };
-
-  function route() {
-    const hash = location.hash.replace(/^#\/?/, "");
-    const [page, ...rest] = hash.split("/").map(decodeURIComponent);
-    return { page: page || "servers", rest };
-  }
-
-  function render() {
-    const { page, rest } = route();
-    document.querySelectorAll("[data-nav]").forEach((a) => a.classList.toggle("active", a.dataset.nav === page));
-    const root = clear(main());
-    current = { name: page, update: null };
-    if (page === "servers" && rest[0]) renderServer(root, rest[0], rest[1] || "overview");
-    else if (page === "playground") renderPlayground(root, rest[0], rest[1]);
-    else if (page === "traffic") renderTraffic(root);
-    else renderServers(root);
-    root.focus({ preventScroll: true });
+    draw();
+    return draw;
   }
 
   // ---------------------------------------------------------------- servers
 
-  function renderServers(root) {
+  function renderServers(root, params) {
+    const filters = { q: params.q || "", ns: params.ns || "", state: params.state || "" };
     const tiles = h("div", { class: "tiles" });
     const list = h("div");
-    const nsSelect = h("select", { "aria-label": "Namespace", onchange: (e) => { state.filters.namespace = e.target.value; draw(); } });
+    const nsSelect = h("select", { "aria-label": "Namespace", onchange: (e) => { filters.ns = e.target.value; changed(); } });
     const search = h("input", {
-      type: "search", placeholder: "Search servers or tools", "aria-label": "Search", value: state.filters.search,
-      oninput: (e) => { state.filters.search = e.target.value; draw(); },
+      type: "search", placeholder: "Search servers or tools", "aria-label": "Search servers or tools", value: filters.q,
+      oninput: (e) => { filters.q = e.target.value; changed(); },
     });
-    const statusSelect = h("select", { "aria-label": "Status", onchange: (e) => { state.filters.status = e.target.value; draw(); } },
-      h("option", { value: "" }, "All statuses"),
-      h("option", { value: "routed" }, "Routed"),
-      h("option", { value: "not-routed" }, "Not routed"));
-    statusSelect.value = state.filters.status;
+    const stateSelect = select("State", filters.state, [
+      { value: "", label: "All states" }, { value: "attention", label: "Needs attention" },
+      { value: "routed", label: "Routed" }, { value: "not-routed", label: "Not routed" }], (v) => { filters.state = v; changed(); });
 
     put(root,
       h("div", { class: "page-head" },
-        h("div", {}, h("h1", { text: "MCP servers" }), h("p", { text: "Every MCPServer the Gateway watches, its readiness, and the tools the Operator discovered." })),
-        h("div", { class: "toolbar" }, search, nsSelect, statusSelect)),
+        h("div", {}, h("h1", { text: "MCP servers" }), h("p", { text: "Every MCPServer the Gateway watches, its health, and the tools the Operator discovered." })),
+        h("div", { class: "toolbar" }, search, nsSelect, stateSelect)),
       tiles, list);
 
+    function changed() {
+      setParams(filters);
+      draw();
+    }
+
     function drawTiles() {
-      const servers = state.servers;
-      const namespaces = new Set(servers.map((s) => s.namespace)).size;
-      const routed = servers.filter((s) => s.routed).length;
-      const tools = servers.reduce((n, s) => n + s.tools.length, 0);
-      const errors = state.traffic.filter((r) => r.outcome !== "ok").length;
+      const o = overview(state.servers, state.traffic);
+      const needing = attention(state.servers, state.traffic).length;
       put(clear(tiles),
-        tile("Servers", servers.length, namespaces + (namespaces === 1 ? " namespace" : " namespaces")),
-        tile("Routed", routed, servers.length - routed + " not routed"),
-        tile("Tools", tools, "discovered by the Operator"),
-        tile("Recent requests", state.traffic.length, state.traffic.length ? Math.round((errors / state.traffic.length) * 100) + "% errors" : "no traffic yet"));
+        tile("Servers", o.servers, o.namespaces + (o.namespaces === 1 ? " namespace" : " namespaces")),
+        tile("Needs attention", needing, needing ? "see the cards marked below" : "all healthy", needing ? "warn" : ""),
+        tile("Tools", o.tools, "discovered by the Operator"),
+        tile("Recent requests", o.requests, o.requests ? fmtPct(o.errorRate) + " errors" : "no traffic yet"));
     }
 
     function draw() {
@@ -304,7 +444,7 @@
       const servers = state.servers;
       const namespaces = [...new Set(servers.map((s) => s.namespace))].sort();
       put(clear(nsSelect), h("option", { value: "" }, "All namespaces"), namespaces.map((ns) => h("option", { value: ns }, ns)));
-      nsSelect.value = namespaces.includes(state.filters.namespace) ? state.filters.namespace : "";
+      nsSelect.value = namespaces.includes(filters.ns) ? filters.ns : "";
 
       clear(list);
       if (state.serversError) {
@@ -320,15 +460,7 @@
           "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata:\n  name: my-mcp-server\n  namespace: default\nspec:\n  version: 1.0.0\n  transport: http\n  endpoint: http://my-mcp-server.default.svc.cluster.local:8080/mcp\n\n# kubectl apply -f my-mcp-server.yaml\n# or: kavryctl register my-mcp-server.yaml"));
         return;
       }
-      const term = state.filters.search.trim().toLowerCase();
-      const shown = servers.filter((s) => {
-        if (state.filters.namespace && s.namespace !== state.filters.namespace) return false;
-        if (state.filters.status === "routed" && !s.routed) return false;
-        if (state.filters.status === "not-routed" && s.routed) return false;
-        if (!term) return true;
-        return s.route.toLowerCase().includes(term) || (s.description || "").toLowerCase().includes(term) ||
-          s.tools.some((t) => t.name.toLowerCase().includes(term));
-      });
+      const shown = filterServers(servers, state.traffic, filters);
       if (!shown.length) {
         put(list, emptyState("No servers match the filters"));
         return;
@@ -336,30 +468,36 @@
       put(list, h("div", { class: "grid" }, shown.map(serverCard)));
     }
 
-    current.update = (what) => { if (what === "servers") draw(); else drawTiles(); };
     draw();
+    return draw;
   }
 
-  function tile(label, value, sub) {
-    return h("div", { class: "tile" }, h("div", { class: "label", text: label }), h("div", { class: "value", text: String(value) }), h("div", { class: "sub", text: sub }));
+  // versionCell shows the declared version, the reported one when the
+  // Operator recorded it, and a badge when they differ (SPEC-0004-R04).
+  function versionCell(server) {
+    const v = versionInfo(server);
+    return h("dd", { class: "version", title: "Declared in spec.version" + (v.reported ? "; reported by " + (v.reportedName || "the server") + " in MCP initialize" : "") },
+      v.declared,
+      v.reported && !v.differs ? h("span", { class: "muted", text: " · reported" }) : null,
+      v.differs ? [h("span", { class: "muted", text: " · reports " + v.reported + " " }), badge("version differs", "warn")] : null);
   }
 
   function serverCard(server) {
-    const st = serverState(server);
-    const open = () => { location.hash = "#/servers/" + encodeURIComponent(server.route); };
-    return h("div", {
-      class: "card clickable state-" + st.cls, tabindex: "0", role: "link", "aria-label": server.route,
-      onclick: open, onkeydown: (e) => { if (e.key === "Enter") open(); },
-    },
-    h("div", { class: "card-head" },
-      h("div", {}, h("h3", { text: server.name }), h("div", { class: "ns", text: server.namespace })),
-      badge(st.label, st.cls)),
-    server.description ? h("p", { class: "muted", style: "margin:8px 0 0", text: server.description }) : null,
-    h("dl", {},
-      h("dt", { text: "Transport" }), h("dd", { text: server.transport }),
-      h("dt", { text: "Version" }), h("dd", { text: server.version }),
-      h("dt", { text: "Endpoint" }), h("dd", { text: server.endpoint || "–", title: server.endpoint || "" }),
-      h("dt", { text: "Tools" }), h("dd", {}, toolsBadge(server) || h("span", { class: "muted", text: "–" }))));
+    const health = serverHealth(server, state.traffic);
+    const href = formatHash("servers", [server.route]);
+    const stats = health.stats;
+    return h("a", { class: "card clickable state-" + health.cls, href, "data-route": server.route, "aria-label": server.route + ", " + health.label },
+      h("div", { class: "card-head" },
+        h("div", {}, h("h3", { text: server.name }), h("div", { class: "ns", text: server.namespace })),
+        healthBadge(health)),
+      server.description ? h("p", { class: "muted card-desc", text: server.description }) : null,
+      health.label === "Needs attention" ? h("p", { class: "card-alert " + health.cls, text: health.detail }) : null,
+      h("dl", {},
+        h("dt", { text: "Transport" }), h("dd", { text: server.transport }),
+        h("dt", { text: "Version" }), versionCell(server),
+        h("dt", { text: "Endpoint" }), h("dd", { text: stripQuery(server.endpoint) || "–", title: stripQuery(server.endpoint) }),
+        h("dt", { text: "Tools" }), h("dd", {}, toolsBadge(server) || h("span", { class: "muted", text: "–" })),
+        h("dt", { text: "Traffic" }), h("dd", { text: stats.calls ? stats.calls + " recent · " + fmtPct(stats.rate) + " errors" : "no recent requests" })));
   }
 
   // ---------------------------------------------------------------- server detail
@@ -367,65 +505,72 @@
   function renderServer(root, routeName, tab) {
     const body = h("div");
     put(root, body);
+    let limit = TRAFFIC_PAGE;
 
     function draw() {
       const server = state.servers.find((s) => s.route === routeName);
       clear(body);
       if (!server) {
-        put(body, h("div", { class: "crumbs" }, h("a", { href: "#/servers", text: "Servers" })),
+        put(body, h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" })),
           emptyState(state.serversLoaded ? "Server not found" : "Loading…", state.serversLoaded ? "No MCPServer is named " + routeName + "." : ""));
         return;
       }
-      const st = serverState(server);
+      const health = serverHealth(server, state.traffic);
       put(body,
-        h("div", { class: "crumbs" }, h("a", { href: "#/servers", text: "Servers" }), " / ", server.namespace, " / ", server.name),
+        h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" }), " / ", server.namespace, " / ", server.name),
         h("div", { class: "page-head" },
           h("div", {}, h("h1", { text: server.name }),
-            h("div", { class: "badges", style: "margin-top:6px" }, badge(st.label, st.cls), toolsBadge(server), badge(server.transport), badge("v" + server.version))),
+            h("div", { class: "badges", style: "margin-top:6px" }, healthBadge(health), toolsBadge(server), badge(server.transport), badge("v" + server.version, "", "spec.version declared in the MCPServer"),
+            versionInfo(server).differs ? badge("reports v" + versionInfo(server).reported, "warn", "The server reported a different version in MCP initialize") : null)),
           h("div", { class: "toolbar" },
-            server.routed ? h("a", { class: "btn primary", href: "#/playground/" + encodeURIComponent(server.route) }, "Open in playground") : null)),
+            h("button", { type: "button", class: "btn", onclick: () => copy(diagnostics(server, state.traffic, state.version && state.version.version), "Diagnostics copied: metadata only, no tool inputs or results") }, "Copy diagnostics"),
+            server.routed ? h("a", { class: "btn primary", href: formatHash("playground", [server.route]) }, "Open in playground") : null)),
+        health.label === "Needs attention" ? h("div", { class: "callout " + health.cls, role: "note" }, h("strong", { text: "Needs attention. " }), health.detail) : null,
         h("div", { class: "tabs", role: "tablist" },
-          tabButton("overview", "Overview"), tabButton("tools", "Tools (" + server.tools.length + ")"), tabButton("traffic", "Traffic")));
+          tabButton("overview", "Overview"), tabButton("tools", "Tools (" + server.tools.length + ")"), tabButton("traffic", "Traffic (" + health.stats.calls + ")")));
 
       if (tab === "tools") put(body, toolsPanel(server));
-      else if (tab === "traffic") put(body, trafficTable(state.traffic.filter((r) => r.route === server.route), false));
-      else put(body, overview(server, st));
+      else if (tab === "traffic") {
+        const records = state.traffic.filter((r) => r.route === server.route);
+        put(body, scopeNote(SCOPE_NOTE),
+          records.length ? toolSummaryPanel(records, false) : null,
+          trafficTable(records, { showRoute: false, limit, onMore: (n) => { limit = n; draw(); }, empty: "No requests to this route in the recent traffic." }),
+          records.length ? h("p", {}, h("a", { href: formatHash("traffic", [], { route: server.route }), text: "Filter in the Traffic view →" })) : null);
+      } else put(body, serverOverview(server, health));
     }
 
     function tabButton(id, label) {
       return h("button", {
         type: "button", role: "tab", class: tab === id ? "active" : "", "aria-selected": String(tab === id),
-        onclick: () => { location.hash = "#/servers/" + encodeURIComponent(routeName) + "/" + id; },
+        onclick: () => { location.hash = formatHash("servers", [routeName, id]); },
       }, label);
     }
 
-    current.update = (what) => { if (what === "servers" || (what === "traffic" && tab === "traffic")) draw(); };
     draw();
+    return (what) => { if (what === "servers" || (what === "traffic" && tab === "traffic")) draw(); };
   }
 
-  function overview(server, st) {
+  function serverOverview(server, health) {
     const url = gatewayURL(server.route);
-    const conditions = h("table", {},
-      h("thead", {}, h("tr", {}, ["Type", "Status", "Reason", "Message", "Changed"].map((c) => h("th", { text: c })))),
-      h("tbody", {}, server.conditions.length ? server.conditions.map((c) => h("tr", {},
-        h("td", { text: c.type }),
-        h("td", {}, badge(c.status, c.status === "True" ? "ok" : c.status === "False" ? (c.type === "Ready" || c.type === "Accepted" ? "bad" : "warn") : "")),
-        h("td", { text: c.reason }),
-        h("td", { text: c.message }),
-        h("td", { text: ago(c.lastTransitionTime), title: c.lastTransitionTime }))) :
-        h("tr", {}, h("td", { colspan: "5", class: "muted", text: "The Operator has not reported conditions yet." }))));
+    const conditions = table(["Type", "Status", "Reason", "Message", "Changed"], server.conditions.map((c) => h("tr", {},
+      h("td", { text: c.type }),
+      h("td", {}, badge(c.status, c.status === "True" ? "ok" : c.status === "False" ? (c.type === "Ready" || c.type === "Accepted" ? "bad" : "warn") : "")),
+      h("td", { text: c.reason }),
+      h("td", { class: "wrap", text: c.message }),
+      h("td", { text: ago(c.lastTransitionTime), title: c.lastTransitionTime }))), "The Operator has not reported conditions yet.");
 
     const summary = h("dl", { class: "kv" },
       h("dt", { text: "Namespace" }), h("dd", { text: server.namespace }),
       h("dt", { text: "Route" }), h("dd", { class: "mono", text: "/mcp/" + server.route }),
-      h("dt", { text: "Endpoint" }), h("dd", { class: "mono", text: server.endpoint || "–", title: server.endpoint || "" }),
+      h("dt", { text: "Endpoint" }), h("dd", { class: "mono", text: server.endpoint || "–" }),
+      h("dt", { text: "Declared version" }), h("dd", { text: server.version }),
+      h("dt", { text: "Reported" }), h("dd", { text: versionInfo(server).reported ? versionInfo(server).reportedName + " " + versionInfo(server).reported + (versionInfo(server).differs ? " (differs from the declared version)" : "") : "– (recorded after the next successful tool discovery)" }),
       h("dt", { text: "Created" }), h("dd", { text: ago(server.createdAt), title: server.createdAt }),
       server.description ? [h("dt", { text: "Description" }), h("dd", { text: server.description })] : null);
 
     const panels = [
-      h("section", { class: "panel" }, h("header", {}, h("h2", { text: "Summary" }), badge(st.label, st.cls)),
-        h("div", { class: "body stack" }, summary, st.detail ? h("p", { class: "muted", style: "margin:10px 0 0", text: st.detail }) : null)),
-      h("section", { class: "panel" }, h("header", {}, h("h2", { text: "Conditions" })), h("div", { class: "body flush table-wrap" }, conditions)),
+      panel("Summary", h("div", { class: "body stack" }, summary, health.detail && health.label !== "Needs attention" ? h("p", { class: "muted", style: "margin:10px 0 0", text: health.detail }) : null), healthBadge(health)),
+      panel("Conditions", h("div", { class: "body flush" }, conditions)),
     ];
     if (server.routed) panels.push(connectPanel(server, url));
     return h("div", {}, panels);
@@ -453,20 +598,18 @@
     };
     const names = Object.keys(snippets);
     let active = names[0];
-    const tabs = h("div", { class: "tabs", style: "margin-bottom:10px" });
+    const tabs = h("div", { class: "tabs", role: "tablist", style: "margin-bottom:10px" });
     const out = h("div");
     function draw() {
-      put(clear(tabs), names.map((n) => h("button", { type: "button", class: n === active ? "active" : "", onclick: () => { active = n; draw(); } }, n)));
+      put(clear(tabs), names.map((n) => h("button", { type: "button", role: "tab", "aria-selected": String(n === active), class: n === active ? "active" : "", onclick: () => { active = n; draw(); } }, n)));
       put(clear(out), codeBlock(snippets[active]),
         h("div", { style: "margin-top:8px" }, h("button", { class: "btn small", type: "button", onclick: () => copy(snippets[active]) }, "Copy snippet")));
     }
     draw();
-    return h("section", { class: "panel" },
-      h("header", {}, h("h2", { text: "Connect your agent" })),
-      h("div", { class: "body stack" },
-        h("p", { class: "muted", style: "margin:0", text: "Point any MCP client (Streamable HTTP) at this Gateway URL. Calls show up under Live traffic." }),
-        copyRow(url), tabs, out,
-        h("p", { class: "muted", style: "margin:0;font-size:12px", text: "The Gateway does not authenticate callers yet and never forwards Authorization or Cookie headers upstream." })));
+    return panel("Connect your agent", h("div", { class: "body stack" },
+      h("p", { class: "muted", style: "margin:0", text: "Point any MCP client (Streamable HTTP) at this Gateway URL. Calls show up under Traffic." }),
+      copyRow(url), tabs, out,
+      h("p", { class: "muted small", style: "margin:0", text: "The Gateway does not authenticate callers yet and never forwards Authorization or Cookie headers upstream." })));
   }
 
   function toolsPanel(server) {
@@ -477,592 +620,121 @@
     return h("section", { class: "panel" }, h("div", { class: "body flush" }, server.tools.map((tool) => h("div", { class: "tool" },
       h("div", { class: "tool-head" },
         h("span", { class: "tool-name", text: tool.name }),
-        server.routed ? h("a", { class: "btn small", href: "#/playground/" + encodeURIComponent(server.route) + "/" + encodeURIComponent(tool.name) }, "Try it") : null),
+        server.routed ? h("a", { class: "btn small", href: formatHash("playground", [server.route, tool.name]), "aria-label": "Try " + tool.name }, "Try it") : null),
       tool.description ? h("p", { class: "tool-desc", text: tool.description }) : null,
       tool.inputSchema ? h("details", {}, h("summary", { text: "Input schema" }), codeBlock(pretty(tool.inputSchema))) : null))));
   }
 
+  // ---------------------------------------------------------------- tools
+
+  function renderTools(root, params) {
+    const filters = { q: params.q || "" };
+    const search = h("input", {
+      type: "search", placeholder: "Search tools, descriptions, routes", "aria-label": "Search tools", value: filters.q,
+      oninput: (e) => { filters.q = e.target.value; setParams(filters); draw(); },
+    });
+    const count = h("span", { class: "muted small" });
+    const list = h("div", { class: "body flush" });
+    put(root,
+      h("div", { class: "page-head" },
+        h("div", {}, h("h1", { text: "Tools" }), h("p", { text: "Every tool the Operator discovered, across all servers." })),
+        h("div", { class: "toolbar" }, search)),
+      h("section", { class: "panel" }, h("header", {}, h("h2", { text: "Catalog" }), count), list));
+
+    let lastKey = "";
+    function draw() {
+      const entries = searchCatalog(catalog(state.servers), filters.q);
+      const all = catalog(state.servers).length;
+      count.textContent = filters.q ? entries.length + " of " + all + " tools" : all + (all === 1 ? " tool" : " tools");
+      const rows = entries.map((e) => h("tr", {},
+        h("td", { class: "mono", text: e.tool }),
+        h("td", {}, h("a", { class: "mono", href: formatHash("servers", [e.route, "tools"]), text: e.route })),
+        h("td", {}, badge(e.state.label, e.state.cls)),
+        h("td", { class: "wrap muted", text: e.description }),
+        h("td", { class: "actions" }, e.playable ?
+          h("a", { class: "btn small", href: formatHash("playground", [e.route, e.tool]), "aria-label": "Try " + e.tool + " on " + e.route }, "Try ▶") :
+          [h("button", { type: "button", class: "btn small", disabled: true, "aria-describedby": "why-" + e.route + "-" + e.tool }, "Try ▶"),
+            h("div", { class: "hint", id: "why-" + e.route + "-" + e.tool, text: e.reason })])));
+      put(clear(list), state.serversLoaded ?
+        table(["Tool", "Server", "State", "Description", ""], rows, filters.q ? "No tool matches “" + filters.q + "”." : "No tools discovered yet.") :
+        emptyState("Loading…"));
+    }
+
+    draw();
+    return (what) => {
+      if (what !== "servers") return;
+      const key = JSON.stringify(catalog(state.servers).map((e) => [e.tool, e.route, e.routed]));
+      if (key !== lastKey) { lastKey = key; draw(); }
+    };
+  }
+
   // ---------------------------------------------------------------- traffic
 
-  function renderTraffic(root) {
-    const routeSelect = h("select", { "aria-label": "Route", onchange: (e) => { state.trafficFilters.route = e.target.value; draw(); } });
-    const outcomeSelect = h("select", { "aria-label": "Outcome", onchange: (e) => { state.trafficFilters.outcome = e.target.value; draw(); } },
-      h("option", { value: "" }, "All outcomes"), h("option", { value: "ok" }, "OK"), h("option", { value: "errors" }, "Errors only"));
-    outcomeSelect.value = state.trafficFilters.outcome;
+  function renderTraffic(root, params) {
+    const filters = { route: params.route || "", method: params.method || "", tool: params.tool || "", outcome: params.outcome || "" };
+    let limit = TRAFFIC_PAGE;
+    let toolbarKey = "";
+    const toolbar = h("div", { class: "toolbar filters" });
     const pause = h("button", { type: "button", class: "btn", onclick: () => { state.trafficPaused = !state.trafficPaused; draw(); } });
     const clearBtn = h("button", { type: "button", class: "btn", onclick: () => { state.trafficHideBefore = state.seenTrafficId; draw(); } }, "Clear view");
     const summary = h("div");
-    const table = h("div");
+    const tableBox = h("div");
+    const filterNote = h("div");
 
     put(root,
       h("div", { class: "page-head" },
-        h("div", {}, h("h1", { text: "Live traffic" }),
-          h("p", { text: "MCP calls proxied by this Gateway replica, newest first. Metadata only: arguments and results are never recorded." })),
-        h("div", { class: "toolbar" }, routeSelect, outcomeSelect, pause, clearBtn)),
-      summary, table);
+        h("div", {}, h("h1", { text: "Traffic" }),
+          h("p", { text: "MCP calls proxied by the Gateway, newest first. Metadata only: arguments and results are never recorded." })),
+        h("div", { class: "toolbar" }, pause, clearBtn)),
+      scopeNote(SCOPE_NOTE),
+      toolbar, filterNote, outcomeHelp(), summary, tableBox);
+
+    function setFilter(key, value) {
+      filters[key] = value;
+      limit = TRAFFIC_PAGE;
+      setParams(filters);
+      draw();
+    }
 
     function draw() {
       pause.textContent = state.trafficPaused ? "▶ Resume" : "❚❚ Pause";
-      const routes = [...new Set(state.traffic.map((r) => r.route).concat(state.servers.filter((s) => s.routed).map((s) => s.route)))].sort();
-      put(clear(routeSelect), h("option", { value: "" }, "All routes"), routes.map((r) => h("option", { value: r }, r)));
-      routeSelect.value = routes.includes(state.trafficFilters.route) ? state.trafficFilters.route : "";
+      pause.setAttribute("aria-pressed", String(state.trafficPaused));
+      const visible = state.traffic.filter((r) => r.id > state.trafficHideBefore);
+      const routes = [...new Set(distinct(visible, "route").concat(state.servers.filter((s) => s.routed).map((s) => s.route)))].sort();
+      const opt = (values, all) => [{ value: "", label: all }].concat([...new Set(values)].sort().map((v) => ({ value: v, label: v })));
+      // Keep a filter from the URL selectable even before matching traffic arrives.
+      const keep = (values, v) => (v ? values.concat(v) : values);
+      const options = {
+        route: opt(keep(routes, filters.route), "All routes"),
+        method: opt(keep(distinct(visible, "method"), filters.method), "All methods"),
+        tool: opt(keep(distinct(visible, "tool"), filters.tool), "All tools"),
+      };
+      const key = JSON.stringify([options, filters]);
+      if (key !== toolbarKey) {
+        toolbarKey = key;
+        put(clear(toolbar),
+          select("Route", filters.route, options.route, (v) => setFilter("route", v)),
+          select("Method", filters.method, options.method, (v) => setFilter("method", v)),
+          select("Tool", filters.tool, options.tool, (v) => setFilter("tool", v)),
+          select("Outcome", filters.outcome, [{ value: "", label: "All outcomes" }, { value: "errors", label: "Errors (not ok)" }]
+            .concat(Object.keys(OUTCOMES).map((o) => ({ value: o, label: o }))), (v) => setFilter("outcome", v)));
+      }
 
-      const records = state.traffic.filter((r) => r.id > state.trafficHideBefore &&
-        (!state.trafficFilters.route || r.route === state.trafficFilters.route) &&
-        (!state.trafficFilters.outcome || (state.trafficFilters.outcome === "ok" ? r.outcome === "ok" : r.outcome !== "ok")));
+      const active = Object.entries(filters).filter(([, v]) => v);
+      put(clear(filterNote), active.length ? h("p", { class: "filters-active" },
+        h("span", { class: "muted", text: "Filtered by " + active.map(([k, v]) => k + " = " + v).join(", ") + ". " }),
+        h("button", { type: "button", class: "linkish", onclick: () => { for (const k of Object.keys(filters)) filters[k] = ""; setParams(filters); draw(); } }, "Clear filters")) : null);
 
-      put(clear(summary), routeSummary(records));
-      put(clear(table), trafficTable(records, true));
+      const records = filterTraffic(visible, filters);
+      put(clear(summary), records.length ? toolSummaryPanel(records, !filters.route) : null);
+      put(clear(tableBox), trafficTable(records, {
+        showRoute: true, limit, onMore: (n) => { limit = n; draw(); },
+        empty: active.length ? "No recent requests match these filters." : undefined,
+      }));
     }
 
-    current.update = (what) => { if (what === "traffic") draw(); };
     draw();
-  }
-
-  function routeSummary(records) {
-    if (!records.length) return null;
-    const byRoute = new Map();
-    for (const r of records) {
-      if (!byRoute.has(r.route)) byRoute.set(r.route, []);
-      byRoute.get(r.route).push(r);
-    }
-    const rows = [...byRoute.entries()].sort((a, b) => b[1].length - a[1].length).map(([routeName, rs]) => {
-      const errors = rs.filter((r) => r.outcome !== "ok").length;
-      const rate = errors / rs.length;
-      const latencies = rs.map((r) => r.durationMs);
-      return h("tr", {},
-        h("td", { class: "mono", text: routeName }),
-        h("td", { class: "num", text: String(rs.length) }),
-        h("td", { class: "num", text: String(errors) }),
-        h("td", {}, h("div", { class: "bar" + (rate > 0 ? " bad" : ""), title: Math.round(rate * 100) + "% errors" }, h("span", { style: "width:" + Math.max(rate * 100, rate > 0 ? 3 : 0) + "%" }))),
-        h("td", { class: "num", text: fmtMs(percentile(latencies, 0.5)) }),
-        h("td", { class: "num", text: fmtMs(percentile(latencies, 0.95)) }),
-        h("td", { text: ago(rs[0].time) }));
-    });
-    return h("section", { class: "panel" }, h("header", {}, h("h2", { text: "By route" })),
-      h("div", { class: "body flush table-wrap" }, h("table", {},
-        h("thead", {}, h("tr", {}, ["Route", "Requests", "Errors", "Error rate", "p50", "p95", "Last call"].map((c) => h("th", { text: c })))),
-        h("tbody", {}, rows))));
-  }
-
-  const outcomeClass = { ok: "ok", tool_error: "warn", rpc_error: "warn", client_error: "warn" };
-
-  function trafficTable(records, showRoute) {
-    if (!records.length) {
-      return emptyState("No traffic yet", "Call a tool from the Playground or point your agent at a Gateway route. Requests appear here within two seconds.");
-    }
-    return h("section", { class: "panel" }, h("div", { class: "body flush table-wrap" }, h("table", {},
-      h("thead", {}, h("tr", {}, ["Time", showRoute ? "Route" : null, "Method", "Tool", "Outcome", "HTTP", "Latency", "In", "Out"].filter(Boolean).map((c) => h("th", { text: c })))),
-      h("tbody", {}, records.map((r) => h("tr", { class: state.freshIds.has(r.id) ? "fresh" : "" },
-        h("td", { class: "mono", text: clock(r.time), title: r.time }),
-        showRoute ? h("td", { class: "mono", text: r.route }) : null,
-        h("td", { class: "mono", text: r.method }),
-        h("td", { class: "mono", text: r.tool === "none" ? "–" : r.tool }),
-        h("td", {}, badge(r.outcome, outcomeClass[r.outcome] || "bad")),
-        h("td", { class: "num", text: String(r.status || "–") }),
-        h("td", { class: "num", text: fmtMs(r.durationMs) }),
-        h("td", { class: "num", text: fmtBytes(r.bytesIn) }),
-        h("td", { class: "num", text: fmtBytes(r.bytesOut) })))))));
-  }
-
-  // ---------------------------------------------------------------- MCP client
-
-  // McpSession speaks MCP Streamable HTTP to one Gateway route.
-  class McpSession {
-    constructor(routeName) {
-      this.route = routeName;
-      this.id = null;
-      this.protocolVersion = null;
-      this.seq = 0;
-      this.serverInfo = null;
-      this.capabilities = null;
-      this.initError = null;
-    }
-
-    headers(method, params) {
-      const headers = { "Content-Type": "application/json", Accept: "application/json, text/event-stream", "Mcp-Method": method };
-      if (method === "tools/call" && params && /^[\x21-\x7e]{1,128}$/.test(params.name || "")) headers["Mcp-Name"] = params.name;
-      if (this.id) headers["Mcp-Session-Id"] = this.id;
-      if (this.protocolVersion) headers["MCP-Protocol-Version"] = this.protocolVersion;
-      return headers;
-    }
-
-    async request(method, params) {
-      const id = ++this.seq;
-      const body = { jsonrpc: "2.0", id, method, params: params || {} };
-      const started = performance.now();
-      const res = await fetch("/mcp/" + this.route, { method: "POST", headers: this.headers(method, params), body: JSON.stringify(body), cache: "no-store" });
-      const contentType = res.headers.get("Content-Type") || "";
-      let message = null;
-      let raw = "";
-      if (contentType.includes("text/event-stream")) {
-        ({ message, raw } = await readEventStream(res, id));
-      } else {
-        raw = (await res.text()).slice(0, MAX_RAW_BYTES);
-        try { message = JSON.parse(raw); } catch { message = null; }
-      }
-      return { method, request: body, status: res.status, ms: performance.now() - started, message, raw, sessionId: res.headers.get("Mcp-Session-Id"), at: new Date() };
-    }
-
-    async notify(method) {
-      try {
-        const res = await fetch("/mcp/" + this.route, { method: "POST", headers: this.headers(method), body: JSON.stringify({ jsonrpc: "2.0", method }), cache: "no-store" });
-        await res.body?.cancel();
-      } catch { /* notifications are best effort */ }
-    }
-
-    async initialize() {
-      const result = await this.request("initialize", {
-        protocolVersion: PROTOCOL_VERSION,
-        capabilities: {},
-        clientInfo: { name: "kavrynt-console", version: (state.version && state.version.version) || "dev" },
-      });
-      const ok = result.status >= 200 && result.status < 300 && result.message && result.message.result;
-      if (ok) {
-        this.id = result.sessionId || null;
-        this.protocolVersion = result.message.result.protocolVersion || PROTOCOL_VERSION;
-        this.serverInfo = result.message.result.serverInfo || null;
-        this.capabilities = result.message.result.capabilities || null;
-        await this.notify("notifications/initialized");
-      } else {
-        this.initError = describeFailure(result);
-      }
-      return result;
-    }
-
-    close() {
-      if (!this.id) return;
-      fetch("/mcp/" + this.route, { method: "DELETE", headers: { "Mcp-Session-Id": this.id }, keepalive: true }).catch(() => {});
-      this.id = null;
-    }
-  }
-
-  // readEventStream reads SSE until the JSON-RPC response with id arrives.
-  async function readEventStream(res, id) {
-    const reader = res.body.getReader();
-    const decoder = new TextDecoder();
-    let buffer = "";
-    let raw = "";
-    let data = [];
-    const dispatch = () => {
-      if (!data.length) return null;
-      let parsed = null;
-      try { parsed = JSON.parse(data.join("\n")); } catch { parsed = null; }
-      data = [];
-      return parsed && parsed.id === id ? parsed : null;
-    };
-    for (;;) {
-      const { value, done } = await reader.read();
-      if (done) break;
-      const chunk = decoder.decode(value, { stream: true });
-      if (raw.length < MAX_RAW_BYTES) raw += chunk;
-      buffer += chunk;
-      let newline;
-      while ((newline = buffer.search(/\r?\n/)) >= 0) {
-        const line = buffer.slice(0, newline);
-        buffer = buffer.slice(newline + (buffer[newline] === "\r" ? 2 : 1));
-        if (line === "") {
-          const message = dispatch();
-          if (message) {
-            reader.cancel().catch(() => {});
-            return { message, raw };
-          }
-        } else if (line.startsWith("data:")) {
-          data.push(line.slice(5).replace(/^ /, ""));
-        }
-      }
-    }
-    return { message: dispatch(), raw };
-  }
-
-  function describeFailure(result) {
-    if (result.message && result.message.error) {
-      return "JSON-RPC error " + result.message.error.code + ": " + (result.message.error.message || "");
-    }
-    if (result.status < 200 || result.status >= 300) {
-      let detail = "";
-      if (result.message && typeof result.message.error === "string") detail = ": " + result.message.error;
-      return "HTTP " + result.status + detail;
-    }
-    if (!result.message) return "The response was not JSON-RPC";
-    return "";
-  }
-
-  // ---------------------------------------------------------------- playground
-
-  function renderPlayground(root, routeParam, toolParam) {
-    const routed = state.servers.filter((s) => s.routed);
-    if (routeParam && routeParam !== pg.route) {
-      if (pg.session) pg.session.close();
-      Object.assign(pg, { route: routeParam, session: null, tools: [], selected: toolParam || null, last: null, history: [] });
-    } else if (toolParam) {
-      pg.selected = toolParam;
-    }
-
-    const serverSelect = h("select", { "aria-label": "MCP server", onchange: (e) => { location.hash = "#/playground/" + encodeURIComponent(e.target.value); } },
-      h("option", { value: "" }, routed.length ? "Choose an MCP server…" : "No routed servers"),
-      routed.map((s) => h("option", { value: s.route }, s.route)));
-    serverSelect.value = pg.route;
-
-    const sessionBox = h("div", { class: "session-info" });
-    const toolsBox = h("div");
-    const formBox = h("div");
-    const resultBox = h("div");
-    const workBox = h("div", {}, formBox, resultBox);
-    const historyBox = h("div");
-
-    put(root,
-      h("div", { class: "page-head" },
-        h("div", {}, h("h1", { text: "Playground" }),
-          h("p", { text: "Call MCP tools through the Gateway, exactly as your agent would. Every call shows up under Live traffic." })),
-        h("div", { class: "toolbar" }, serverSelect,
-          h("button", { type: "button", class: "btn", disabled: !pg.route, onclick: () => connect(true) }, "Reconnect"))),
-      h("section", { class: "panel" }, h("div", { class: "body" }, sessionBox)),
-      h("div", { class: "pg" },
-        h("div", {},
-          h("section", { class: "panel" }, h("header", {}, h("h2", { text: "Tools" }),
-            h("button", { type: "button", class: "btn small", onclick: () => { pg.mode = "raw"; pg.selected = null; drawTools(); drawWork(); } }, "Raw JSON-RPC")),
-          h("div", { class: "body flush pg-tools" }, toolsBox)),
-          h("section", { class: "panel" }, h("header", {}, h("h2", { text: "History" })), h("div", { class: "body flush" }, historyBox))),
-        workBox));
-
-    function drawSession() {
-      clear(sessionBox);
-      if (!pg.route) {
-        put(sessionBox, h("span", { class: "muted", text: routed.length ? "Choose a routed MCP server to start a session." : "No server is routed yet. Register one and wait for it to become Ready." }));
-        return;
-      }
-      const s = pg.session;
-      if (!s) {
-        put(sessionBox, badge("Connecting…"));
-        return;
-      }
-      put(sessionBox,
-        s.initError ? badge("initialize failed", "warn") : badge("Session ready", "ok"),
-        s.serverInfo ? badge((s.serverInfo.name || "server") + " " + (s.serverInfo.version || "")) : null,
-        s.protocolVersion ? badge("protocol " + s.protocolVersion) : null,
-        s.id ? badge("session " + s.id.slice(0, 12) + (s.id.length > 12 ? "…" : "")) : badge("no session id"),
-        h("span", { class: "mono muted", text: gatewayURL(pg.route) }),
-        s.initError ? h("span", { class: "muted", text: s.initError + " — continuing without initialize." }) : null);
-    }
-
-    function drawTools() {
-      clear(toolsBox);
-      if (!pg.tools.length) {
-        put(toolsBox, h("div", { class: "empty", style: "padding:20px" }, pg.session ? "No tools listed." : "…"));
-        return;
-      }
-      put(toolsBox, pg.tools.map((tool) => h("div", {
-        class: "pg-tool" + (pg.mode === "form" && pg.selected === tool.name ? " active" : ""), tabindex: "0",
-        onclick: () => select(tool.name), onkeydown: (e) => { if (e.key === "Enter") select(tool.name); },
-      }, h("div", { class: "tool-name", text: tool.name }), tool.description ? h("div", { class: "tool-desc", text: tool.description }) : null)));
-    }
-
-    function select(name) {
-      pg.mode = "form";
-      pg.selected = name;
-      history.replaceState(null, "", "#/playground/" + encodeURIComponent(pg.route) + "/" + encodeURIComponent(name));
-      drawTools();
-      drawWork();
-    }
-
-    function drawHistory() {
-      clear(historyBox);
-      if (!pg.history.length) {
-        put(historyBox, h("div", { class: "muted", style: "padding:12px 14px", text: "Calls in this session appear here." }));
-        return;
-      }
-      put(historyBox, pg.history.map((item) => h("div", { class: "history-item", onclick: () => { pg.last = item; drawResult(); } },
-        h("span", { class: "mono", text: item.label }),
-        h("span", {}, badge(String(item.result.status), item.ok ? "ok" : "warn"), " ", h("span", { class: "muted", text: fmtMs(item.result.ms) })))));
-    }
-
-    // drawWork redraws the request form; drawResult only the response, so a
-    // call keeps the arguments the user typed.
-    function drawWork() {
-      clear(formBox);
-      if (pg.route) {
-        if (pg.mode === "raw") put(formBox, rawPanel());
-        else {
-          const tool = pg.tools.find((t) => t.name === pg.selected);
-          put(formBox, tool ? toolPanel(tool) : h("section", { class: "panel" }, emptyState("Choose a tool", "Pick a tool on the left, or send any JSON-RPC request with Raw JSON-RPC.")));
-        }
-      }
-      drawResult();
-    }
-
-    function drawResult() {
-      clear(resultBox);
-      if (pg.route && pg.last) put(resultBox, resultPanel(pg.last));
-    }
-
-    function toolPanel(tool) {
-      const schema = tool.inputSchema && typeof tool.inputSchema === "object" ? tool.inputSchema : {};
-      const props = schema.properties && typeof schema.properties === "object" ? schema.properties : {};
-      const required = Array.isArray(schema.required) ? schema.required : [];
-      const fields = Object.entries(props).map(([name, prop]) => buildField(name, prop || {}, required.includes(name)));
-      let jsonMode = fields.some((f) => f.complex) && fields.every((f) => f.complex);
-      const jsonArea = h("textarea", { "aria-label": "Arguments JSON", spellcheck: "false" });
-      jsonArea.value = pretty(skeleton(props));
-      const formBox = h("div");
-      const toggle = h("button", { type: "button", class: "btn small" });
-      const error = h("p", { class: "muted", style: "color:var(--bad);margin:8px 0 0" });
-
-      function drawForm() {
-        toggle.textContent = jsonMode ? "Use form" : "Edit as JSON";
-        put(clear(formBox), jsonMode || !fields.length ? (fields.length || jsonMode ? jsonArea : h("p", { class: "muted", text: "This tool takes no arguments." })) : fields.map((f) => f.el));
-      }
-      toggle.addEventListener("click", () => {
-        try {
-          if (jsonMode) {
-            const parsed = JSON.parse(jsonArea.value || "{}");
-            fields.forEach((f) => f.set(parsed[f.name]));
-          } else {
-            jsonArea.value = pretty(collect());
-          }
-          jsonMode = !jsonMode;
-          error.textContent = "";
-          drawForm();
-        } catch (err) {
-          error.textContent = err.message;
-        }
-      });
-
-      function collect() {
-        const args = {};
-        for (const f of fields) {
-          const value = f.get();
-          if (value !== undefined) args[f.name] = value;
-        }
-        return args;
-      }
-
-      const callBtn = h("button", { type: "submit", class: "btn primary" }, "Call tool");
-      const form = h("form", {
-        onsubmit: async (e) => {
-          e.preventDefault();
-          error.textContent = "";
-          let args;
-          try {
-            args = jsonMode ? JSON.parse(jsonArea.value || "{}") : collect();
-          } catch (err) {
-            error.textContent = "Arguments: " + err.message;
-            return;
-          }
-          const missing = required.filter((name) => args[name] === undefined || args[name] === "");
-          if (missing.length && !confirmMissing(missing)) return;
-          callBtn.disabled = true;
-          callBtn.textContent = "Calling…";
-          await run("tools/call", { name: tool.name, arguments: args }, tool.name);
-          callBtn.disabled = false;
-          callBtn.textContent = "Call tool";
-        },
-      }, formBox, error, h("div", { class: "spaced", style: "margin-top:12px" }, toggle, callBtn));
-      drawForm();
-
-      return h("section", { class: "panel" },
-        h("header", {}, h("h2", {}, h("span", { class: "tool-name", text: tool.name }))),
-        h("div", { class: "body" },
-          tool.description ? h("p", { class: "tool-desc", style: "margin:0 0 14px", text: tool.description }) : null,
-          form,
-          tool.inputSchema ? h("details", {}, h("summary", { text: "Input schema" }), codeBlock(pretty(tool.inputSchema))) : null));
-    }
-
-    function confirmMissing(missing) {
-      // No blocking dialogs: warn once, call on the second click.
-      if (pg.warned === missing.join(",")) return true;
-      pg.warned = missing.join(",");
-      toast("Missing required: " + missing.join(", ") + ". Click again to call anyway.");
-      return false;
-    }
-
-    function rawPanel() {
-      const method = h("input", { type: "text", value: "tools/list", "aria-label": "Method", style: "width:100%" });
-      const params = h("textarea", { "aria-label": "Params JSON", spellcheck: "false" });
-      params.value = "{}";
-      const error = h("p", { class: "muted", style: "color:var(--bad);margin:8px 0 0" });
-      return h("section", { class: "panel" },
-        h("header", {}, h("h2", { text: "Raw JSON-RPC request" })),
-        h("div", { class: "body" }, h("form", {
-          onsubmit: async (e) => {
-            e.preventDefault();
-            let parsed;
-            try { parsed = JSON.parse(params.value || "{}"); } catch (err) { error.textContent = "Params: " + err.message; return; }
-            error.textContent = "";
-            await run(method.value.trim(), parsed, method.value.trim());
-          },
-        },
-        h("div", { class: "field" }, h("label", { text: "Method" }), method),
-        h("div", { class: "field" }, h("label", { text: "Params" }), params),
-        error,
-        h("div", { style: "text-align:right" }, h("button", { type: "submit", class: "btn primary" }, "Send")))));
-    }
-
-    async function run(method, params, label) {
-      if (!pg.session) return;
-      let result;
-      try {
-        result = await pg.session.request(method, params);
-      } catch (err) {
-        result = { method, request: { method, params }, status: 0, ms: 0, message: null, raw: String(err), at: new Date() };
-      }
-      const ok = result.status >= 200 && result.status < 300 && result.message && !result.message.error && !(result.message.result && result.message.result.isError);
-      const item = { label, result, ok };
-      pg.history.unshift(item);
-      pg.history = pg.history.slice(0, 25);
-      pg.last = item;
-      drawHistory();
-      drawResult();
-      refreshTraffic();
-    }
-
-    function drawAll() {
-      drawSession();
-      drawTools();
-      drawWork();
-      drawHistory();
-    }
-
-    async function connect(force) {
-      if (!pg.route) {
-        drawAll();
-        return;
-      }
-      if (!force && (pg.session || pg.connecting === pg.route)) {
-        drawAll();
-        return;
-      }
-      if (pg.session) pg.session.close();
-      const routeName = pg.route;
-      pg.session = null;
-      pg.tools = [];
-      pg.connecting = routeName;
-      drawAll();
-      const session = new McpSession(routeName);
-      try {
-        await session.initialize();
-      } catch (err) {
-        session.initError = String(err);
-      }
-      let listed = null;
-      try {
-        listed = await session.request("tools/list", {});
-      } catch { /* fall back to discovered tools */ }
-      if (pg.route !== routeName) {
-        session.close();
-        return;
-      }
-      pg.connecting = null;
-      pg.session = session;
-      const tools = listed && listed.message && listed.message.result && Array.isArray(listed.message.result.tools) ? listed.message.result.tools : null;
-      const server = state.servers.find((s) => s.route === routeName);
-      pg.tools = (tools || (server ? server.tools : [])).filter((t) => t && typeof t.name === "string");
-      if (!tools && listed) toast("tools/list failed (" + describeFailure(listed) + "); showing discovered tools");
-      if (pg.selected && !pg.tools.some((t) => t.name === pg.selected)) pg.selected = null;
-      // The page may have been redrawn while connecting; draw it again.
-      if (route().page === "playground") render();
-      refreshTraffic();
-    }
-
-    current.update = (what) => {
-      if (what !== "servers") return;
-      const now = state.servers.filter((s) => s.routed).map((s) => s.route).join(",");
-      if (now !== routed.map((s) => s.route).join(",")) render();
-    };
-    drawHistory();
-    connect(false);
-  }
-
-  function buildField(name, prop, required) {
-    const type = Array.isArray(prop.type) ? prop.type.find((t) => t !== "null") : prop.type;
-    const label = h("label", { for: "f-" + name }, name, required ? h("span", { class: "req", text: " *" }) : null,
-      type ? h("span", { class: "hint", text: "  " + type }) : null);
-    const hint = prop.description ? h("div", { class: "hint", text: prop.description }) : null;
-    let input;
-    let get;
-    let set;
-    let complex = false;
-    if (Array.isArray(prop.enum)) {
-      input = h("select", { id: "f-" + name }, required ? null : h("option", { value: "" }, "—"), prop.enum.map((v, i) => h("option", { value: String(i) }, JSON.stringify(v))));
-      get = () => (input.value === "" ? undefined : prop.enum[Number(input.value)]);
-      set = (v) => { const i = prop.enum.findIndex((e) => JSON.stringify(e) === JSON.stringify(v)); input.value = i >= 0 ? String(i) : ""; };
-    } else if (type === "boolean") {
-      input = h("select", { id: "f-" + name }, h("option", { value: "" }, "—"), h("option", { value: "true" }, "true"), h("option", { value: "false" }, "false"));
-      get = () => (input.value === "" ? undefined : input.value === "true");
-      set = (v) => { input.value = v === undefined ? "" : String(Boolean(v)); };
-    } else if (type === "number" || type === "integer") {
-      input = h("input", { id: "f-" + name, type: "number", step: type === "integer" ? "1" : "any" });
-      get = () => (input.value === "" ? undefined : Number(input.value));
-      set = (v) => { input.value = v === undefined ? "" : String(v); };
-    } else if (type === "string" || !type) {
-      input = h("input", { id: "f-" + name, type: "text", autocomplete: "off" });
-      if (prop.default !== undefined) input.placeholder = String(prop.default);
-      get = () => (input.value === "" ? undefined : input.value);
-      set = (v) => { input.value = v === undefined ? "" : typeof v === "string" ? v : JSON.stringify(v); };
-    } else {
-      complex = true;
-      input = h("textarea", { id: "f-" + name, spellcheck: "false", style: "min-height:80px" });
-      input.value = type === "array" ? "[]" : "{}";
-      get = () => { const text = input.value.trim(); return text === "" ? undefined : JSON.parse(text); };
-      set = (v) => { input.value = v === undefined ? "" : pretty(v); };
-    }
-    if (prop.default !== undefined && !complex) set(prop.default);
-    return { name, complex, get, set, el: h("div", { class: "field" }, label, input, hint) };
-  }
-
-  function skeleton(props) {
-    const out = {};
-    for (const [name, prop] of Object.entries(props)) {
-      const type = Array.isArray(prop && prop.type) ? prop.type[0] : prop && prop.type;
-      out[name] = prop && prop.default !== undefined ? prop.default :
-        type === "number" || type === "integer" ? 0 : type === "boolean" ? false : type === "array" ? [] : type === "object" ? {} : "";
-    }
-    return out;
-  }
-
-  function resultPanel(item) {
-    const { result } = item;
-    const message = result.message;
-    const rpcResult = message && message.result;
-    const meta = h("div", { class: "result-meta" },
-      badge(result.status ? "HTTP " + result.status : "network error", result.status >= 200 && result.status < 300 ? "ok" : "bad"),
-      badge(fmtMs(result.ms)),
-      message && message.error ? badge("JSON-RPC error " + message.error.code, "bad") : null,
-      rpcResult && rpcResult.isError ? badge("tool error", "warn") : null,
-      item.ok ? badge("ok", "ok") : null);
-
-    const tabs = ["Result", "Response", "Request"];
-    let active = rpcResult && Array.isArray(rpcResult.content) ? "Result" : "Response";
-    const tabBar = h("div", { class: "tabs", style: "margin-bottom:10px" });
-    const view = h("div");
-
-    function draw() {
-      put(clear(tabBar), tabs.map((t) => h("button", { type: "button", class: t === active ? "active" : "", onclick: () => { active = t; draw(); } }, t)));
-      clear(view);
-      if (active === "Request") put(view, codeBlock(pretty(result.request)));
-      else if (active === "Response") put(view, codeBlock(message ? pretty(message) : result.raw || "(empty response)"));
-      else put(view, contentBlocks(rpcResult, message));
-    }
-    draw();
-
-    return h("section", { class: "panel" },
-      h("header", {}, h("h2", { text: "Response · " + item.label }), h("button", { type: "button", class: "btn small", onclick: () => copy(message ? pretty(message) : result.raw) }, "Copy")),
-      h("div", { class: "body" }, meta, tabBar, view));
-  }
-
-  function contentBlocks(rpcResult, message) {
-    if (message && message.error) return codeBlock(pretty(message.error));
-    if (!rpcResult) return h("p", { class: "muted", text: "No result." });
-    const blocks = [];
-    for (const block of Array.isArray(rpcResult.content) ? rpcResult.content : []) {
-      if (block && block.type === "text") blocks.push(h("div", { class: "content-block", text: String(block.text) }));
-      else if (block && block.type === "image" && /^image\/(png|jpeg|gif|webp)$/.test(block.mimeType || "") && /^[A-Za-z0-9+/=]+$/.test(block.data || "")) {
-        blocks.push(h("div", { class: "content-block" }, h("img", { alt: "Tool image result", style: "max-width:100%", src: "data:" + block.mimeType + ";base64," + block.data })));
-      } else blocks.push(codeBlock(pretty(block)));
-    }
-    if (rpcResult.structuredContent !== undefined) blocks.push(h("div", { class: "muted", style: "margin:6px 0 4px", text: "structuredContent" }), codeBlock(pretty(rpcResult.structuredContent)));
-    if (!blocks.length) blocks.push(codeBlock(pretty(rpcResult)));
-    return h("div", {}, blocks);
+    return (what) => { if (what === "traffic" || what === "servers") draw(); };
   }
 
   // ---------------------------------------------------------------- theme
@@ -1072,29 +744,55 @@
     else delete document.documentElement.dataset.theme;
   }
 
+  // The theme is the only thing the console stores in the browser
+  // (SPEC-0002-R13).
   function initTheme() {
     let theme = "";
-    try { theme = localStorage.getItem("kavrynt-theme") || ""; } catch { /* storage unavailable */ }
+    try { theme = localStorage.getItem(THEME_KEY) || ""; } catch { /* storage unavailable */ }
     applyTheme(theme);
     document.getElementById("theme-toggle").addEventListener("click", () => {
       const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
       const next = dark ? "light" : "dark";
       applyTheme(next);
-      try { localStorage.setItem("kavrynt-theme", next); } catch { /* storage unavailable */ }
+      try { localStorage.setItem(THEME_KEY, next); } catch { /* storage unavailable */ }
     });
   }
 
   // ---------------------------------------------------------------- start
 
-  initTheme();
-  window.addEventListener("hashchange", render);
-  window.addEventListener("pagehide", () => { if (pg.session) pg.session.close(); });
-  render();
-  loadVersion();
-  refreshStatus();
-  refreshServers();
-  refreshTraffic();
-  setInterval(refreshServers, SERVER_POLL_MS);
-  setInterval(refreshStatus, SERVER_POLL_MS);
-  setInterval(refreshTraffic, TRAFFIC_POLL_MS);
+  // Say what is not protected wherever the console is reachable from more
+  // than this machine: without login, the console and MCP routes
+  // (SPEC-0002-R12); with login, still the MCP routes (SPEC-0005-R16).
+  function initNotice() {
+    const el = document.getElementById("notice");
+    if (isLoopbackHost(location.hostname)) {
+      el.hidden = true;
+      return;
+    }
+    if (state.auth.enabled) {
+      put(clear(el), h("strong", { text: "MCP routes are not authenticated. " }),
+        "This login protects the console only. Anyone who can reach this Gateway can call every routed tool. Keep the Gateway Service internal until client authentication is available.");
+    } else {
+      put(clear(el), h("strong", { text: "No login. " }),
+        "Anyone who can reach this Gateway can use this console and call every routed tool. Keep the Gateway Service internal until client authentication is available.");
+    }
+    el.hidden = false;
+  }
+
+  async function start() {
+    initTheme();
+    window.addEventListener("hashchange", render);
+    window.addEventListener("pagehide", closePlayground);
+    render();
+    loadVersion();
+    await checkSession();
+    render();
+    createPoller(document, [
+      { fn: refreshServers, ms: SERVER_POLL_MS },
+      { fn: refreshStatus, ms: SERVER_POLL_MS },
+      { fn: refreshTraffic, ms: TRAFFIC_POLL_MS },
+    ]).start();
+  }
+
+  start();
 })();

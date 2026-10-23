@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-22 |
 | Issue | to be opened |
@@ -107,8 +107,10 @@ wrong":
 ### Safety
 
 - **SPEC-0002-R12** When the console is loaded from a host other than
-  `localhost`, `127.0.0.1`, or `::1`, it MUST show a persistent notice that it
-  has no authentication and is reachable by anyone who can reach the Gateway.
+  `localhost`, `127.0.0.1`, or `::1` and console login is off, it MUST show a
+  persistent notice that it has no authentication and is reachable by anyone
+  who can reach the Gateway. (With login on, SPEC-0005-R16 states what is
+  still unauthenticated.)
 - **SPEC-0002-R13** The console MUST NOT write tool arguments, tool results,
   or JSON-RPC messages to `localStorage`, `sessionStorage`, IndexedDB, or
   cookies. Playground history MUST live in memory only.
@@ -128,6 +130,19 @@ wrong":
   with no build step and no external assets, and its static files MUST total
   at most 256 KiB uncompressed.
 
+### Server health
+
+- **SPEC-0002-R19** Server cards and the server detail view MUST show a
+  routed server as needing attention, not as healthy, when its
+  `ToolsDiscovered` condition is `False` or when at least half of at least
+  five of its requests in the recent-traffic window failed. Cards MUST show
+  the server's recent request count and error rate when it has traffic.
+
+### Traffic volume
+
+- **SPEC-0002-R20** The Traffic view MUST render at most 100 requests at a
+  time and offer to show the remaining ones.
+
 ## Acceptance criteria
 
 - Given a server whose endpoint is rejected by the Operator, when an operator
@@ -146,6 +161,12 @@ wrong":
   "no authentication" notice is shown (R12).
 - Given a Playground call with argument `secret-argument`, when browser
   storage is inspected, then the value is not present (R13).
+- Given a routed server whose endpoint does not resolve, so tool discovery
+  failed and every call returns `upstream_unreachable`, when the operator
+  opens Servers, then its card is marked as needing attention with its error
+  rate, not shown as healthy (R19).
+- Given 500 recent requests, when the operator opens Traffic, then 100 rows
+  are shown with a control to show the rest (R20).
 
 ## Security and privacy
 
@@ -171,10 +192,14 @@ When `Implemented`: update the Console section of
 (views, outcome definitions), the README "Open the console" step, and
 `docs/DEMO.md` if the walkthrough shows the console.
 
-## Open questions
+## Decisions
 
-- How are browser-side requirements tested? The plan proposes Node's built-in
-  test runner for pure modules and one headless-browser smoke test in the
-  Kind job. Node is not a project toolchain requirement today. Owner decides.
-- Should the Overview become the default view, or stay one click away from
-  Servers? The spec assumes default.
+- Browser-side logic is tested with Node's built-in test runner
+  (`node --test`, Node 22 or later, no npm dependencies) against the pure
+  console modules. Node becomes a contributor toolchain requirement.
+- R09, R15, R17, and R20 are tested by a Playwright smoke test
+  (`test/console-smoke`) in the Kind e2e job, pinned by its lockfile.
+- The Overview is the default view.
+- R19 and R20 were added after a hands-on review of the v1 console on the
+  demo cluster: a server whose backend did not exist was shown as healthy,
+  and the Traffic view rendered all 500 rows.

@@ -124,9 +124,10 @@ func TestReconcileIgnoresMissingServer(t *testing.T) {
 
 // fakeDiscoverer returns its configured tools or error and counts calls.
 type fakeDiscoverer struct {
-	tools []kavryntv1alpha1.MCPServerTool
-	err   error
-	calls int
+	tools      []kavryntv1alpha1.MCPServerTool
+	serverInfo *kavryntv1alpha1.MCPServerInfo
+	err        error
+	calls      int
 }
 
 func (f *fakeDiscoverer) ListTools(context.Context, string) (discovery.Result, error) {
@@ -134,7 +135,7 @@ func (f *fakeDiscoverer) ListTools(context.Context, string) (discovery.Result, e
 	if f.err != nil {
 		return discovery.Result{}, f.err
 	}
-	return discovery.Result{Tools: kavryntv1alpha1.CopyTools(f.tools)}, nil
+	return discovery.Result{Tools: kavryntv1alpha1.CopyTools(f.tools), ServerInfo: kavryntv1alpha1.CopyServerInfo(f.serverInfo)}, nil
 }
 
 func echoTool() kavryntv1alpha1.MCPServerTool {
@@ -358,4 +359,69 @@ func get(t *testing.T, k8sClient client.Client) *kavryntv1alpha1.MCPServer {
 
 func key() types.NamespacedName {
 	return types.NamespacedName{Name: "demo-mcp", Namespace: "default"}
+}
+
+// Verifies SPEC-0004-R02.
+func TestReconcileRecordsKeepsAndClearsServerInfo(t *testing.T) {
+	k8sClient := newClient(t, newServer(validSpec()))
+	reported := &kavryntv1alpha1.MCPServerInfo{Name: "demo", Version: "0.2.0"}
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}, serverInfo: reported}
+	clock := &testClock{now: time.Date(2026, 10, 23, 9, 0, 0, 0, time.UTC)}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+
+	reconcileWith(t, reconciler)
+	if info := get(t, k8sClient).Status.ServerInfo; info == nil || *info != *reported {
+		t.Fatalf("serverInfo after discovery = %+v, want %+v", info, reported)
+	}
+
+	// A failed discovery for the same endpoint keeps it and leaves Ready alone.
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	discoverer.err = errors.New("initialize: connection refused")
+	reconcileWith(t, reconciler)
+	failed := get(t, k8sClient)
+	if info := failed.Status.ServerInfo; info == nil || *info != *reported {
+		t.Fatalf("serverInfo after a failed discovery = %+v, want it kept", info)
+	}
+	if !apimeta.IsStatusConditionTrue(failed.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("keeping serverInfo changed Ready")
+	}
+
+	// After an Operator restart, the last value comes from status.
+	restarted := newDiscoveringReconciler(k8sClient, discoverer, clock)
+	reconcileWith(t, restarted)
+	if info := get(t, k8sClient).Status.ServerInfo; info == nil || *info != *reported {
+		t.Fatalf("serverInfo after a restart and a failed discovery = %+v, want it kept", info)
+	}
+
+	// A new endpoint is a different server: nothing until it answers.
+	server := get(t, k8sClient)
+	server.Spec.Endpoint = "http://other.default.svc:8080/mcp"
+	server.Generation++
+	if err := k8sClient.Update(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	reconcileWith(t, restarted)
+	if info := get(t, k8sClient).Status.ServerInfo; info != nil {
+		t.Fatalf("serverInfo after an endpoint change and a failed discovery = %+v, want none", info)
+	}
+
+	// A server that is not Ready has none.
+	discoverer.err = nil
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	reconcileWith(t, restarted)
+	if get(t, k8sClient).Status.ServerInfo == nil {
+		t.Fatal("serverInfo not recorded after discovery succeeded again")
+	}
+	server = get(t, k8sClient)
+	server.Spec.Transport = "stdio"
+	server.Spec.Endpoint = ""
+	server.Spec.Command = "demo-server"
+	server.Generation++
+	if err := k8sClient.Update(context.Background(), server); err != nil {
+		t.Fatal(err)
+	}
+	reconcileWith(t, restarted)
+	if info := get(t, k8sClient).Status.ServerInfo; info != nil {
+		t.Fatalf("serverInfo of a server that is not Ready = %+v, want none", info)
+	}
 }
