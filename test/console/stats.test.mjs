@@ -212,3 +212,17 @@ test("a routed server is not shown as healthy when discovery failed or most rece
 
   assert.deepEqual(filterServers(servers, traffic, { state: "attention" }).map((s) => s.route), ["team-payments.billing", "team-platform.local-files"]);
 });
+
+// Verifies SPEC-0004-R04.
+test("declared and reported versions are compared, and a difference does not change health", () => {
+  const { versionInfo } = stats;
+  const same = { ...incidents, version: "0.2.0", serverInfo: { name: "incidents-mcp", version: "0.2.0" } };
+  const differs = { ...incidents, version: "0.1.0", serverInfo: { name: "incidents-mcp", version: "0.2.0" } };
+  assert.deepEqual(versionInfo(same), { declared: "0.2.0", reported: "0.2.0", reportedName: "incidents-mcp", differs: false });
+  assert.deepEqual(versionInfo(differs), { declared: "0.1.0", reported: "0.2.0", reportedName: "incidents-mcp", differs: true });
+  assert.equal(versionInfo(incidents).reported, "", "no serverInfo recorded yet");
+  assert.equal(versionInfo(incidents).differs, false);
+  assert.equal(versionInfo({ ...incidents, serverInfo: { name: "only-a-name" } }).differs, false);
+  assert.equal(serverHealth(differs, []).label, "Routed", "a version difference must not mark the server as needing attention");
+  assert.match(diagnostics(differs, [], "x"), /Reported: incidents-mcp 0\.2\.0/);
+});

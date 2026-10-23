@@ -11,7 +11,7 @@
   const { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
   const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
   const {
-    SCOPE_NOTE, OUTCOMES, outcomeClass, condition, serverHealth, attention, overview, failingTools, toolSummary,
+    SCOPE_NOTE, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
   } = Kavrynt.stats;
   const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage } = Kavrynt.state;
@@ -472,6 +472,16 @@
     return draw;
   }
 
+  // versionCell shows the declared version, the reported one when the
+  // Operator recorded it, and a badge when they differ (SPEC-0004-R04).
+  function versionCell(server) {
+    const v = versionInfo(server);
+    return h("dd", { class: "version", title: "Declared in spec.version" + (v.reported ? "; reported by " + (v.reportedName || "the server") + " in MCP initialize" : "") },
+      v.declared,
+      v.reported && !v.differs ? h("span", { class: "muted", text: " · reported" }) : null,
+      v.differs ? [h("span", { class: "muted", text: " · reports " + v.reported + " " }), badge("version differs", "warn")] : null);
+  }
+
   function serverCard(server) {
     const health = serverHealth(server, state.traffic);
     const href = formatHash("servers", [server.route]);
@@ -484,7 +494,7 @@
       health.label === "Needs attention" ? h("p", { class: "card-alert " + health.cls, text: health.detail }) : null,
       h("dl", {},
         h("dt", { text: "Transport" }), h("dd", { text: server.transport }),
-        h("dt", { text: "Version" }), h("dd", { text: server.version, title: "spec.version declared in the MCPServer" }),
+        h("dt", { text: "Version" }), versionCell(server),
         h("dt", { text: "Endpoint" }), h("dd", { text: stripQuery(server.endpoint) || "–", title: stripQuery(server.endpoint) }),
         h("dt", { text: "Tools" }), h("dd", {}, toolsBadge(server) || h("span", { class: "muted", text: "–" })),
         h("dt", { text: "Traffic" }), h("dd", { text: stats.calls ? stats.calls + " recent · " + fmtPct(stats.rate) + " errors" : "no recent requests" })));
@@ -510,7 +520,8 @@
         h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" }), " / ", server.namespace, " / ", server.name),
         h("div", { class: "page-head" },
           h("div", {}, h("h1", { text: server.name }),
-            h("div", { class: "badges", style: "margin-top:6px" }, healthBadge(health), toolsBadge(server), badge(server.transport), badge("v" + server.version, "", "spec.version declared in the MCPServer"))),
+            h("div", { class: "badges", style: "margin-top:6px" }, healthBadge(health), toolsBadge(server), badge(server.transport), badge("v" + server.version, "", "spec.version declared in the MCPServer"),
+            versionInfo(server).differs ? badge("reports v" + versionInfo(server).reported, "warn", "The server reported a different version in MCP initialize") : null)),
           h("div", { class: "toolbar" },
             h("button", { type: "button", class: "btn", onclick: () => copy(diagnostics(server, state.traffic, state.version && state.version.version), "Diagnostics copied: metadata only, no tool inputs or results") }, "Copy diagnostics"),
             server.routed ? h("a", { class: "btn primary", href: formatHash("playground", [server.route]) }, "Open in playground") : null)),
@@ -553,6 +564,7 @@
       h("dt", { text: "Route" }), h("dd", { class: "mono", text: "/mcp/" + server.route }),
       h("dt", { text: "Endpoint" }), h("dd", { class: "mono", text: server.endpoint || "–" }),
       h("dt", { text: "Declared version" }), h("dd", { text: server.version }),
+      h("dt", { text: "Reported" }), h("dd", { text: versionInfo(server).reported ? versionInfo(server).reportedName + " " + versionInfo(server).reported + (versionInfo(server).differs ? " (differs from the declared version)" : "") : "– (recorded after the next successful tool discovery)" }),
       h("dt", { text: "Created" }), h("dd", { text: ago(server.createdAt), title: server.createdAt }),
       server.description ? [h("dt", { text: "Description" }), h("dd", { text: server.description })] : null);
 

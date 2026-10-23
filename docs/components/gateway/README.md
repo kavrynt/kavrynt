@@ -51,7 +51,7 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 | `GET /version` | Build metadata |
 | `GET /metrics` | Prometheus metrics: MCP traffic (below), Gateway counters, Go runtime, and process |
 | `GET /v1/routes` | Current route table |
-| `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
+| `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, the `serverInfo` it reported, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
 | `GET /v1/traffic` | The last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
 | `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`), sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
@@ -71,7 +71,8 @@ everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
   least half of at least five), with the reason. **Failing tools** lists the
   five tools with the most failed calls.
 - **Servers**: every `MCPServer` with its health, recent request count and
-  error rate, conditions, and discovered tools with input schemas. A connect
+  error rate, declared and reported version (marked when they differ),
+  conditions, and discovered tools with input schemas. A connect
   panel gives the route URL and ready-to-paste MCP client, Python agent, and
   curl snippets. **Copy diagnostics** copies a metadata-only summary
   (conditions, tools, recent traffic; no tool inputs or results, and the

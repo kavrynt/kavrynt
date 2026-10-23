@@ -26,9 +26,18 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 For each `Ready` server the Operator opens one short MCP session with
 `spec.endpoint` (`initialize`, `notifications/initialized`, `tools/list`)
 and records the result in `status.tools`: each tool's `name`, `description`,
-and `inputSchema`. It repeats this every `--tool-refresh-interval` and when
+and `inputSchema`. It also records the `serverInfo` name and version the
+server reports in `initialize` in `status.serverInfo`, so the version that
+actually runs can be compared with `spec.version` (which is whatever the
+manifest says). It repeats this every `--tool-refresh-interval` and when
 the spec changes. `kavryctl list` shows the tool count; `kavryctl inspect`
-shows the tools.
+shows the tools and `serverInfo`; `kubectl get mcpservers` shows the reported
+version in the `REPORTED` column.
+
+- `serverInfo` is self-reported and untrusted. A name or version is kept only
+  when it is a non-blank string of at most 128 printable characters. A failed
+  discovery keeps the last value while the endpoint is unchanged; a changed
+  endpoint or a server that is not `Ready` has none until it next answers.
 
 - Discovery never changes `Ready`. A server that rejects the session (for
   example because it requires credentials) or cannot be reached keeps routing;

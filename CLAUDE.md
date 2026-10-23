@@ -62,7 +62,8 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   `Accepted` and `Ready`.
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
   into `status.tools` with a `ToolsDiscovered` condition that never affects
-  `Ready`.
+  `Ready`, and records the reported `serverInfo` name and version in
+  `status.serverInfo`.
 - Opt-in Operator connector (`cloud.enabled`) sends full inventory snapshots
   (servers and tools) to Kavrynt Cloud `POST /v1/sync/mcpservers` with a
   cluster token from a Secret. Traffic rollups are not uploaded yet.

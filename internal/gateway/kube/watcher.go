@@ -161,6 +161,9 @@ func Servers(items []kavryntv1alpha1.MCPServer) []model.Server {
 			Tools:       make([]model.Tool, 0, len(item.Status.Tools)),
 			CreatedAt:   item.CreationTimestamp.Time,
 		}
+		if info := item.Status.ServerInfo; info != nil {
+			server.ServerInfo = &model.ServerInfo{Name: info.Name, Version: info.Version}
+		}
 		for _, condition := range item.Status.Conditions {
 			server.Conditions = append(server.Conditions, model.Condition{
 				Type:               condition.Type,

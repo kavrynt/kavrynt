@@ -189,3 +189,18 @@ func run(t *testing.T, args ...string) (string, string, int) {
 	code := Execute(args, &out, &errOut)
 	return out.String(), errOut.String(), code
 }
+
+// Verifies SPEC-0004-R05.
+func TestInspectShowsReportedServerInfo(t *testing.T) {
+	useFakeClient(t, "team-a", &kavryntv1alpha1.MCPServer{
+		ObjectMeta: metav1.ObjectMeta{Name: "payments", Namespace: "team-a"},
+		Spec:       kavryntv1alpha1.MCPServerSpec{Version: "0.1.0", Transport: "http", Endpoint: "http://payments"},
+		Status: kavryntv1alpha1.MCPServerStatus{
+			ServerInfo: &kavryntv1alpha1.MCPServerInfo{Name: "payments-mcp", Version: "0.2.0"},
+		},
+	})
+	out, errOut, code := run(t, "inspect", "payments")
+	if code != 0 || !strings.Contains(out, `"serverInfo": {`) || !strings.Contains(out, `"name": "payments-mcp"`) || !strings.Contains(out, `"version": "0.2.0"`) {
+		t.Fatalf("inspect: code=%d out=%q err=%q", code, out, errOut)
+	}
+}

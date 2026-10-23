@@ -108,6 +108,19 @@ await check("the notice off loopback says MCP routes are not authenticated", asy
   assert.equal(await page.isHidden("#notice"), false);
 });
 
+// Verifies SPEC-0004-R04.
+await check("server cards show the version the server reports", async (page) => {
+  await signIn(page);
+  await page.goto(base + "/ui/#/servers");
+  const card = page.locator("[data-route='" + route + "']");
+  await card.waitFor();
+  await page.waitForFunction((r) => document.querySelector("[data-route='" + r + "'] dd.version")?.textContent.includes("reported"), route, { timeout: 15000 });
+  await page.goto(base + "/ui/#/servers/" + route);
+  await page.waitForSelector("dt:text('Reported')");
+  const reported = await page.locator("dt:text('Reported') + dd").innerText();
+  assert.ok(!reported.startsWith("–"), "server detail shows no reported version: " + reported);
+});
+
 // Verifies SPEC-0002-R09.
 await check("every traffic view states its replica and window", async (page) => {
   await signIn(page);

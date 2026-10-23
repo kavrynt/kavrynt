@@ -74,6 +74,7 @@ type discoveryAttempt struct {
 	next       time.Time
 	failures   int
 	tools      []kavryntv1alpha1.MCPServerTool
+	serverInfo *kavryntv1alpha1.MCPServerInfo
 	condition  metav1.Condition
 }
 
@@ -98,6 +99,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	} else {
 		// Tools from an earlier run with discovery enabled would go stale.
 		status.Tools = nil
+		status.ServerInfo = nil
 		apimeta.RemoveStatusCondition(&status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
 	}
 
@@ -130,6 +132,7 @@ func (r *MCPServerReconciler) applyTools(ctx context.Context, key types.Namespac
 	if !apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady) {
 		r.forget(key)
 		status.Tools = nil
+		status.ServerInfo = nil
 		apimeta.SetStatusCondition(&status.Conditions, metav1.Condition{
 			Type:               kavryntv1alpha1.ConditionToolsDiscovered,
 			Status:             metav1.ConditionFalse,
@@ -155,14 +158,16 @@ func (r *MCPServerReconciler) applyTools(ctx context.Context, key types.Namespac
 	}
 
 	status.Tools = kavryntv1alpha1.CopyTools(attempt.tools)
+	status.ServerInfo = kavryntv1alpha1.CopyServerInfo(attempt.serverInfo)
 	condition := attempt.condition
 	condition.ObservedGeneration = server.Generation
 	apimeta.SetStatusCondition(&status.Conditions, condition)
 	return max(attempt.next.Sub(now), time.Second)
 }
 
-// discover lists the server's tools. On failure it keeps the last known tools
-// for the same endpoint and backs off.
+// discover lists the server's tools and records its reported serverInfo. On
+// failure it keeps the last known tools and serverInfo for the same endpoint
+// (SPEC-0004-R02) and backs off.
 func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alpha1.MCPServer, previous *discoveryAttempt, now time.Time) *discoveryAttempt {
 	refresh := r.ToolRefreshInterval
 	if refresh <= 0 {
@@ -174,6 +179,7 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 	if err == nil {
 		attempt.next = now.Add(refresh)
 		attempt.tools = result.Tools
+		attempt.serverInfo = result.ServerInfo
 		attempt.condition = metav1.Condition{
 			Type:    kavryntv1alpha1.ConditionToolsDiscovered,
 			Status:  metav1.ConditionTrue,
@@ -187,8 +193,10 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 	case previous == nil:
 		// After an Operator restart, status holds the last known tools.
 		attempt.tools = discovery.CanonicalTools(server.Status.Tools)
+		attempt.serverInfo = kavryntv1alpha1.CopyServerInfo(server.Status.ServerInfo)
 	case previous.endpoint == server.Spec.Endpoint:
 		attempt.tools = previous.tools
+		attempt.serverInfo = previous.serverInfo
 		attempt.failures = previous.failures
 	}
 	attempt.failures++

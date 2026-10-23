@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-23 |
 | Issue | to be opened |
@@ -51,15 +51,18 @@ receives `serverInfo`; it discards it.
   `status.serverInfo.name` and `status.serverInfo.version`, each only when it
   is printable text of at most 128 characters; other values MUST be omitted.
 - **SPEC-0004-R02** When `initialize` fails, the Operator MUST keep the last
-  recorded `status.serverInfo`, and recording or keeping it MUST NOT change
-  the `Ready` condition.
+  recorded `status.serverInfo` while the endpoint is unchanged, and recording
+  or keeping it MUST NOT change the `Ready` condition. A server that is not
+  `Ready`, or whose endpoint changed, MUST have no `status.serverInfo` until
+  its next successful discovery.
 - **SPEC-0004-R03** `GET /v1/servers` MUST include `serverInfo` with `name`
   and `version` for each server whose status has one.
 - **SPEC-0004-R04** The console MUST show the reported version next to the
   declared version on server cards and the server detail view, and MUST mark
   the server when both are present and differ.
 - **SPEC-0004-R05** `kavryctl inspect` MUST print the reported name and
-  version when the status has them.
+  version when the status has them, and `kubectl get mcpservers` MUST show
+  the reported version in a column.
 
 ## Acceptance criteria
 
@@ -73,7 +76,8 @@ receives `serverInfo`; it discards it.
   discovery fails, then `status.serverInfo` is unchanged and `Ready` is
   unaffected (R02).
 - Given a discovered server, when `kavryctl inspect` runs, then the output
-  includes the reported name and version (R05).
+  includes the reported name and version, and `kubectl get mcpservers` shows
+  the reported version (R05).
 
 ## Security and privacy
 

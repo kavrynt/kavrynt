@@ -236,6 +236,21 @@
     });
   }
 
+  // versionInfo compares the declared spec.version with the version the
+  // server reported in MCP initialize (SPEC-0004-R04). A difference is shown,
+  // never acted on: it does not change server health.
+  function versionInfo(server) {
+    const declared = server.version || "";
+    const info = server.serverInfo || null;
+    const reported = info && info.version ? String(info.version) : "";
+    return {
+      declared,
+      reported,
+      reportedName: info && info.name ? String(info.name) : "",
+      differs: Boolean(declared && reported && declared !== reported),
+    };
+  }
+
   // ---------------------------------------------------------------- tools
 
   // catalog lists every discovered tool of every server (SPEC-0002-R04). A tool
@@ -298,6 +313,7 @@
       "Namespace: " + server.namespace,
       "Name: " + server.name,
       "Declared version: " + server.version,
+      "Reported: " + (versionInfo(server).reported ? versionInfo(server).reportedName + " " + versionInfo(server).reported : "–"),
       "Transport: " + server.transport,
       "Endpoint: " + (stripQuery(server.endpoint) || "–"),
       "Routed: " + (server.routed ? "yes" : "no"),
@@ -329,5 +345,5 @@
     return ms === null || ms === undefined ? "–" : String(Math.round(ms * 100) / 100);
   }
 
-  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
+  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).stats = {}));
