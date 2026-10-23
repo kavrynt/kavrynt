@@ -25,8 +25,6 @@ CONTROL_NAMESPACE="kavrynt-system"
 E2E_NAMESPACE="kavrynt-e2e"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 
-GATEWAY_IMAGE="${IMAGE_REGISTRY}/gateway:${RELEASE_VERSION}"
-OPERATOR_IMAGE="${IMAGE_REGISTRY}/operator:${RELEASE_VERSION}"
 SAMPLE_IMAGE="kavrynt/e2e-mcp-server:${RELEASE_VERSION}-verification"
 
 TEMP_DIR="$(mktemp -d)"
@@ -135,10 +133,6 @@ if kind get clusters | grep --fixed-strings --line-regexp "${CLUSTER_NAME}" >/de
   fail "Kind cluster ${CLUSTER_NAME} already exists; delete it or set KIND_CLUSTER_NAME"
 fi
 
-log "pulling released runtime images"
-docker pull "${GATEWAY_IMAGE}"
-docker pull "${OPERATOR_IMAGE}"
-
 log "building verification MCP server"
 docker build --tag "${SAMPLE_IMAGE}" "${ROOT_DIR}/test/e2e/mcp-server"
 
@@ -146,9 +140,11 @@ log "creating Kind cluster ${CLUSTER_NAME}"
 kind create cluster --name "${CLUSTER_NAME}" --wait 120s
 CREATED_CLUSTER=1
 
-log "loading released images"
-kind load docker-image --name "${CLUSTER_NAME}" \
-  "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${SAMPLE_IMAGE}"
+# The cluster pulls the released images from the registry, as a trial user's
+# cluster does. Loading them with kind fails for multi-platform images: the
+# local Docker store holds one platform, and kind imports all of them.
+log "loading the verification MCP server image"
+kind load docker-image --name "${CLUSTER_NAME}" "${SAMPLE_IMAGE}"
 
 log "installing published Kavrynt chart ${RELEASE_VERSION}"
 helm upgrade --install kavrynt "${CHART_REF}" \
