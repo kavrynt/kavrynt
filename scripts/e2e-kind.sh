@@ -216,6 +216,7 @@ for verb in create update patch delete; do
   [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" mcpservers.kavrynt.io --as="${GATEWAY_SA}" -A)" = "no" ] ||
     fail "Gateway must not ${verb} MCPServers"
 done
+# Verifies SPEC-0005-R13: the console admin Secret is mounted, not read.
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
   fail "Gateway must not read Secrets"
 
@@ -260,6 +261,7 @@ wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVE
 "${TEMP_DIR}/kavryctl" list --context "${KUBE_CONTEXT}" -A | grep --fixed-strings "/mcp/${SERVER_ID}" >/dev/null ||
   fail "kavryctl list does not show ${SERVER_ID}"
 
+# Verifies SPEC-0005-R02: agents call MCP routes without any console session.
 log "calling tools/list through Gateway route ${SERVER_ID}"
 MCP_RESPONSE="$(curl --fail --silent --show-error \
   --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
@@ -303,21 +305,57 @@ CROSS_ORIGIN_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code
 [ "${CROSS_ORIGIN_STATUS}" = "403" ] ||
   fail "Gateway answered a cross-origin request with HTTP ${CROSS_ORIGIN_STATUS}, want 403"
 
+# Verifies SPEC-0005-R01, SPEC-0005-R04, and SPEC-0005-R12.
+log "verifying the console admin login"
+for path in /v1/servers /v1/traffic; do
+  STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "${GATEWAY_URL}${path}")"
+  [ "${STATUS}" = "401" ] || fail "${path} without a console session answered HTTP ${STATUS}, want 401"
+done
+CONSOLE_PASSWORD="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
+  get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 --decode)"
+[ "${#CONSOLE_PASSWORD}" -eq 32 ] || fail "the generated console admin password is not 32 characters"
+CONSOLE_COOKIES="${TEMP_DIR}/console-cookies"
+WRONG_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST "${GATEWAY_URL}/v1/session" \
+  --header 'Content-Type: application/json' --data '{"username":"admin","password":"wrong"}')"
+[ "${WRONG_STATUS}" = "401" ] || fail "a wrong console password answered HTTP ${WRONG_STATUS}, want 401"
+jq --null-input --arg password "${CONSOLE_PASSWORD}" '{username: "admin", password: $password}' |
+  curl --fail --silent --show-error --cookie-jar "${CONSOLE_COOKIES}" --request POST "${GATEWAY_URL}/v1/session" \
+    --header 'Content-Type: application/json' --data @- ||
+  fail "console login with the generated admin password failed"
+curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/session" |
+  jq --exit-status '.username == "admin"' >/dev/null || fail "/v1/session does not report the admin session"
+
 # Verifies SPEC-0001-R01, SPEC-0001-R06, SPEC-0001-R07, and SPEC-0001-R08.
 log "verifying the console and its read-only endpoints"
 curl --fail --silent --show-error "${GATEWAY_URL}/ui/" | grep --fixed-strings --quiet "Kavrynt Console" ||
   fail "Gateway does not serve the console at /ui/"
-curl --fail --silent --show-error "${GATEWAY_URL}/v1/servers" |
+curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/servers" |
   jq --exit-status --arg route "${SERVER_ID}" '
     .servers | map(select(.route == $route)) | .[0] |
     .routed and (.tools | map(.name) == ["echo"])' >/dev/null ||
   fail "/v1/servers does not list ${SERVER_ID} as routed with the echo tool"
-TRAFFIC="$(curl --fail --silent --show-error "${GATEWAY_URL}/v1/traffic")"
+TRAFFIC="$(curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/traffic")"
 printf '%s' "${TRAFFIC}" | jq --exit-status --arg route "${SERVER_ID}" '
   .requests | any(.route == $route and .method == "tools/call" and .tool == "echo" and .outcome == "ok")' >/dev/null ||
   fail "/v1/traffic does not record the echo tool call"
 if grep --fixed-strings --quiet "secret-argument" <<<"${TRAFFIC}"; then
   fail "/v1/traffic contains tool arguments"
+fi
+
+# The console in a real browser: login, keyboard, layout, and traffic views.
+# test/console-smoke/smoke.mjs cites the requirements it verifies. CI sets
+# E2E_BROWSER=1; locally it runs when its dependencies are installed.
+SMOKE_DIR="${ROOT_DIR}/test/console-smoke"
+if [ "${E2E_BROWSER:-auto}" = "0" ]; then
+  log "skipping the console browser smoke test (E2E_BROWSER=0)"
+elif [ -d "${SMOKE_DIR}/node_modules/playwright" ]; then
+  log "verifying the console in a headless browser"
+  GATEWAY_URL="${GATEWAY_URL}" CONSOLE_PASSWORD="${CONSOLE_PASSWORD}" SERVER_ROUTE="${SERVER_ID}" SERVER_TOOL=echo \
+    node "${SMOKE_DIR}/smoke.mjs" || fail "console browser smoke test failed"
+elif [ "${E2E_BROWSER:-auto}" = "1" ]; then
+  fail "E2E_BROWSER=1 but ${SMOKE_DIR} has no dependencies; run: npm ci --prefix test/console-smoke && npm exec --prefix test/console-smoke -- playwright install chromium-headless-shell"
+else
+  log "skipping the console browser smoke test: run npm ci --prefix test/console-smoke && npm exec --prefix test/console-smoke -- playwright install chromium-headless-shell"
 fi
 
 log "verifying the Gateway refuses cloud metadata endpoints"

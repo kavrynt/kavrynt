@@ -51,8 +51,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 | `GET /version` | Build metadata |
 | `GET /metrics` | Prometheus metrics: MCP traffic (below), Gateway counters, Go runtime, and process |
 | `GET /v1/routes` | Current route table |
-| `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query |
-| `GET /v1/traffic` | The last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes |
+| `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
+| `GET /v1/traffic` | The last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
+| `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`), sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
 | `* /mcp/<route>/...` | Proxied MCP traffic |
 
@@ -63,30 +64,79 @@ A read-only web console served by the Gateway itself, enabled by default
 everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
 `/version`.
 
-- **Servers**: every `MCPServer` with its readiness, the reason it is not
-  routed, conditions, and discovered tools with input schemas. A connect panel
-  gives the route URL and ready-to-paste MCP client, Python agent, and curl
-  snippets.
+- **Overview** (the landing page): Gateway readiness and version, counts of
+  servers, routed servers, and tools, and recent request volume, error rate,
+  and p95 latency. **Needs attention** lists servers that are not routed,
+  whose tool discovery failed, or whose recent requests mostly fail (at
+  least half of at least five), with the reason. **Failing tools** lists the
+  five tools with the most failed calls.
+- **Servers**: every `MCPServer` with its health, recent request count and
+  error rate, conditions, and discovered tools with input schemas. A connect
+  panel gives the route URL and ready-to-paste MCP client, Python agent, and
+  curl snippets. **Copy diagnostics** copies a metadata-only summary
+  (conditions, tools, recent traffic; no tool inputs or results, and the
+  endpoint's query string redacted) for an issue or a chat.
+- **Tools**: every discovered tool across all servers, searchable by name,
+  description, and route, with a link to try it in the Playground.
 - **Playground**: opens an MCP session (`initialize`, `tools/list`) through
   the Gateway route, builds a form from each tool's input schema, and calls
   tools (`tools/call`) or any raw JSON-RPC method. JSON and event-stream
-  responses are supported.
-- **Live traffic**: recent requests refreshed every two seconds, with
-  per-route request count, error rate, and p50/p95 latency.
+  responses are supported. Calls and results stay in the page's memory.
+- **Traffic**: recent requests refreshed every two seconds, filtered by
+  route, method, tool, and outcome, with per-tool calls, error rate, and
+  p50/p95 latency, 100 rows at a time. **What do the outcomes mean?**
+  explains each outcome (see below).
+
+Filters are part of the URL, so a filtered view can be shared as a link.
+Polling stops while the browser tab is hidden. Traffic covers only the
+Gateway replica that served the page and its last 500 requests; use
+`/metrics` for history.
 
 ```bash
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
-# open http://localhost:18080/ui/
+# open http://localhost:18080/ui/ and sign in as admin with:
+kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
 
-The console has the Gateway's security boundary: it does not authenticate
-users, so anyone who can reach the Gateway can use it, exactly as they can
-call `/mcp/` routes. Keep the Service internal. To serve it through an
-Ingress, add the Ingress origin to `config.allowedOrigins`. Server and tool
-metadata is untrusted and is only rendered as text; the console's
-`Content-Security-Policy` allows only its own scripts and the Gateway's
-endpoints. `/v1/traffic` is per replica and lost on restart; use `/metrics`
-for durable monitoring.
+### Console login
+
+The console has one user, `admin`, like Argo CD's initial admin account. The
+chart generates a random 32-character password and a session signing key
+into the Secret `<release>-gateway-console-admin` (`kavrynt-gateway-console-admin`
+for the default release), keeps them across `helm upgrade`, and keeps the
+Secret on `helm uninstall`. The kubelet mounts the Secret into the Gateway;
+the Gateway's service account has no RBAC on Secrets.
+
+- Sessions are `HttpOnly`, `SameSite=Strict` cookies scoped to `/v1/` and
+  last 12 hours (`console.auth.sessionTTL`). They are `Secure` when the
+  request arrives over HTTPS or with `X-Forwarded-Proto: https`.
+- To change the password, update the Secret's `password` key. Every session
+  ends once the kubelet updates the mount (about a minute); no restart is
+  needed.
+- After five failed logins from one address within a minute, logins from
+  that address get `429` until the minute has passed. Behind an Ingress the
+  address is the Ingress, so the limit applies to everyone.
+- Failed and successful logins are logged with the client address. The
+  password and session tokens are never logged.
+- GitOps and `helm template` renders cannot look up the existing Secret and
+  would generate a new password on every render. Create your own Secret with
+  `password` and `sessionKey` keys and set `console.auth.existingSecret`.
+- `console.auth.enabled=false` (flag `--console-auth=false`) turns the login
+  off; `/v1/servers` and `/v1/traffic` are then open as before.
+
+**What the login does not protect.** It covers the console and the two
+endpoints it reads. It is not client authentication: `/mcp/` routes stay
+open, so anyone who can reach the Gateway can call every routed tool, with
+or without the console. `/v1/routes`, `/healthz`, `/readyz`, `/version`, and
+`/metrics` stay open too. Keep the Gateway Service internal. When the
+console is opened from an address other than loopback, it shows a banner
+saying that MCP routes are not authenticated.
+
+To serve the console through an Ingress, add the Ingress origin to
+`config.allowedOrigins`; the Gateway rejects logins and MCP calls from other
+browser origins. Server and tool metadata is untrusted and is only rendered
+as text; the console's `Content-Security-Policy` allows only its own scripts
+and the Gateway's endpoints.
 
 ## MCP traffic metrics
 
@@ -128,6 +178,9 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers |
 | `--allowed-origins` | none (chart: `config.allowedOrigins`) | Comma-separated browser origins accepted besides loopback (`KAVRYNT_ALLOWED_ORIGINS`) |
 | `--console` | `true` (chart: `console.enabled`) | Serve the web console at `/ui/` |
+| `--console-auth` | `true` (chart: `console.auth.enabled`) | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic` (with `--console`). MCP routes are not affected |
+| `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
+| `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
 | `--shutdown-timeout` | `10s` | Graceful shutdown timeout |
 
@@ -138,7 +191,9 @@ when run locally). The chart grants only `get`, `list`, `watch` on
 ## Run locally
 
 ```bash
-go run ./cmd/gateway --addr 127.0.0.1:8080   # uses your current kubeconfig context
+# Uses your current kubeconfig context. The console login needs a directory
+# with password and sessionKey files; turn it off for local work.
+go run ./cmd/gateway --addr 127.0.0.1:8080 --console-auth=false
 curl -fsS http://127.0.0.1:8080/v1/routes
 # console: http://127.0.0.1:8080/ui/
 ```
@@ -147,5 +202,5 @@ MCP servers on your workstation (for example `http://127.0.0.1:3000/mcp`)
 need `--allow-loopback-endpoints`; never set it in a cluster:
 
 ```bash
-go run ./cmd/gateway --addr 127.0.0.1:8080 --allow-loopback-endpoints
+go run ./cmd/gateway --addr 127.0.0.1:8080 --console-auth=false --allow-loopback-endpoints
 ```

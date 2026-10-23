@@ -27,6 +27,12 @@
     if (pg.session) pg.session.close();
   }
 
+  // resetPlayground forgets the session, calls, and results, for sign-out.
+  function resetPlayground() {
+    closePlayground();
+    Object.assign(pg, { route: "", session: null, tools: [], selected: null, mode: "form", last: null, history: [] });
+  }
+
   function gatewayURL(route) {
     return location.origin + "/mcp/" + route;
   }
@@ -539,5 +545,5 @@
     return h("div", {}, blocks);
   }
 
-  Kavrynt.playground = { closePlayground, renderPlayground };
+  Kavrynt.playground = { closePlayground, resetPlayground, renderPlayground };
 })();

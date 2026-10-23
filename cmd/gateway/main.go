@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"flag"
 	"fmt"
 	"log/slog"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
+	"github.com/kavrynt/kavrynt/internal/gateway/auth"
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
 	"github.com/kavrynt/kavrynt/internal/gateway/console"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
@@ -28,6 +30,9 @@ func main() {
 	requestTimeout := flag.Duration("request-timeout", api.DefaultRequestTimeout, "Upstream request timeout (event streams: until response headers)")
 	allowedOrigins := flag.String("allowed-origins", getenv("KAVRYNT_ALLOWED_ORIGINS", ""), "Comma-separated browser origins (scheme://host[:port]) allowed besides loopback; requests from other origins are rejected")
 	consoleEnabled := flag.Bool("console", true, "Serve the read-only web console at /ui/")
+	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic (with --console); MCP routes are not affected")
+	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
+	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	flag.Usage = func() {
@@ -35,6 +40,12 @@ func main() {
 		flag.PrintDefaults()
 	}
 	flag.Parse()
+
+	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL)
+	if err != nil {
+		slog.Error("configure console login", "error", err)
+		os.Exit(1)
+	}
 
 	cfg, err := ctrl.GetConfig()
 	if err != nil {
@@ -62,6 +73,9 @@ func main() {
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
 	}
+	if consoleAuth != nil {
+		handler.EnableConsoleAuth(consoleAuth)
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -81,7 +95,7 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	go func() {
-		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "version", build.Version)
+		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "consoleAuth", consoleAuth != nil, "version", build.Version)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -103,6 +117,22 @@ func main() {
 	}
 	slog.Info("gateway stopped")
 	os.Exit(exitCode)
+}
+
+// newConsoleAuth returns the console admin login, or nil when the console or
+// its login is off. Login without a credentials directory is refused rather
+// than leaving the console open by accident (SPEC-0005-R11).
+func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Duration) (*auth.Authenticator, error) {
+	if !consoleEnabled || !authEnabled {
+		return nil, nil
+	}
+	if strings.TrimSpace(dir) == "" {
+		return nil, errors.New("console login needs --console-auth-dir (a mounted Secret with password and sessionKey files); use --console-auth=false to run without it")
+	}
+	if ttl <= 0 {
+		return nil, fmt.Errorf("--console-session-ttl must be positive, got %s", ttl)
+	}
+	return auth.New(dir, ttl), nil
 }
 
 func splitList(value string) []string {

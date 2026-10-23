@@ -55,7 +55,8 @@ make demo-down          # delete the cluster
 - [ ] Record one full run (screen and audio) as a fallback.
 - [ ] Use a large terminal font, and a window at least 120 columns wide.
 - [ ] Open one terminal at the repository root and one browser tab. The
-      console tab works once the walkthrough has started.
+      console tab works once the walkthrough has started; sign in as `admin`
+      with the password step 1 prints.
 - [ ] Decide whether to connect a real agent (see below), and test it on the
       same network.
 - [ ] Confirm `0.0.5-beta.1` is published (`gh release view v0.0.5-beta.1`)
@@ -67,13 +68,13 @@ make demo-down          # delete the cluster
 | Step | Time | Say |
 | --- | --- | --- |
 | Intro | 0:30 | MCP servers multiply across teams. Platform teams need to know where they are, route to them consistently, and eventually control who calls what. Kavrynt treats MCP servers as Kubernetes resources. |
-| 1. Control plane | 0:45 | One chart. The Operator reconciles; the Gateway only proxies and is read-only on the API. |
+| 1. Control plane | 0:45 | One chart. The Operator reconciles; the Gateway only proxies and is read-only on the API. Like Argo CD, the chart generated a console admin password; sign in to the console with it. |
 | 2. Two teams | 0:45 | These are ordinary Deployments owned by two teams. No routes yet. Show the empty console. |
 | 3. kubectl | 1:00 | `MCPServer` is the API, so GitOps, RBAC, and admission work as they do for any resource. |
 | 4. kavryctl | 0:45 | The same API for developers. Routes are namespace-qualified, so names never collide across teams. |
 | 5. Discovery | 1:00 | The Operator ran MCP `initialize` and `tools/list` and recorded the tools in status. A failed discovery never affects `Ready`. Refresh the console. |
 | 6. Agent calls | 1:30 | One URL per server. A tool error is reported as a tool error, not a transport failure. |
-| 7. Live traffic | 1:00 | Method, tool, outcome, and latency per route, in the console and in Prometheus. Arguments are never recorded. |
+| 7. Live traffic | 1:00 | Method, tool, outcome, and latency per route and per tool, in the console and in Prometheus. Arguments are never recorded. Open Overview: the failing tool is listed. |
 | 8. Guardrails | 2:00 | What exists while authentication is not built yet: admission validation, credential stripping, origin checks, egress refusal, least-privilege RBAC. |
 | 9. The caveat | 0:45 | This call changed state, and nothing checked who made it. That is ADR-0003, the next roadmap item. |
 | 10. Lifecycle | 0:30 | Delete the resource and the route goes away. |
@@ -84,7 +85,8 @@ make demo-down          # delete the cluster
 Show this list as a slide as well. Do not soften it.
 
 - No client authentication or token exchange: anyone who can reach the Gateway
-  can call every routed tool. The console has no login.
+  can call every routed tool. The console has an admin login, but it does
+  not protect MCP routes.
 - No policy, no tool-level authorization, and no audit log.
 - HTTP MCP servers only. `stdio` manifests validate but are not proxied.
 - Kavrynt does not deploy MCP servers; it registers and routes to existing

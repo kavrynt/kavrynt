@@ -18,11 +18,9 @@ Order of work for the `Accepted` spec. Tasks 1 to 7 landed together on
 - [x] 6. Tools catalog with Playground links. (SPEC-0002-R04, SPEC-0002-R05)
 - [x] 7. Overview as the default view; diagnostics copy on server detail.
       (SPEC-0002-R01, SPEC-0002-R02, SPEC-0002-R03, SPEC-0002-R11)
-- [ ] 8. Narrow layout, keyboard and contrast pass with the e2e smoke test.
-      (SPEC-0002-R15, SPEC-0002-R16, SPEC-0002-R17) Layout, keyboard, and
-      contrast work is done and R16 is tested; the browser smoke test for
-      R09, R15, R17, and R20 is not.
+- [x] 8. Narrow layout, keyboard and contrast pass with the e2e smoke test.
+      (SPEC-0002-R15, SPEC-0002-R16, SPEC-0002-R17)
 - [x] 8a. Server health on cards and detail; traffic paging.
       (SPEC-0002-R19, SPEC-0002-R20)
-- [ ] 9. Set status to `Implemented`; update the Gateway component doc,
+- [x] 9. Set status to `Implemented`; update the Gateway component doc,
       README, and `docs/DEMO.md`.

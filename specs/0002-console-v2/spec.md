@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-22 |
 | Issue | to be opened |
@@ -107,8 +107,10 @@ wrong":
 ### Safety
 
 - **SPEC-0002-R12** When the console is loaded from a host other than
-  `localhost`, `127.0.0.1`, or `::1`, it MUST show a persistent notice that it
-  has no authentication and is reachable by anyone who can reach the Gateway.
+  `localhost`, `127.0.0.1`, or `::1` and console login is off, it MUST show a
+  persistent notice that it has no authentication and is reachable by anyone
+  who can reach the Gateway. (With login on, SPEC-0005-R16 states what is
+  still unauthenticated.)
 - **SPEC-0002-R13** The console MUST NOT write tool arguments, tool results,
   or JSON-RPC messages to `localStorage`, `sessionStorage`, IndexedDB, or
   cookies. Playground history MUST live in memory only.
@@ -194,10 +196,9 @@ When `Implemented`: update the Console section of
 
 - Browser-side logic is tested with Node's built-in test runner
   (`node --test`, Node 22 or later, no npm dependencies) against the pure
-  console modules. Node becomes a contributor toolchain requirement. A
-  headless-browser smoke test for R09, R15, and R17 needs a browser in CI and
-  is decided separately; until those requirements are tested the spec stays
-  `Accepted`.
+  console modules. Node becomes a contributor toolchain requirement.
+- R09, R15, R17, and R20 are tested by a Playwright smoke test
+  (`test/console-smoke`) in the Kind e2e job, pinned by its lockfile.
 - The Overview is the default view.
 - R19 and R20 were added after a hands-on review of the v1 console on the
   demo cluster: a server whose backend did not exist was shown as healthy,
