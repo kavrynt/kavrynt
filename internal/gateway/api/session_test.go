@@ -88,7 +88,7 @@ func TestWithoutConsoleLoginEndpointsAreOpen(t *testing.T) {
 		}
 	}
 	rr := get(h, "/v1/session")
-	if rr.Code != http.StatusOK || strings.TrimSpace(rr.Body.String()) != `{"enabled":false}` {
+	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"enabled":false`) {
 		t.Fatalf("GET /v1/session = %d %s, want login reported off", rr.Code, rr.Body)
 	}
 	r := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(`{}`))

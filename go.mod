@@ -3,6 +3,7 @@ module github.com/kavrynt/kavrynt
 go 1.26.0
 
 require (
+	github.com/go-jose/go-jose/v4 v4.1.5
 	github.com/prometheus/client_golang v1.25.0
 	github.com/prometheus/client_model v0.6.3
 	k8s.io/apimachinery v0.37.1

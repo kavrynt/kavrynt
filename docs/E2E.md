@@ -46,6 +46,12 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     client pod calls `tools/list` through the Gateway Service throughout a
     rolling restart of every Gateway replica and no call may fail; deleting
     the Operator leader lets the standby reconcile a new server to `Ready`.
+    MCP client authentication: deploys the e2e image's test authorization
+    server, turns `gateway.auth` on, and checks the `401` challenge and the
+    route's Protected Resource Metadata, that a valid token is accepted and
+    not forwarded, that tokens for another route, without the required scope,
+    or in the query string are refused, that refusals are recorded, and that
+    no token appears in metrics or logs; then turns it off again.
     Then deletes the `MCPServer` and confirms the route disappears.
 11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
     resources; the previous release (`UPGRADE_FROM_VERSION`, chart from

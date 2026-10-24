@@ -81,10 +81,47 @@
   // sessionState reads a GET /v1/session response (SPEC-0005-R07): login off,
   // signed in, or a login required.
   function sessionState(status, body) {
-    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "" };
-    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || "") };
-    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "" };
+    // mcpAuth: whether /mcp/ routes need access tokens (SPEC-0006-R15).
+    const mcpAuth = Boolean(body && body.mcpAuth === true);
+    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth };
+    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || ""), mcpAuth };
+    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth };
     return null;
+  }
+
+  // notice is the banner shown when the console is opened from an address
+  // other than loopback: whether MCP routes need tokens (SPEC-0006-R17) and
+  // what the console login protects (SPEC-0005-R16).
+  function notice(auth) {
+    if (auth && auth.mcpAuth) {
+      return {
+        title: "MCP routes require access tokens.",
+        text: "Agents need a token from a trusted authorization server for each route they call. " +
+          (auth.enabled ? "This login protects the console only; it does not authorize MCP calls." : "This console has no login: anyone who can reach this Gateway can read its servers and traffic."),
+      };
+    }
+    if (auth && auth.enabled) {
+      return {
+        title: "MCP routes are not authenticated.",
+        text: "This login protects the console only. Anyone who can reach this Gateway can call every routed tool. Keep the Gateway Service internal or turn on MCP client authentication.",
+      };
+    }
+    return {
+      title: "No login.",
+      text: "Anyone who can reach this Gateway can use this console and call every routed tool. Keep the Gateway Service internal or turn on MCP client authentication.",
+    };
+  }
+
+  // authFailureMessage explains a Playground call that MCP client
+  // authentication refused (SPEC-0006-R16), or returns null.
+  function authFailureMessage(status) {
+    switch (status) {
+      case 401: return "The Gateway needs a valid access token for this route: one from a trusted authorization server, with this route's resource URI as its audience, not expired. Paste it above.";
+      case 400: return "Send the access token in the Authorization header only; the Playground does this when you paste it above.";
+      case 403: return "The access token is valid but lacks a scope the Gateway requires. Request a token with the required scopes.";
+      case 503: return "The Gateway cannot load the signing keys of the token's authorization server right now. Try again in a minute.";
+      default: return null;
+    }
   }
 
   // loginMessage explains a failed POST /v1/session to the person signing in.
@@ -102,5 +139,5 @@
     }
   }
 
-  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage });
+  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, authFailureMessage, notice });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).state = {}));

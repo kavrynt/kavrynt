@@ -64,6 +64,17 @@ spec:
             - --allowed-origins
             - {{ join "," . | quote }}
             {{- end }}
+            {{- if include "gateway.clientAuthEnabled" . }}
+            - --auth
+            - --auth-resource-url
+            - {{ .Values.auth.resourceURL | trimSuffix "/" | quote }}
+            - --auth-issuers
+            - {{ toJson .Values.auth.issuers | quote }}
+            {{- with .Values.auth.requiredScopes }}
+            - --auth-required-scopes
+            - {{ join "," . | quote }}
+            {{- end }}
+            {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true

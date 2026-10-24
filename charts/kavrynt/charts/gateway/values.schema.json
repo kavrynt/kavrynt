@@ -225,6 +225,49 @@
         }
       }
     },
+    "auth": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "enabled": {
+          "type": "boolean"
+        },
+        "resourceURL": {
+          "type": "string",
+          "pattern": "^(https://[^/?#\\s@]+/?)?$"
+        },
+        "issuers": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+              "issuer"
+            ],
+            "properties": {
+              "issuer": {
+                "type": "string",
+                "pattern": "^https?://\\S+$"
+              },
+              "jwksURI": {
+                "type": "string",
+                "pattern": "^(https?://\\S+)?$"
+              },
+              "allowHTTP": {
+                "type": "boolean"
+              }
+            }
+          }
+        },
+        "requiredScopes": {
+          "type": "array",
+          "items": {
+            "type": "string",
+            "pattern": "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"
+          }
+        }
+      }
+    },
     "console": {
       "type": "object",
       "additionalProperties": false,

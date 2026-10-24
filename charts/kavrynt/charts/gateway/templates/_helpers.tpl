@@ -41,6 +41,28 @@ global so the Operator reads the same list.
 {{- join "," ((.Values.global | default dict).watchNamespaces | default list) -}}
 {{- end -}}
 
+{{/*
+"true" when MCP client authentication is on. Fails rendering for settings the
+Gateway would refuse at start-up (SPEC-0006-R02, SPEC-0006-R20).
+*/}}
+{{- define "gateway.clientAuthEnabled" -}}
+{{- $auth := .Values.auth | default dict -}}
+{{- if $auth.enabled -}}
+{{- if not $auth.resourceURL -}}
+{{- fail "auth.resourceURL is required when auth.enabled is true: the Gateway's external https origin" -}}
+{{- end -}}
+{{- if not $auth.issuers -}}
+{{- fail "auth.issuers needs at least one trusted authorization server when auth.enabled is true" -}}
+{{- end -}}
+{{- range $auth.issuers -}}
+{{- if and (or (hasPrefix "http://" .issuer) (hasPrefix "http://" (.jwksURI | default ""))) (not .allowHTTP) -}}
+{{- fail (printf "auth.issuers: %s uses http; set allowHTTP: true for an in-cluster authorization server" .issuer) -}}
+{{- end -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{/* "true" when the console admin login is on (SPEC-0005). */}}
 {{- define "gateway.consoleAuthEnabled" -}}
 {{- $console := .Values.console | default dict -}}

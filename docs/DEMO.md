@@ -84,9 +84,10 @@ make demo-down          # delete the cluster
 
 Show this list as a slide as well. Do not soften it.
 
-- No client authentication or token exchange: anyone who can reach the Gateway
-  can call every routed tool. The console has an admin login, but it does
-  not protect MCP routes.
+- MCP client authentication exists but is off by default, and there is no
+  token exchange: without it, anyone who can reach the Gateway can call every
+  routed tool. The console has an admin login, but it does not protect MCP
+  routes.
 - No policy, no tool-level authorization, and no audit log.
 - HTTP MCP servers only. `stdio` manifests validate but are not proxied.
 - Kavrynt does not deploy MCP servers; it registers and routes to existing
@@ -124,8 +125,10 @@ do not offer. The Gateway records that request as `http_get` with outcome
   ([ADR-0002](ADR-0002-Remove-In-Cluster-Registry.md)), so namespaces, RBAC,
   GitOps, and admission apply without a separate registry service.
 - **Authentication and authorization.** Designed in
-  [ADR-0003](ADR-0003-Runtime-Authorization.md), not implemented. Until then,
-  the Gateway never forwards caller credentials upstream.
+  [ADR-0003](ADR-0003-Runtime-Authorization.md). Client authentication (OAuth
+  2.1 bearer tokens, per-route audience) is implemented and opt-in; policy
+  and audit are not yet. The Gateway never forwards caller credentials
+  upstream.
 - **Multi-tenancy.** Routes are namespace-qualified, and
   `global.watchNamespaces` limits the Gateway to listed namespaces with
   per-namespace Roles. There is no per-tenant policy yet.

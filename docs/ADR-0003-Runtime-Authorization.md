@@ -3,7 +3,9 @@
 ## Status
 
 Accepted (2026-10-02). Implemented so far: no token passthrough (header
-stripping) for `0.0.2-beta.1`. Everything else in this ADR is design only.
+stripping) for `0.0.2-beta.1`; the Gateway as an OAuth 2.1 resource server
+(SPEC-0006, opt-in) and the Gateway-bypass NetworkPolicy (SPEC-0007).
+Everything else in this ADR is design only.
 
 Plane 4 of `kavrynt-cloud/docs/ADR-0006-Identity-Planes.md`. Threats are
 tracked in `kavrynt-cloud/docs/THREAT-0001-System-Threat-Model.md`.

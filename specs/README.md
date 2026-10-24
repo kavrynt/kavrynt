@@ -130,7 +130,7 @@ against the assistant's summary of them.
 | [0003](0003-helm-chart-validation/spec.md) | Helm chart values validation and unit tests | Implemented |
 | [0004](0004-reported-server-version/spec.md) | Reported MCP server version | Implemented |
 | [0005](0005-console-admin-login/spec.md) | Console admin login | Implemented |
-| [0006](0006-mcp-client-authentication/spec.md) | MCP client authentication | Accepted |
+| [0006](0006-mcp-client-authentication/spec.md) | MCP client authentication | Implemented |
 | [0007](0007-gateway-bypass-protection/spec.md) | Gateway bypass protection | Implemented |
 | [0008](0008-high-availability/spec.md) | High availability | Implemented |
 | [0009](0009-crd-lifecycle-and-upgrades/spec.md) | CRD lifecycle and upgrades | Implemented |

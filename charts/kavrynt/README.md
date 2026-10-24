@@ -180,9 +180,10 @@ Operator; it does not need to be restored.
 
 ## Security notes
 
-- The Gateway does not authenticate clients yet: anyone who can reach it can
-  call every routed tool through `/mcp/`. Keep the Gateway Service
-  `ClusterIP`.
+- MCP client authentication is off by default: until `gateway.auth.enabled`
+  is set, anyone who can reach the Gateway can call every routed tool through
+  `/mcp/`. Keep the Gateway Service `ClusterIP` until it is on (see
+  "Authenticating MCP clients").
 - The console has a single `admin` login. The chart generates its password
   into the Secret `kavrynt-gateway-console-admin` (kept on uninstall); read it
   with `kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d`. The login protects the console and
@@ -193,6 +194,28 @@ Operator; it does not need to be restored.
   access. Containers run as non-root with a read-only root filesystem.
 
 See [SECURITY.md](../../SECURITY.md) for known limitations.
+
+## Authenticating MCP clients
+
+The Gateway can require an OAuth 2.1 bearer token from your authorization
+server on every MCP call. Each route accepts only tokens whose audience is
+its resource URI, `<resourceURL>/mcp/<namespace>.<name>`.
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set gateway.auth.enabled=true \
+  --set gateway.auth.resourceURL=https://mcp.example.com \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]' \
+  --set 'gateway.auth.requiredScopes={mcp:tools}'
+```
+
+`resourceURL` is the origin agents use to reach the Gateway (no path).
+Issuers must be https; an in-cluster authorization server on plain http
+needs `allowHTTP: true`. The chart refuses to render authentication without
+a resource URL or an issuer. Agents without a valid token get `401` with a
+`resource_metadata` URL that tells them where to get one. Token rules and
+answers: [Gateway: MCP client authentication](../../docs/components/gateway/README.md#mcp-client-authentication).
 
 ## Keeping traffic on the Gateway
 
@@ -302,7 +325,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.serviceAccount.create` | bool | `true` | Create the Gateway service account |
 | `gateway.serviceAccount.name` | string | `""` | Service account name; generated when empty |
 | `gateway.rbac.create` | bool | `true` | Create read-only (`get`, `list`, `watch`) `MCPServer` RBAC |
-| `gateway.service.type` | string | `ClusterIP` | Service type. Keep `ClusterIP`; the Gateway does not authenticate clients. |
+| `gateway.service.type` | string | `ClusterIP` | Service type. Keep `ClusterIP` unless MCP client authentication is on. |
 | `gateway.service.port` | int | `8080` | Service port |
 | `gateway.config.addr` | string | `":8080"` | Listen address |
 | `gateway.config.requestTimeout` | string | `"30s"` | Upstream request timeout; event streams only until response headers |
@@ -310,6 +333,10 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |
 | `gateway.config.shutdownTimeout` | string | `10s` | Then wait this long for in-flight requests (whole seconds). The termination grace period is both plus 5 seconds |
+| `gateway.auth.enabled` | bool | `false` | Require a bearer access token for the route on every `/mcp/` request (MCP client authentication) |
+| `gateway.auth.resourceURL` | string | `""` | The Gateway's external https origin; required when enabled |
+| `gateway.auth.issuers` | list | `[]` | Trusted authorization servers: `issuer` (equals the tokens' `iss`), optional `jwksURI`, `allowHTTP`; at least one when enabled |
+| `gateway.auth.requiredScopes` | list | `[]` | Scopes every token must carry |
 | `gateway.console.enabled` | bool | `true` | Serve the read-only web console at `/ui/` |
 | `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |

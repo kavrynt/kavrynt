@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-23 |
 | Issue | [#38](https://github.com/kavrynt/kavrynt/issues/38) |
