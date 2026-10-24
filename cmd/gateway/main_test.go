@@ -81,7 +81,7 @@ func TestShutdownDrainsBeforeClosing(t *testing.T) {
 
 // Verifies SPEC-0006-R01 and SPEC-0006-R02.
 func TestClientAuthConfiguration(t *testing.T) {
-	if a, err := newClientAuth(false, "", "", ""); a != nil || err != nil {
+	if a, err := newClientAuth(false, "", "", "", ""); a != nil || err != nil {
 		t.Fatalf("auth off: %v, %v; want nothing", a, err)
 	}
 	issuers := `[{"issuer":"https://as.example.com"}]`
@@ -94,11 +94,11 @@ func TestClientAuthConfiguration(t *testing.T) {
 		"http issuer":          {"https://mcp.example.com", `[{"issuer":"http://as.example.com"}]`},
 		"http resource URL":    {"http://mcp.example.com", issuers},
 	} {
-		if _, err := newClientAuth(true, c.url, c.issuers, ""); err == nil {
+		if _, err := newClientAuth(true, c.url, c.issuers, "", ""); err == nil {
 			t.Errorf("%s: authentication configured, want a refusal to start", name)
 		}
 	}
-	if a, err := newClientAuth(true, "https://mcp.example.com", issuers, "mcp:tools"); err != nil || a == nil {
+	if a, err := newClientAuth(true, "https://mcp.example.com", issuers, "mcp:tools", ""); err != nil || a == nil {
 		t.Fatalf("valid configuration: %v, %v", a, err)
 	}
 }

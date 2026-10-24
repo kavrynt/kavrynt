@@ -54,8 +54,12 @@ settings (SPEC-0014-R02).
 {{- fail "gateway.auth: MCP client authentication is on by default. Set gateway.auth.resourceURL (the Gateway's external https origin) and gateway.auth.issuers to trust your authorization server, or set gateway.auth.enabled=false to run with unauthenticated MCP routes" -}}
 {{- end -}}
 {{- range $auth.issuers -}}
-{{- if and (or (hasPrefix "http://" .issuer) (hasPrefix "http://" (.jwksURI | default ""))) (not .allowHTTP) -}}
+{{- $tokenEndpoint := (.tokenExchange | default dict).tokenEndpoint | default "" -}}
+{{- if and (or (hasPrefix "http://" .issuer) (hasPrefix "http://" (.jwksURI | default "")) (hasPrefix "http://" $tokenEndpoint)) (not .allowHTTP) -}}
 {{- fail (printf "auth.issuers: %s uses http; set allowHTTP: true for an in-cluster authorization server" .issuer) -}}
+{{- end -}}
+{{- if and .tokenExchange (not $auth.tokenExchangeSecret) -}}
+{{- fail (printf "auth.issuers: %s has tokenExchange settings; set auth.tokenExchangeSecret to the Secret with its client secret" .issuer) -}}
 {{- end -}}
 {{- end -}}
 true

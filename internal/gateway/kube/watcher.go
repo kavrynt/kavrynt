@@ -138,6 +138,7 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 			credential := *server.Spec.Credential
 			route.Credential = &credential
 		}
+		route.TokenExchange = server.Spec.TokenExchange.Copy()
 		routes = append(routes, route)
 	}
 	return routes
@@ -171,6 +172,9 @@ func Servers(items []kavryntv1alpha1.MCPServer) []model.Server {
 		}
 		if item.Spec.Credential != nil {
 			server.Credential = &model.ServerCredential{Required: true}
+		}
+		if exchange := item.Spec.TokenExchange; exchange != nil {
+			server.TokenExchange = &model.ServerTokenExchange{Audience: exchange.Audience}
 		}
 		for _, condition := range item.Status.Conditions {
 			server.Conditions = append(server.Conditions, model.Condition{

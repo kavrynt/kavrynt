@@ -104,3 +104,73 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "additional properties 'audience' not allowed"
+
+  # Verifies SPEC-0015-R02: the token exchange Secret is mounted by the
+  # kubelet, and the Gateway gets no RBAC on Secrets.
+  - it: mounts the token exchange Secret read-only
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+          tokenExchange:
+            clientID: kavrynt-gateway
+            clientSecretKey: client-secret
+      gateway.auth.tokenExchangeSecret: kavrynt-token-exchange
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --token-exchange-secret-dir=/etc/kavrynt/token-exchange
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: '[{"issuer":"https://login.example.com","tokenExchange":{"clientID":"kavrynt-gateway","clientSecretKey":"client-secret"}}]'
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: token-exchange
+            mountPath: /etc/kavrynt/token-exchange
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: token-exchange
+            secret:
+              secretName: kavrynt-token-exchange
+              defaultMode: 0444
+
+  # Verifies SPEC-0015-R02.
+  - it: refuses token exchange settings without their Secret
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+          tokenExchange:
+            clientID: kavrynt-gateway
+            clientSecretKey: client-secret
+    asserts:
+      - failedTemplate:
+          errorMessage: "auth.issuers: https://login.example.com has tokenExchange settings; set auth.tokenExchangeSecret to the Secret with its client secret"
+
+  # Verifies SPEC-0015-R05.
+  - it: refuses an http token endpoint unless allowHTTP is set
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.tokenExchangeSecret: kavrynt-token-exchange
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+          tokenExchange:
+            clientID: kavrynt-gateway
+            clientSecretKey: client-secret
+            tokenEndpoint: http://login.example.com/token
+    asserts:
+      - failedTemplate:
+          errorMessage: "auth.issuers: https://login.example.com uses http; set allowHTTP: true for an in-cluster authorization server"
+
+  # Verifies SPEC-0015-R02.
+  - it: mounts no token exchange Secret without authentication
+    set:
+      gateway.auth.enabled: false
+      gateway.auth.tokenExchangeSecret: kavrynt-token-exchange
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --token-exchange-secret-dir=/etc/kavrynt/token-exchange

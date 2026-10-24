@@ -30,7 +30,8 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 > loop works. MCP client authentication is on by default: an install names
 > your authorization server or opts out explicitly. Tool authorization policy
 > and audit events are available but off by default (the production profile
-> turns audit on). Approvals and token exchange are not implemented yet. Run
+> turns audit on). Servers that need the user get the caller's token
+> exchanged for their own audience. Approvals are not implemented yet. Run
 > this version only in trusted development or evaluation clusters.
 
 ## TL;DR
@@ -425,8 +426,9 @@ the current release is not production-security complete:
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
   to MCP servers, and drops upstream `Set-Cookie`. MCP servers that need
   their own credential get it from a Secret the platform team manages,
-  pinned to the server's endpoint; token exchange is not implemented yet
-  (ADR-0003).
+  pinned to the server's endpoint. Servers that need the user instead get
+  the caller's token exchanged for one with their own audience (RFC 8693);
+  the caller's token itself never reaches them.
 - Gateway can decide every MCP call with a Rego tool authorization policy
   (`gateway.policy`, off by default), denying anything it does not allow.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
@@ -474,7 +476,7 @@ The release process is documented in [docs/RELEASE.md](docs/RELEASE.md).
 The full roadmap is in [ROADMAP.md](ROADMAP.md). The next product milestones
 are:
 
-1. token exchange for upstream servers
+1. approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 2. the console signed in through the authorization server;
 3. audit delivery to Kavrynt Cloud and usage events;

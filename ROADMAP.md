@@ -25,6 +25,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   with `kavryctl audit verify`.
 - Opt-in tool authorization policy: Rego evaluated in the Gateway, deny by
   default, from a ConfigMap.
+- Token exchange (RFC 8693) for MCP servers that need the user: the caller's
+  token is exchanged for one with the server's audience.
 - MCP Streamable HTTP checks on every route: supported protocol revisions,
   no batches, and `Mcp-Method`/`Mcp-Name` headers that match the body.
 - MCP client authentication, on by default with an explicit opt-out for
@@ -33,7 +35,7 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 
 ## Next
 
-1. Token exchange for upstream servers
+1. Approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 2. The console signed in through the authorization server.
 3. Audit delivery to Kavrynt Cloud and usage events.

@@ -36,16 +36,25 @@ type keySet struct {
 	client *http.Client
 	now    func() time.Time
 
-	mu        sync.Mutex
-	jwksURI   string
-	keySet    jose.JSONWebKeySet
-	fetchedAt time.Time // last successful fetch
-	triedAt   time.Time // last attempt, successful or not
-	lastErr   error
+	mu      sync.Mutex
+	jwksURI string
+	// tokenEndpoint is the configured or discovered token endpoint, for
+	// token exchange (SPEC-0015).
+	tokenEndpoint string
+	// discoveredAt is the last metadata fetch, successful or not.
+	discoveredAt time.Time
+	keySet       jose.JSONWebKeySet
+	fetchedAt    time.Time // last successful fetch
+	triedAt      time.Time // last attempt, successful or not
+	lastErr      error
 }
 
 func newKeySet(issuer Issuer, client *http.Client, now func() time.Time) *keySet {
-	return &keySet{issuer: issuer, client: client, now: now, jwksURI: issuer.JWKSURI}
+	s := &keySet{issuer: issuer, client: client, now: now, jwksURI: issuer.JWKSURI}
+	if issuer.TokenExchange != nil {
+		s.tokenEndpoint = issuer.TokenExchange.TokenEndpoint
+	}
+	return s
 }
 
 // keys returns the keys that may have signed a token with key ID kid. It
@@ -91,12 +100,10 @@ func (s *keySet) fetch(ctx context.Context) {
 	defer cancel()
 
 	if s.jwksURI == "" {
-		jwksURI, err := s.discover(ctx)
-		if err != nil {
+		if err := s.discover(ctx); err != nil {
 			s.lastErr = err
 			return
 		}
-		s.jwksURI = jwksURI
 	}
 	var set jose.JSONWebKeySet
 	if err := s.getJSON(ctx, s.jwksURI, &set); err != nil {
@@ -125,29 +132,59 @@ func (s *keySet) fetch(ctx context.Context) {
 	s.lastErr = nil
 }
 
-// discover finds jwks_uri in the authorization server metadata (RFC 8414),
-// then in OpenID Connect discovery, and checks the metadata names the
-// configured issuer.
-func (s *keySet) discover(ctx context.Context) (string, error) {
+// discover reads the authorization server metadata (RFC 8414, then OpenID
+// Connect discovery), checks it names the configured issuer, and fills in
+// jwks_uri and token_endpoint where they are not configured. The caller
+// holds s.mu.
+func (s *keySet) discover(ctx context.Context) error {
+	s.discoveredAt = s.now()
 	var errs []error
 	for _, metadataURL := range metadataURLs(s.issuer.Issuer) {
 		var metadata struct {
-			Issuer  string `json:"issuer"`
-			JWKSURI string `json:"jwks_uri"`
+			Issuer        string `json:"issuer"`
+			JWKSURI       string `json:"jwks_uri"`
+			TokenEndpoint string `json:"token_endpoint"`
 		}
 		if err := s.getJSON(ctx, metadataURL, &metadata); err != nil {
 			errs = append(errs, err)
 			continue
 		}
 		if metadata.Issuer != s.issuer.Issuer {
-			return "", fmt.Errorf("authorization server metadata names issuer %q, not %q", metadata.Issuer, s.issuer.Issuer)
+			return fmt.Errorf("authorization server metadata names issuer %q, not %q", metadata.Issuer, s.issuer.Issuer)
 		}
-		if err := checkURL(metadata.JWKSURI, s.issuer.AllowHTTP); err != nil {
-			return "", fmt.Errorf("authorization server metadata: jwks_uri %w", err)
+		if s.jwksURI == "" {
+			if err := checkURL(metadata.JWKSURI, s.issuer.AllowHTTP); err != nil {
+				return fmt.Errorf("authorization server metadata: jwks_uri %w", err)
+			}
+			s.jwksURI = metadata.JWKSURI
 		}
-		return metadata.JWKSURI, nil
+		if s.tokenEndpoint == "" && metadata.TokenEndpoint != "" {
+			if err := checkURL(metadata.TokenEndpoint, s.issuer.AllowHTTP); err != nil {
+				return fmt.Errorf("authorization server metadata: token_endpoint %w", err)
+			}
+			s.tokenEndpoint = metadata.TokenEndpoint
+		}
+		return nil
 	}
-	return "", fmt.Errorf("discover authorization server metadata: %w", errors.Join(errs...))
+	return fmt.Errorf("discover authorization server metadata: %w", errors.Join(errs...))
+}
+
+// endpoint returns the issuer's token endpoint, from its settings or its
+// metadata, fetching the metadata at most once per minRefetch.
+func (s *keySet) endpoint(ctx context.Context) (string, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.tokenEndpoint == "" && (s.discoveredAt.IsZero() || s.now().Sub(s.discoveredAt) >= minRefetch) {
+		ctx, cancel := context.WithTimeout(ctx, fetchTimeout)
+		defer cancel()
+		if err := s.discover(ctx); err != nil {
+			return "", err
+		}
+	}
+	if s.tokenEndpoint == "" {
+		return "", errors.New("the authorization server metadata names no token_endpoint")
+	}
+	return s.tokenEndpoint, nil
 }
 
 // metadataURLs are the RFC 8414 and OpenID Connect discovery URLs of an

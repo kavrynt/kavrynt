@@ -66,6 +66,10 @@ const (
 	// The request is not a well-formed MCP Streamable HTTP request
 	// (SPEC-0018-R06).
 	outcomeProtocolError = "protocol_error"
+
+	// The caller's token could not be exchanged for one for the server
+	// (SPEC-0015-R06).
+	outcomeExchangeFailed = "exchange_failed"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.

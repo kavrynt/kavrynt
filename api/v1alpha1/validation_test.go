@@ -134,3 +134,46 @@ func TestCredentialHeader(t *testing.T) {
 		t.Fatalf("raw value = %q", got)
 	}
 }
+
+// Verifies SPEC-0015-R01.
+func TestValidateTokenExchange(t *testing.T) {
+	spec := func(exchange *MCPServerTokenExchange) MCPServerSpec {
+		return MCPServerSpec{Version: "1", Transport: "http", Endpoint: "http://tickets.svc:8080", TokenExchange: exchange}
+	}
+	for _, exchange := range []*MCPServerTokenExchange{
+		{Audience: "https://tickets.example.com"},
+		{Audience: "urn:example:tickets", Scopes: []string{"tickets:read", "tickets:write"}},
+	} {
+		s := server("tickets", spec(exchange))
+		if err := s.Validate(); err != nil {
+			t.Errorf("token exchange %+v rejected: %v", exchange, err)
+		}
+	}
+	for want, exchange := range map[string]*MCPServerTokenExchange{
+		"audience must be an absolute URI":  {Audience: ""},
+		"audience must be an absolute URI ": {Audience: "tickets"},
+		" audience must be an absolute URI": {Audience: "https://tickets.example.com#x"},
+		"must be OAuth scope tokens":        {Audience: "https://t", Scopes: []string{"two words"}},
+		"at most 20 scopes":                 {Audience: "https://t", Scopes: make([]string, 21)},
+	} {
+		s := server("tickets", spec(exchange))
+		if err := s.Validate(); err == nil || !strings.Contains(err.Error(), strings.TrimSpace(want)) {
+			t.Errorf("token exchange %+v: err = %v, want %q", exchange, err, strings.TrimSpace(want))
+		}
+	}
+	both := spec(&MCPServerTokenExchange{Audience: "https://t"})
+	both.Credential = &MCPServerCredential{}
+	if s := server("tickets", both); s.Validate() == nil || !strings.Contains(s.Validate().Error(), "mutually exclusive") {
+		t.Errorf("credential and token exchange together: err = %v", s.Validate())
+	}
+	stdio := server("local", MCPServerSpec{Version: "1", Transport: "stdio", Command: "/bin/server", TokenExchange: &MCPServerTokenExchange{Audience: "https://t"}})
+	if err := stdio.Validate(); err == nil || !strings.Contains(err.Error(), "spec.tokenExchange is only supported with spec.transport http") {
+		t.Errorf("stdio token exchange: err = %v", err)
+	}
+	original := &MCPServer{Spec: spec(&MCPServerTokenExchange{Audience: "https://t", Scopes: []string{"a"}})}
+	copied := original.DeepCopyObject().(*MCPServer)
+	copied.Spec.TokenExchange.Scopes[0] = "changed"
+	if original.Spec.TokenExchange.Scopes[0] != "a" {
+		t.Fatal("DeepCopyObject shares spec.tokenExchange.scopes")
+	}
+}

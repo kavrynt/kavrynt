@@ -482,3 +482,29 @@ func TestDiscoveryUsesTheStoredCredential(t *testing.T) {
 		t.Fatal("the credential reached the MCPServer")
 	}
 }
+
+// Verifies SPEC-0015-R10: a server that gets per-caller tokens is not
+// discovered; ToolsDiscovered says why and Ready is unaffected.
+func TestDiscoverySkipsTokenExchangeServers(t *testing.T) {
+	spec := validSpec()
+	spec.TokenExchange = &kavryntv1alpha1.MCPServerTokenExchange{Audience: "https://tickets.example.com"}
+	k8sClient := newClient(t, newServer(spec))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	clock := &testClock{now: time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+
+	reconcileWith(t, reconciler)
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	reconcileWith(t, reconciler)
+	server := get(t, k8sClient)
+	discovered := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discovered == nil || discovered.Status != metav1.ConditionFalse || discovered.Reason != kavryntv1alpha1.ReasonCallerTokenRequired {
+		t.Fatalf("ToolsDiscovered = %+v, want False/CallerTokenRequired", discovered)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("token exchange changed Ready")
+	}
+	if discoverer.calls != 0 {
+		t.Fatalf("discovery ran %d times for a server that needs a caller's token", discoverer.calls)
+	}
+}

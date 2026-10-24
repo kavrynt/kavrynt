@@ -181,6 +181,18 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 		refresh = DefaultToolRefreshInterval
 	}
 	attempt := &discoveryAttempt{generation: server.Generation, endpoint: server.Spec.Endpoint}
+	if server.Spec.TokenExchange != nil {
+		// Its tools are listed with a caller's exchanged token, and the
+		// Operator has no caller (SPEC-0015-R10).
+		attempt.next = now.Add(refresh)
+		attempt.condition = metav1.Condition{
+			Type:    kavryntv1alpha1.ConditionToolsDiscovered,
+			Status:  metav1.ConditionFalse,
+			Reason:  kavryntv1alpha1.ReasonCallerTokenRequired,
+			Message: "the server gets per-caller tokens by token exchange; the Operator has no caller token to list its tools with",
+		}
+		return attempt
+	}
 
 	var header http.Header
 	reason := kavryntv1alpha1.ReasonDiscoveryFailed

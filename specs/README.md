@@ -139,7 +139,7 @@ against the assistant's summary of them.
 | [0012](0012-tool-authorization-policy/spec.md) | Tool authorization policy | Implemented |
 | [0013](0013-audit-events/spec.md) | Audit events | Implemented |
 | [0014](0014-client-auth-by-default/spec.md) | MCP client authentication on by default | Implemented |
-| [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Accepted |
+| [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Implemented |
 | [0016](0016-policy-filtered-tools-list/spec.md) | Policy-filtered tools/list | Implemented |
 | [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Draft |
 | [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Implemented |
