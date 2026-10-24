@@ -133,7 +133,7 @@ against the assistant's summary of them.
 | [0006](0006-mcp-client-authentication/spec.md) | MCP client authentication | Accepted |
 | [0007](0007-gateway-bypass-protection/spec.md) | Gateway bypass protection | Accepted |
 | [0008](0008-high-availability/spec.md) | High availability | Accepted |
-| [0009](0009-crd-lifecycle-and-upgrades/spec.md) | CRD lifecycle and upgrades | Accepted |
+| [0009](0009-crd-lifecycle-and-upgrades/spec.md) | CRD lifecycle and upgrades | Implemented |
 | [0010](0010-alerts-and-runbooks/spec.md) | Alerts and runbooks | Accepted |
 | [0011](0011-upstream-credentials/spec.md) | Upstream credentials | Accepted |
 | [0012](0012-tool-authorization-policy/spec.md) | Tool authorization policy | Accepted |

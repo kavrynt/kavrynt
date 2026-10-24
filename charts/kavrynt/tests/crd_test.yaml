@@ -1,0 +1,61 @@
+suite: crd
+templates:
+  - charts/operator/templates/crd.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0009-R01.
+  - it: renders the MCPServer CRD as a template by default
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: CustomResourceDefinition
+      - equal:
+          path: metadata.name
+          value: mcpservers.kavrynt.io
+      - equal:
+          path: metadata.labels["app.kubernetes.io/managed-by"]
+          value: Helm
+      - equal:
+          path: spec.versions[0].name
+          value: v1alpha1
+      - equal:
+          path: spec.names.kind
+          value: MCPServer
+
+  # Verifies SPEC-0009-R04.
+  - it: copies the CRD spec from the file without changing it
+    asserts:
+      - equal:
+          path: spec.versions[0].subresources
+          value:
+            status: {}
+      - exists:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.status.properties.serverInfo
+      - exists:
+          path: spec.versions[0].additionalPrinterColumns
+
+  # Verifies SPEC-0009-R02.
+  - it: keeps the CRD on uninstall and rollback by default
+    asserts:
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+
+  # Verifies SPEC-0009-R02.
+  - it: lets Helm delete the CRD when keep is off
+    set:
+      operator.crds.keep: false
+    asserts:
+      - notExists:
+          path: metadata.annotations
+
+  # Verifies SPEC-0009-R03.
+  - it: renders no CRD when CRDs are managed outside the release
+    set:
+      operator.crds.install: false
+    asserts:
+      - hasDocuments:
+          count: 0

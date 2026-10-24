@@ -114,8 +114,10 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
 ## Manifests
 
 - CRD: `config/crd/bases/kavrynt.io_mcpservers.yaml`, copied to
-  `charts/kavrynt/charts/k8s-operator/crds/`. Keep both identical; the release
-  contract check enforces it.
+  `charts/kavrynt/charts/k8s-operator/files/`. Keep both identical; the release
+  contract check enforces it. The chart renders the copy as a template, so
+  `helm upgrade` updates the CRD, and keeps it on uninstall and rollback
+  (`operator.crds.install`, `operator.crds.keep`).
 - Raw kustomize manifests: `config/`. Sample: `config/samples/`.
 
 ## Run locally

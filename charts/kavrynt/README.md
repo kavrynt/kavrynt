@@ -24,7 +24,8 @@ This chart installs the Kavrynt Kubernetes runtime:
 - Kubernetes Operator (validates `MCPServer` resources, sets
   `Accepted`/`Ready`, lists their tools into status, optionally syncs them to
   Kavrynt Cloud)
-- the `MCPServer` CRD (`crds/` of the operator subchart)
+- the `MCPServer` CRD, installed and upgraded with the chart and kept on
+  uninstall and rollback
 
 Component subcharts are vendored under `charts/`, so no
 `helm dependency build` is needed. The chart version, the app version, and
@@ -61,9 +62,43 @@ Expected service: `kavrynt-gateway`.
 
 ## Upgrading
 
-Helm installs CRDs only on first install and never upgrades them. Before
-`helm upgrade`, apply the CRD from the target version's chart
-(`charts/k8s-operator/crds/`) with `kubectl apply --server-side`.
+`helm upgrade` upgrades the Gateway, the Operator, and the `MCPServer` CRD
+together:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version <version> \
+  --namespace kavrynt-system
+```
+
+### Once, when upgrading from 0.0.5-beta.1 or earlier
+
+Those releases installed the CRD outside Helm's control (from the chart's
+`crds/` directory), so Helm refuses to take it over and the upgrade fails
+before changing anything, naming `mcpservers.kavrynt.io`. Let Helm adopt the
+CRD first; use your release name and namespace:
+
+```bash
+kubectl label crd mcpservers.kavrynt.io app.kubernetes.io/managed-by=Helm --overwrite
+kubectl annotate crd mcpservers.kavrynt.io \
+  meta.helm.sh/release-name=kavrynt meta.helm.sh/release-namespace=kavrynt-system --overwrite
+```
+
+Then run `helm upgrade` as above. Existing `MCPServer` resources are kept.
+
+### Rolling back
+
+`helm rollback` restores the previous Gateway and Operator. The CRD and every
+`MCPServer` stay in place (the CRD carries `helm.sh/resource-policy: keep`);
+the CRD keeps the newer schema, which older releases accept because schema
+changes are additive within `v1alpha1`.
+
+### Managing the CRD yourself
+
+Set `operator.crds.install=false` when CRDs are applied outside this release,
+for example by a cluster administrator when the installer may not update
+CRDs. Apply `charts/k8s-operator/files/kavrynt.io_mcpservers.yaml` from the
+target version's chart with `kubectl apply --server-side` before upgrading.
 
 ## Uninstalling the chart
 
@@ -71,12 +106,26 @@ Helm installs CRDs only on first install and never upgrades them. Before
 helm uninstall kavrynt -n kavrynt-system
 ```
 
-Helm keeps the `MCPServer` CRD and its custom resources. Delete them
-explicitly once you have confirmed that cluster-scoped data can be removed:
+Helm keeps the `MCPServer` CRD and its custom resources (keep policy). Delete
+them explicitly once you have confirmed that cluster-scoped data can be
+removed:
 
 ```bash
 kubectl delete crd mcpservers.kavrynt.io
 ```
+
+## Backing up
+
+`MCPServer` resources are ordinary Kubernetes objects: the cluster's backup
+(etcd snapshots, Velero) covers them. To export them by hand:
+
+```bash
+kubectl get mcpservers.kavrynt.io -A -o yaml > mcpservers-backup.yaml
+```
+
+Restore with `kubectl apply -f mcpservers-backup.yaml` after installing the
+chart. Status (conditions, tools, reported version) is recomputed by the
+Operator; it does not need to be restored.
 
 ## Security notes
 
@@ -159,6 +208,8 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `operator.replicaCount` | int | `1` | Operator replicas (leader election keeps one active) |
+| `operator.crds.install` | bool | `true` | Install and upgrade the `MCPServer` CRD with the chart |
+| `operator.crds.keep` | bool | `true` | Keep the CRD, and with it every `MCPServer`, on uninstall and rollback |
 | `operator.image.repository` | string | `kavrynt/operator` | Operator image repository |
 | `operator.image.tag` | string | release version | Operator image tag |
 | `operator.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |

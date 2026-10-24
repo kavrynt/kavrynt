@@ -13,6 +13,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   stripping, egress restrictions, and a read-only web console with an
   overview of failing servers and tools and a single admin login.
 - Signed multi-architecture images and an OCI Helm chart.
+- `helm upgrade` and `helm rollback` that carry the `MCPServer` CRD, tested
+  from the previous release on every change.
 
 ## Next
 
@@ -22,7 +24,7 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 3. Policy decisions and tool-level authorization.
 4. Audit and usage events.
 5. Upgrade and rollback commands in `kavryctl`.
-6. Upgrade, rollback, backup, and recovery workflows.
+6. Recovery workflows (restoring into a new cluster).
 7. Tested high-availability deployment profiles.
 
 ## Project and community
