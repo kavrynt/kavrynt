@@ -141,9 +141,13 @@ credential, or an unknown route, when it completes.
 | `reason` | Why it was refused |
 | `policy_revision` | SHA-256 of the policy in force, with a policy |
 | `outcome`, `status`, `duration_ms`, `bytes_in`, `bytes_out` | How it ended (traffic outcome) |
+| `filtered_tools` | Tools removed from a `tools/list` answer by the policy (SPEC-0016); only present when some were |
 | `prev_hash`, `hash` | The chain |
 
-Fields that do not apply are present and empty. Events never contain tool
+Fields that do not apply are present and empty, except `filtered_tools`.
+`kavryctl audit verify` of a release before `filtered_tools` existed reports
+events that carry it as breaks; verify with the `kavryctl` of the Gateway's
+release. Events never contain tool
 arguments, results, bodies, tokens, credentials, cookies, or headers; they do
 identify people and agents, so treat them as personal data.
 
@@ -204,6 +208,20 @@ environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
 [`examples/policy`](../../examples/policy) (allow authenticated callers, a
 per-client tool allow-list, read-only methods).
+
+**Filtered tool lists.** With `--policy-filter-tools-list` (chart:
+`gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
+only the tools the policy would let the same caller call (SPEC-0016): for
+each tool the policy is asked with `mcp_method: tools/call` and `tool: <name>`
+and the caller's other input. Every other field of the answer (`nextCursor`,
+`_meta`, the kept tools as sent) is unchanged; in an event stream only the
+response event is changed. The Gateway asks the server for an uncompressed
+answer. If the evaluations take longer than 500 ms together, the answer is
+over 1 MiB, or it is not a `tools/list` result, the caller gets an empty
+`tools` list and the reason is logged. `kavrynt_gateway_policy_filtered_tools_total{route}`
+counts removed tools, and the audit event has `filtered_tools`. A policy
+that denies every `tools/call` lists no tools. Answers are filtered afresh
+each time, so a policy update applies to the next list.
 
 ## MCP client authentication
 

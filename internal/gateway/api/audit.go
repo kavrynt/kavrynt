@@ -29,6 +29,9 @@ type auditRecord struct {
 	outcome        string
 	bytesIn        int64
 	bytesOut       int64
+	// filteredTools counts tools removed from a tools/list answer
+	// (SPEC-0016-R05).
+	filteredTools int
 }
 
 type auditKey struct{}
@@ -79,6 +82,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		DurationMS:     math.Round(float64(time.Since(start).Microseconds())) / 1000,
 		BytesIn:        rec.bytesIn,
 		BytesOut:       rec.bytesOut,
+		FilteredTools:  rec.filteredTools,
 	}
 	if event.Decision == "" {
 		// Refused before any decision: unknown route, bad path, loop.

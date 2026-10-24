@@ -63,7 +63,9 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     or in the query string are refused, that refusals are recorded, and that
     no token appears in metrics or logs. Tool authorization policy: a
     per-client allow-list from a ConfigMap allows one client's `echo` call
-    and denies another's with a JSON-RPC error; a broken update is counted
+    and denies another's with a JSON-RPC error, and with
+    `filterToolsList` the first client lists `echo` while the other lists
+    no tools; a broken update is counted
     and changes no decision. Audit (on in the production profile): the
     allowed, denied, and unauthenticated calls each have an event, no tool
     argument appears in the Gateway output, and `kavryctl audit verify`

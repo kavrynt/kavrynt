@@ -101,6 +101,10 @@ audit:
 policy:
   enabled: false
   configMap: ""
+  # List in each tools/list answer only the tools the policy lets that
+  # caller call (SPEC-0016). Answers the filter cannot finish within 500 ms,
+  # or larger than 1 MiB, list no tools.
+  filterToolsList: false
 
 # Read-only web console at /ui/: MCP servers and their tools, a playground that
 # calls tools through the Gateway, and recent traffic. It needs no extra RBAC.

@@ -51,6 +51,7 @@ func main() {
 	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
 	auditOverflow := flag.String("audit-on-overflow", audit.Reject, "With a full audit queue: reject (refuse new MCP requests with 503) or drop (serve them, count the lost events)")
 	policyDir := flag.String("policy-dir", getenv("KAVRYNT_POLICY_DIR", ""), "Directory of the mounted tool authorization policy (.rego files defining data.kavrynt.authz.decision); every MCP request is then allowed or denied by it")
+	policyFilterToolsList := flag.Bool("policy-filter-tools-list", false, "With --policy-dir, list in each tools/list answer only the tools the policy lets the caller call")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
@@ -84,6 +85,9 @@ func main() {
 			slog.Error("load tool authorization policy", "error", err)
 			os.Exit(1)
 		}
+	} else if *policyFilterToolsList {
+		slog.Error("--policy-filter-tools-list needs --policy-dir: the tools are filtered by the policy")
+		os.Exit(1)
 	}
 
 	cfg, err := ctrl.GetConfig()
@@ -130,6 +134,9 @@ func main() {
 	}
 	if policyEngine != nil {
 		handler.EnablePolicy(policyEngine)
+		if *policyFilterToolsList {
+			handler.EnableToolsListFilter()
+		}
 	}
 	if clientAuth != nil {
 		handler.EnableClientAuth(clientAuth)

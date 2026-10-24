@@ -965,6 +965,7 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --reuse-values \
   --set gateway.policy.enabled=true \
   --set gateway.policy.configMap=kavrynt-policy \
+  --set gateway.policy.filterToolsList=true \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
 stop_gateway_port_forwards
@@ -988,6 +989,19 @@ verify_policy_decisions() {
     fail "a denial is not a JSON-RPC error: $(cat "${TEMP_DIR}/policy-body")"
 }
 verify_policy_decisions
+
+# Verifies SPEC-0016-R01: each client lists only the tools it may call.
+log "verifying tools/list shows each client only the tools it may call"
+list_tools() {
+  curl --fail --silent --show-error --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
+    --header 'Content-Type: application/json' --header "Authorization: Bearer $1" \
+    --data '{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{}}' | jq --compact-output '[.result.tools[].name]'
+}
+[ "$(list_tools "${ALLOWED_TOKEN}")" = '["echo"]' ] || fail "the allowed client does not see echo: $(list_tools "${ALLOWED_TOKEN}")"
+[ "$(list_tools "${DENIED_TOKEN}")" = '[]' ] || fail "another client sees tools it may not call: $(list_tools "${DENIED_TOKEN}")"
+METRICS="$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"
+grep --quiet "^kavrynt_gateway_policy_filtered_tools_total{route=\"${SERVER_ID}\"} [1-9]" <<<"${METRICS}" ||
+  fail "the Gateway did not count the filtered tool"
 
 # Verifies SPEC-0013-R10: the production profile turns audit on; the allowed
 # and the denied call each have an event with the caller, tool, and
@@ -1031,6 +1045,7 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --reuse-values \
   --set gateway.auth.enabled=false \
   --set gateway.policy.enabled=false \
+  --set gateway.policy.filterToolsList=false \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
 stop_gateway_port_forwards
