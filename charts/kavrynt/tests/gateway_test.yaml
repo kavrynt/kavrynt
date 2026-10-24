@@ -1,6 +1,8 @@
 suite: gateway
 release:
   namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
 tests:
   # Verifies SPEC-0003-R06.
   - it: grants cluster-wide read-only access to MCPServers by default

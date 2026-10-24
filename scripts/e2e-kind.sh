@@ -270,12 +270,32 @@ kubectl --context "${KUBE_CONTEXT}" create namespace "${CONTROL_NAMESPACE}" >/de
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" create secret generic kavrynt-upstream-credentials \
   --from-literal="${E2E_NAMESPACE}.secured-mcp-server=${UPSTREAM_SECRET_VALUE}" \
   --from-literal="${E2E_NAMESPACE}.secured-mcp-server.origin=http://secured-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080" >/dev/null
+# Verifies SPEC-0014-R01, SPEC-0014-R02, and SPEC-0014-R06: an install with
+# default values names both ways forward and creates no release.
+AUTH_REFUSAL="MCP client authentication is on by default"
+log "verifying an install with default values is refused"
+if helm install kavrynt "${ROOT_DIR}/charts/kavrynt" --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" >"${TEMP_DIR}/default-install.log" 2>&1; then
+  fail "helm install with default values succeeded without MCP client authentication settings"
+fi
+for want in "${AUTH_REFUSAL}" gateway.auth.issuers gateway.auth.enabled=false; do
+  grep --fixed-strings --quiet "${want}" "${TEMP_DIR}/default-install.log" ||
+    fail "the refused install does not name ${want}: $(cat "${TEMP_DIR}/default-install.log")"
+done
+if helm status kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" >/dev/null 2>&1; then
+  fail "the refused install left a release behind"
+fi
+
+# The first install opts out of MCP client authentication explicitly
+# (SPEC-0014-R06): the checks before the authentication section call routes
+# without tokens. Authentication is turned on later by upgrade.
 log "installing Kavrynt control plane with the production profile"
 helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
   --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
+  --set gateway.auth.enabled=false \
   --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials \
   --set networkPolicy.mcpServers.enabled=true \
   --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
@@ -292,6 +312,13 @@ for deployment in kavrynt-gateway kavrynt-operator; do
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
     rollout status "deployment/${deployment}" --timeout=120s
 done
+
+# Verifies SPEC-0014-R03. The logs are read first: grep --quiet would stop
+# reading early and fail the pipeline.
+GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
+  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+grep --fixed-strings --quiet "MCP client authentication is off" <<<"${GATEWAY_LOGS}" ||
+  fail "the Gateway did not warn that MCP routes are unauthenticated"
 
 log "deploying the Alpha-0 MCP server"
 sed "s|__SAMPLE_IMAGE__|${SAMPLE_IMAGE}|g" \
@@ -1019,7 +1046,7 @@ wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 # The Kind node pulls that release's images from Docker Hub.
 UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-0.0.5-beta.1}"
 UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
-LOCAL_RELEASE_ARGS=(
+LOCAL_IMAGE_ARGS=(
   --kube-context "${KUBE_CONTEXT}"
   --namespace "${CONTROL_NAMESPACE}"
   --set gateway.image.repository=kavrynt/gateway
@@ -1027,6 +1054,7 @@ LOCAL_RELEASE_ARGS=(
   --set operator.image.repository=kavrynt/operator
   --set-string operator.image.tag="${LOCAL_VERSION}"
 )
+LOCAL_RELEASE_ARGS=("${LOCAL_IMAGE_ARGS[@]}" --set gateway.auth.enabled=false)
 
 # Verifies SPEC-0009-R05.
 log "verifying helm uninstall keeps the CRD and MCPServers"
@@ -1054,9 +1082,24 @@ start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed on ${UPGRADE_FROM_VERSION}"
 
+# Verifies SPEC-0014-R04 and SPEC-0014-R06: the previous release never set
+# gateway.auth, so upgrading it without a choice fails before any change.
+log "verifying an upgrade without MCP client authentication settings is refused"
+GENERATIONS_BEFORE="$(deployment_generations)"
+REVISION_BEFORE="$(helm history kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --max 1 --output json | jq '.[0].revision')"
+if helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" "${LOCAL_IMAGE_ARGS[@]}" --timeout 120s \
+  >"${TEMP_DIR}/unauthenticated-upgrade.log" 2>&1; then
+  fail "helm upgrade succeeded without MCP client authentication settings"
+fi
+grep --fixed-strings --quiet "${AUTH_REFUSAL}" "${TEMP_DIR}/unauthenticated-upgrade.log" ||
+  fail "the refused upgrade does not name the authentication choice: $(cat "${TEMP_DIR}/unauthenticated-upgrade.log")"
+[ "$(deployment_generations)" = "${GENERATIONS_BEFORE}" ] ||
+  fail "the refused upgrade changed the Gateway or Operator Deployment"
+[ "$(helm history kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --max 1 --output json | jq '.[0].revision')" = "${REVISION_BEFORE}" ] ||
+  fail "the refused upgrade recorded a new release revision"
+
 # Verifies SPEC-0009-R07.
 log "verifying an upgrade without CRD adoption fails before changing workloads"
-GENERATIONS_BEFORE="$(deployment_generations)"
 if helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" "${LOCAL_RELEASE_ARGS[@]}" --timeout 120s \
   >"${TEMP_DIR}/unadopted-upgrade.log" 2>&1; then
   fail "helm upgrade succeeded although the CRD was not adopted"

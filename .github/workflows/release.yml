@@ -316,8 +316,8 @@ jobs:
 
       - name: Package chart
         run: |
-          helm lint charts/kavrynt
-          helm template kavrynt charts/kavrynt --namespace kavrynt-system >/dev/null
+          helm lint charts/kavrynt --set gateway.auth.enabled=false
+          helm template kavrynt charts/kavrynt --namespace kavrynt-system --set gateway.auth.enabled=false >/dev/null
           mkdir -p dist/charts
           helm package charts/kavrynt \
             --version "$VERSION" \

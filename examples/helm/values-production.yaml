@@ -7,6 +7,10 @@
 #     --version <version> --namespace kavrynt-system --create-namespace \
 #     --values values-production.yaml
 #
+# MCP client authentication is on by default (SPEC-0014): set
+# gateway.auth.resourceURL and gateway.auth.issuers below for your
+# authorization server.
+#
 # Size resources for your traffic; these are starting points.
 
 gateway:
@@ -17,6 +21,11 @@ gateway:
   config:
     shutdownDelay: 5s
     shutdownTimeout: 30s
+  # Your authorization server; the install fails until both are set.
+  # auth:
+  #   resourceURL: https://mcp.example.com
+  #   issuers:
+  #     - issuer: https://login.example.com/realms/agents
   # One audit event per MCP request on standard output; collect it with your
   # log pipeline and check it with kavryctl audit verify.
   audit:

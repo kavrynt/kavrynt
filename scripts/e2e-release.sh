@@ -152,6 +152,7 @@ helm upgrade --install kavrynt "${CHART_REF}" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
+  --set gateway.auth.enabled=false \
   --set gateway.image.repository="${IMAGE_REGISTRY}/gateway" \
   --set-string gateway.image.tag="${RELEASE_VERSION}" \
   --set operator.image.repository="${IMAGE_REGISTRY}/operator" \

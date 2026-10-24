@@ -38,6 +38,12 @@ make demo-down          # delete the cluster
   changed. To run your own commands against it:
   `export KUBECONFIG=$PWD/.kavrynt/demo/kubeconfig PATH=$PWD/.kavrynt/demo/bin:$PATH`.
 - `make demo-down` deletes only a cluster that `make demo-up` created.
+- MCP client authentication is on by default, but the demo has no
+  authorization server, so `make demo-up` installs with the explicit
+  opt-out, `--set gateway.auth.enabled=false`, and the Gateway logs that MCP
+  routes are unauthenticated. An install with your own authorization server
+  sets `gateway.auth.resourceURL` and `gateway.auth.issuers` instead; see the
+  [chart README](../charts/kavrynt/README.md#authenticating-mcp-clients).
 - Images are built from your checkout and loaded into Kind. Nothing is pulled
   from a registry at demo time.
 - The walkthrough serves the Gateway on `http://127.0.0.1:18080` for as long
@@ -84,10 +90,10 @@ make demo-down          # delete the cluster
 
 Show this list as a slide as well. Do not soften it.
 
-- MCP client authentication exists but is off by default, and there is no
-  token exchange: without it, anyone who can reach the Gateway can call every
-  routed tool. The console has an admin login, but it does not protect MCP
-  routes.
+- MCP client authentication is on by default, but this demo opts out, and
+  there is no token exchange: without authentication, anyone who can reach
+  the Gateway can call every routed tool. The console has an admin login,
+  but it does not protect MCP routes.
 - Tool authorization policy and audit events exist but are off by default;
   there are no approvals.
 - HTTP MCP servers only. `stdio` manifests validate but are not proxied.

@@ -1,0 +1,6 @@
+# The explicit opt-out from MCP client authentication (SPEC-0014), for test
+# suites about other features. The chart refuses to render without it or
+# authentication settings.
+gateway:
+  auth:
+    enabled: false

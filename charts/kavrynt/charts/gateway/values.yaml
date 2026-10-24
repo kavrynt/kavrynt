@@ -60,8 +60,11 @@ config:
 # trusted authorization server, whose audience is the route's resource URI,
 # <resourceURL>/mcp/<namespace>.<name>. Clients discover where to get one from
 # the 401 answer and /.well-known/oauth-protected-resource/mcp/<route>.
+# On by default (SPEC-0014): set resourceURL and issuers, or set
+# enabled: false to run with unauthenticated MCP routes, for example for a
+# local trial.
 auth:
-  enabled: false
+  enabled: true
   # The Gateway's external https origin, as clients reach it (no path), for
   # example https://mcp.example.com.
   resourceURL: ""

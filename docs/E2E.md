@@ -12,7 +12,11 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 ## `make e2e-kind`
 
 1. Builds `kavryctl`, the Gateway and Operator images, and a sample MCP server.
-2. Installs `charts/kavrynt` into `kavrynt-system` with the production profile
+2. Confirms an install with default values is refused with a message naming
+   `gateway.auth.issuers` and `gateway.auth.enabled=false` and leaves no
+   release (SPEC-0014). Installs `charts/kavrynt` into `kavrynt-system` with
+   the explicit opt-out (the Gateway logs that MCP routes are open) and the
+   production profile
    (`examples/helm/values-production.yaml`: three Gateway and two Operator
    replicas) and both NetworkPolicies on (the sample server's pods carry
    `kavrynt.io/gateway-only: "true"`; only `kavrynt-e2e` may call the
@@ -68,8 +72,10 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
     resources; the previous release (`UPGRADE_FROM_VERSION`, chart from
     `UPGRADE_FROM_CHART`, images from Docker Hub) is installed on the clean
-    cluster with a server; `helm upgrade` to the local build fails before
-    touching workloads until the CRD is adopted, then succeeds with the
+    cluster with a server; `helm upgrade` to the local build without
+    `gateway.auth` values is refused before any change (SPEC-0014); with the
+    opt-out it fails before touching workloads until the CRD is adopted,
+    then succeeds with the
     server `Ready` and routed; `helm rollback` keeps the CRD, the server, and
     its route. Needs network access to the registries.
 

@@ -8,6 +8,8 @@ templates:
 release:
   name: kavrynt
   namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
 tests:
   # Verifies SPEC-0008-R02.
   - it: gives the Gateway enough time to drain before it is killed
