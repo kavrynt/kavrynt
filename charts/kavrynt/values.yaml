@@ -18,3 +18,22 @@ operator:
     repository: kavrynt/operator
     tag: 0.0.5-beta.1
     pullPolicy: IfNotPresent
+
+# NetworkPolicies that keep MCP traffic on the Gateway path, so clients
+# cannot skip it by calling an MCP server directly. They need a CNI that
+# enforces NetworkPolicy; elsewhere they have no effect. Off by default.
+networkPolicy:
+  mcpServers:
+    # Pods labelled kavrynt.io/gateway-only: "true" in these namespaces accept
+    # traffic only from the Gateway and the Operator (tool discovery). Label
+    # the MCP server pods first, then enable. The namespaces must exist.
+    enabled: false
+    namespaces: []
+  gateway:
+    # The Gateway accepts traffic only from its own namespace, namespaces
+    # matching one of allowedNamespaceLabels, and allowedCIDRs. Include the
+    # namespaces of your agents, Ingress controller, and Prometheus.
+    enabled: false
+    # For example: [{kubernetes.io/metadata.name: agents}]
+    allowedNamespaceLabels: []
+    allowedCIDRs: []

@@ -17,6 +17,8 @@ spec:
     metadata:
       labels:
         app.kubernetes.io/name: example-mcp-server
+        # Isolated by the chart's NetworkPolicy when the e2e enables it.
+        kavrynt.io/gateway-only: "true"
     spec:
       automountServiceAccountToken: false
       securityContext:

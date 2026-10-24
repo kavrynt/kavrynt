@@ -1,0 +1,93 @@
+{{- /*
+NetworkPolicies that keep MCP traffic on the Gateway path (SPEC-0007). They
+live in the umbrella chart because they select both components' pods.
+*/}}
+{{- $np := .Values.networkPolicy | default dict }}
+{{- $servers := $np.mcpServers | default dict }}
+{{- $gw := $np.gateway | default dict }}
+{{- $gatewayName := (.Values.gateway | default dict).nameOverride | default "gateway" }}
+{{- $operatorName := (.Values.operator | default dict).nameOverride | default "operator" }}
+{{- $releaseNamespace := dict "kubernetes.io/metadata.name" .Release.Namespace }}
+{{- if $servers.enabled }}
+{{- if not $servers.namespaces }}
+{{- fail "networkPolicy.mcpServers.namespaces must list the namespaces of the MCP servers to isolate" }}
+{{- end }}
+{{- $watched := (.Values.global | default dict).watchNamespaces | default list }}
+{{- range $servers.namespaces }}
+{{- if and $watched (not (has . $watched)) }}
+{{- fail (printf "networkPolicy.mcpServers.namespaces: %s is not in global.watchNamespaces" .) }}
+{{- end }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ $.Release.Name }}-mcp-gateway-only
+  namespace: {{ . }}
+  labels:
+    app.kubernetes.io/instance: {{ $.Release.Name }}
+    app.kubernetes.io/managed-by: {{ $.Release.Service }}
+    app.kubernetes.io/part-of: kavrynt
+spec:
+  # Only pods that opted in; other workloads in the namespace are unaffected.
+  podSelector:
+    matchLabels:
+      kavrynt.io/gateway-only: "true"
+  policyTypes:
+    - Ingress
+  ingress:
+    - from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $releaseNamespace | nindent 14 }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $gatewayName }}
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+        # The Operator calls MCP servers directly for tool discovery.
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $releaseNamespace | nindent 14 }}
+          podSelector:
+            matchLabels:
+              app.kubernetes.io/name: {{ $operatorName }}
+              app.kubernetes.io/instance: {{ $.Release.Name }}
+{{- end }}
+{{- end }}
+{{- if $gw.enabled }}
+---
+apiVersion: networking.k8s.io/v1
+kind: NetworkPolicy
+metadata:
+  name: {{ .Release.Name }}-gateway-ingress
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: kavrynt
+spec:
+  podSelector:
+    matchLabels:
+      app.kubernetes.io/name: {{ $gatewayName }}
+      app.kubernetes.io/instance: {{ .Release.Name }}
+  # Ingress only: MCP endpoints can be anywhere, and internal/egress already
+  # refuses metadata, link-local, and loopback addresses.
+  policyTypes:
+    - Ingress
+  ingress:
+    - ports:
+        - protocol: TCP
+          port: {{ ((.Values.gateway | default dict).service | default dict).port | default 8080 }}
+      from:
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml $releaseNamespace | nindent 14 }}
+        {{- range $gw.allowedNamespaceLabels }}
+        - namespaceSelector:
+            matchLabels:
+              {{- toYaml . | nindent 14 }}
+        {{- end }}
+        {{- range $gw.allowedCIDRs }}
+        - ipBlock:
+            cidr: {{ . }}
+        {{- end }}
+{{- end }}

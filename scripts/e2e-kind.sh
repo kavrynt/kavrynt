@@ -150,6 +150,42 @@ call_tools_list() {
     jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
 }
 
+# probe runs the e2e MCP server image's load client once from a pod in
+# namespace $1 against URL $2 for about a second and prints its summary line
+# ("done ok=N failed=M"). A call blocked by a NetworkPolicy times out after
+# five seconds and counts as failed.
+probe() {
+  local namespace=$1 url=$2 name="probe-$RANDOM"
+  kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${name}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: probe
+      image: ${SAMPLE_IMAGE}
+      imagePullPolicy: Never
+      args: [load, -url, "${url}", -duration, 1s, -timeout, 5s]
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+MANIFEST
+  kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" wait "pod/${name}" \
+    --for=jsonpath='{.status.phase}'=Succeeded --timeout=90s >/dev/null
+  kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" logs "pod/${name}" | grep '^done'
+  kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" delete "pod/${name}" --wait=false >/dev/null
+}
+
 deployment_generations() {
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get deployment kavrynt-gateway kavrynt-operator \
     -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.generation} {end}'
@@ -203,12 +239,20 @@ kind load docker-image --name "${CLUSTER_NAME}" \
   "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${SAMPLE_IMAGE}"
 
 # Verifies SPEC-0008-R10: the end-to-end test runs the production profile.
+# The NetworkPolicies (SPEC-0007) are on from the start, so every later check
+# runs with MCP servers reachable only through the Gateway and the Operator.
+# The policy for the MCP server namespace needs that namespace to exist.
+kubectl --context "${KUBE_CONTEXT}" create namespace "${E2E_NAMESPACE}" >/dev/null
 log "installing Kavrynt control plane with the production profile"
 helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
   --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
+  --set networkPolicy.mcpServers.enabled=true \
+  --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
+  --set networkPolicy.gateway.enabled=true \
+  --set-json "networkPolicy.gateway.allowedNamespaceLabels=[{\"kubernetes.io/metadata.name\":\"${E2E_NAMESPACE}\"}]" \
   --set gateway.image.repository=kavrynt/gateway \
   --set-string gateway.image.tag="${LOCAL_VERSION}" \
   --set operator.image.repository=kavrynt/operator \
@@ -462,6 +506,20 @@ curl --fail --silent --show-error \
   jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
 "${TEMP_DIR}/kavryctl" unregister --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" kavryctl-mcp-server >/dev/null
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") == null" 30
+
+# Verifies SPEC-0007-R09. Tool discovery and every Gateway call above already
+# ran under the policies; here a direct call to the labelled MCP server, even
+# from its own namespace, must fail, while the same pod reaches it through
+# the Gateway. A namespace the Gateway policy does not allow cannot call it.
+log "verifying MCP servers are reachable only through the Gateway"
+MCP_SERVICE_URL="http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080/"
+GATEWAY_SERVICE_URL="http://kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local:8080/mcp/${SERVER_ID}"
+DIRECT="$(probe "${E2E_NAMESPACE}" "${MCP_SERVICE_URL}")"
+grep --quiet --extended-regexp '^done ok=0 failed=[1-9]' <<<"${DIRECT}" || fail "a pod called the MCP server directly despite the NetworkPolicy: ${DIRECT}"
+VIA_GATEWAY="$(probe "${E2E_NAMESPACE}" "${GATEWAY_SERVICE_URL}")"
+grep --quiet --extended-regexp '^done ok=[1-9][0-9]* failed=0$' <<<"${VIA_GATEWAY}" || fail "a pod in an allowed namespace could not call through the Gateway: ${VIA_GATEWAY}"
+FROM_DEFAULT="$(probe default "${GATEWAY_SERVICE_URL}")"
+grep --quiet --extended-regexp '^done ok=0 failed=[1-9]' <<<"${FROM_DEFAULT}" || fail "a pod in a namespace the Gateway policy does not allow called the Gateway: ${FROM_DEFAULT}"
 
 # Verifies SPEC-0008-R01, SPEC-0008-R03, and SPEC-0008-R11: a client inside
 # the cluster calls the Gateway Service throughout a rolling restart of every

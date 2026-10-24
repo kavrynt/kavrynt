@@ -19,12 +19,13 @@ func runLoad(args []string) int {
 	url := flags.String("url", "", "Gateway MCP route URL")
 	duration := flags.Duration("duration", 2*time.Minute, "How long to call")
 	interval := flags.Duration("interval", 50*time.Millisecond, "Pause between calls")
+	timeout := flags.Duration("timeout", 10*time.Second, "Timeout of each call")
 	if err := flags.Parse(args); err != nil || *url == "" {
-		fmt.Fprintln(os.Stderr, "usage: mcp-server load -url <route URL> [-duration 2m] [-interval 50ms]")
+		fmt.Fprintln(os.Stderr, "usage: mcp-server load -url <route URL> [-duration 2m] [-interval 50ms] [-timeout 10s]")
 		return 2
 	}
 
-	client := &http.Client{Timeout: 10 * time.Second}
+	client := &http.Client{Timeout: *timeout}
 	body := []byte(`{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}`)
 	var ok, failed int
 	deadline := time.Now().Add(*duration)
