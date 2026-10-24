@@ -2,7 +2,7 @@
 set -eu
 
 REPO="${KAVRYNT_REPO:-kavrynt/kavrynt}"
-RELEASE_TAG="${KAVRYNT_VERSION:-v1.0.0-beta.1}"
+RELEASE_TAG="${KAVRYNT_VERSION:-v1.0.0-beta.2}"
 INSTALL_DIR="${INSTALL_DIR:-${HOME}/.kavrynt/bin}"
 
 log() {

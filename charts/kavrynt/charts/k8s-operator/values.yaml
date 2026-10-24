@@ -8,7 +8,7 @@ podDisruptionBudget:
 
 image:
   repository: kavrynt/operator
-  tag: 1.0.0-beta.1
+  tag: 1.0.0-beta.2
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
