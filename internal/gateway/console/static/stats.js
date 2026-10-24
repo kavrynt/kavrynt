@@ -15,6 +15,13 @@
   // SCOPE_NOTE qualifies every view that shows traffic (SPEC-0002-R09).
   const SCOPE_NOTE = "This Gateway replica only · last " + TRAFFIC_WINDOW + " requests · use /metrics for history";
 
+  // scopeNote names the replica that answered /v1/traffic, so readers of a
+  // multi-replica Gateway know whose traffic they see (SPEC-0008-R06).
+  function scopeNote(instance) {
+    if (typeof instance !== "string" || !instance) return SCOPE_NOTE;
+    return "Gateway replica " + instance + " only · last " + TRAFFIC_WINDOW + " requests · use /metrics for history";
+  }
+
   // OUTCOMES defines every outcome the Gateway records, in the words of the
   // Gateway component documentation. A Go test keeps the keys equal to the
   // Gateway's outcome constants.
@@ -345,5 +352,5 @@
     return ms === null || ms === undefined ? "–" : String(Math.round(ms * 100) / 100);
   }
 
-  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
+  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, scopeNote, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).stats = {}));

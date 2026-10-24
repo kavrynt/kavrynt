@@ -64,6 +64,10 @@ func main() {
 		HealthProbeBindAddress: probeAddr,
 		LeaderElection:         enableLeader,
 		LeaderElectionID:       "kavrynt-k8s-operator",
+		// A stopping leader gives up the lease at once, so a standby replica
+		// takes over without waiting for it to expire (SPEC-0008-R08). Safe:
+		// the process exits as soon as the manager stops.
+		LeaderElectionReleaseOnCancel: true,
 	})
 	if err != nil {
 		slog.Error("unable to create manager", "error", err)

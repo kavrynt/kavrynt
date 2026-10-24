@@ -40,7 +40,8 @@ For a CI failure instead: `gh run view <run-id> --log-failed -R kavrynt/kavrynt`
 | 6 | `tools/list` through Gateway | `test/e2e/mcp-server`, `internal/gateway/routing`, proxy headers |
 | 7 | `kavryctl register/inspect/unregister` | `internal/kavryctl/cli`, kubeconfig/context flags |
 | 8 | Deleting `MCPServer` removes the route | gateway watch handling of delete events |
-| 9 | Upgrade from the previous release and rollback (SPEC-0009) | `UPGRADE_FROM_VERSION` in `scripts/e2e-kind.sh` (published?), registry access for the Kind node, `charts/kavrynt/charts/k8s-operator/templates/crd.yaml`, Helm's ownership error in the output |
+| 9 | Rolling restart under load and Operator failover (SPEC-0008) | `FAIL` lines of pod `gateway-load` in `kavrynt-e2e` (connection errors point at the drain in `cmd/gateway`, `503`s at readiness), Lease `kavrynt-k8s-operator` holder |
+| 10 | Upgrade from the previous release and rollback (SPEC-0009) | `UPGRADE_FROM_VERSION` in `scripts/e2e-kind.sh` (published?), registry access for the Kind node, `charts/kavrynt/charts/k8s-operator/templates/crd.yaml`, Helm's ownership error in the output |
 
 With `KEEP_CLUSTER=1`:
 

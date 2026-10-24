@@ -12,7 +12,9 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 ## `make e2e-kind`
 
 1. Builds `kavryctl`, the Gateway and Operator images, and a sample MCP server.
-2. Installs `charts/kavrynt` into `kavrynt-system` and confirms the chart
+2. Installs `charts/kavrynt` into `kavrynt-system` with the production profile
+   (`examples/helm/values-production.yaml`: three Gateway and two Operator
+   replicas) and confirms the chart
    installed the `MCPServer` CRD of `config/crd/bases`, owned by Helm with
    the keep policy.
 3. Applies `test/e2e/manifests/mcp-server.yaml` and waits for `Ready`.
@@ -35,7 +37,11 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
    `DiscoveryFailed` in the Operator).
 9. Registers, inspects, routes to, and unregisters a second server with
    `kavryctl`.
-10. Deletes the `MCPServer` and confirms the route disappears.
+10. High availability: `/v1/traffic` names the answering Gateway pod; a
+    client pod calls `tools/list` through the Gateway Service throughout a
+    rolling restart of every Gateway replica and no call may fail; deleting
+    the Operator leader lets the standby reconcile a new server to `Ready`.
+    Then deletes the `MCPServer` and confirms the route disappears.
 11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
     resources; the previous release (`UPGRADE_FROM_VERSION`, chart from
     `UPGRADE_FROM_CHART`, images from Docker Hub) is installed on the clean

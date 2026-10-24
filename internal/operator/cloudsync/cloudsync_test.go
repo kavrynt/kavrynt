@@ -380,6 +380,7 @@ func TestStartSyncsAtOnce(t *testing.T) {
 	go func() { done <- s.Start(ctx) }()
 
 	waitFor(t, func() bool { return c.count() == 1 }, "initial sync")
+	// Verifies SPEC-0008-R08: with several Operator replicas, only the leader syncs.
 	if !s.NeedLeaderElection() {
 		t.Error("connector must run on the leader only")
 	}

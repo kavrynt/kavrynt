@@ -39,20 +39,40 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   headers named in `Connection`. Upstream `Set-Cookie` is dropped because
   every route shares the Gateway origin. Extra headers can be stripped with
   `--strip-request-headers`.
+- Graceful shutdown: on `SIGTERM` the Gateway answers `/readyz` with `503`
+  (`draining`), stops HTTP keep-alives so clients reconnect to another
+  replica, keeps serving for `--shutdown-delay`, then stops accepting
+  connections and waits up to `--shutdown-timeout` for in-flight requests.
+  A rolling restart of several replicas fails no MCP call (tested end to
+  end).
 - Not implemented: authentication, policy, audit, token exchange. See
   ADR-0003.
+
+## High availability
+
+The Gateway keeps no state that replicas must share: routes come from the
+Kubernetes API, and console sessions are signed with the key in the mounted
+admin Secret, so every replica accepts them. Run several replicas with
+`gateway.replicaCount` or `gateway.autoscaling`; the chart then adds a
+PodDisruptionBudget and soft spread across nodes and zones.
+`examples/helm/values-production.yaml` is the tested profile.
+
+Per replica, by design: recent traffic (`/v1/traffic`, which names the
+replica in `instance`) and the console login limiter (five failed logins a
+minute per client address, per replica). Use `/metrics` in Prometheus for the
+cluster-wide view.
 
 ## Endpoints
 
 | Path | Purpose |
 | --- | --- |
 | `GET /healthz` | Liveness |
-| `GET /readyz` | `200` after the `MCPServer` cache has synced once |
+| `GET /readyz` | `200` after the `MCPServer` cache has synced once; `503` while draining on shutdown |
 | `GET /version` | Build metadata |
 | `GET /metrics` | Prometheus metrics: MCP traffic (below), Gateway counters, Go runtime, and process |
 | `GET /v1/routes` | Current route table |
 | `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, the `serverInfo` it reported, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
-| `GET /v1/traffic` | The last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
+| `GET /v1/traffic` | `instance` (this replica's name) and `requests`: the last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
 | `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`), sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
 | `* /mcp/<route>/...` | Proxied MCP traffic |
@@ -90,8 +110,8 @@ everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
 
 Filters are part of the URL, so a filtered view can be shared as a link.
 Polling stops while the browser tab is hidden. Traffic covers only the
-Gateway replica that served the page and its last 500 requests; use
-`/metrics` for history.
+Gateway replica that served the page (named above the table) and its last 500
+requests; use `/metrics` for history.
 
 ```bash
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
@@ -183,7 +203,9 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
-| `--shutdown-timeout` | `10s` | Graceful shutdown timeout |
+| `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
+| `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
+| `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`
 when run locally). The chart grants only `get`, `list`, `watch` on

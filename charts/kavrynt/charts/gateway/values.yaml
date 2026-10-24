@@ -1,5 +1,23 @@
 replicaCount: 1
 
+# HorizontalPodAutoscaler on CPU utilisation (needs metrics-server). When on,
+# the HPA owns the replica count and replicaCount is ignored.
+autoscaling:
+  enabled: false
+  minReplicas: 2
+  maxReplicas: 5
+  targetCPUUtilizationPercentage: 70
+
+# PodDisruptionBudget, rendered when more than one replica runs (replicaCount
+# above 1 or autoscaling on), so a node drain never takes every replica.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
+# Pod topology spread. Empty uses a soft spread across nodes and zones when
+# more than one replica runs.
+topologySpreadConstraints: []
+
 image:
   repository: kavrynt/gateway
   tag: 0.0.5-beta.1
@@ -30,6 +48,12 @@ config:
   # rejected (MCP DNS-rebinding protection). Add the URL of any Ingress that
   # serves the console, for example https://kavrynt.example.com.
   allowedOrigins: []
+  # On shutdown the Gateway fails /readyz, keeps serving for shutdownDelay so
+  # the Service stops sending it requests, then waits up to shutdownTimeout for
+  # in-flight requests. Whole seconds; the pod's termination grace period is
+  # derived from both.
+  shutdownDelay: 5s
+  shutdownTimeout: 10s
 
 # Read-only web console at /ui/: MCP servers and their tools, a playground that
 # calls tools through the Gateway, and recent traffic. It needs no extra RBAC.
