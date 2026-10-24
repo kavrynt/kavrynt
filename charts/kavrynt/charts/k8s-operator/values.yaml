@@ -1,5 +1,11 @@
 replicaCount: 1
 
+# PodDisruptionBudget, rendered when replicaCount is above 1. Standby
+# replicas take over through leader election.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
 image:
   repository: kavrynt/operator
   tag: 0.0.5-beta.1

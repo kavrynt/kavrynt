@@ -8,7 +8,7 @@ import stats from "../../internal/gateway/console/static/stats.js";
 // The console scripts are classic scripts; under Node they export through
 // module.exports.
 const {
-  SCOPE_NOTE, OUTCOMES, overview, attention, failingTools, toolSummary, filterTraffic, serverHealth,
+  SCOPE_NOTE, scopeNote, OUTCOMES, overview, attention, failingTools, toolSummary, filterTraffic, serverHealth,
   filterServers, catalog, searchCatalog, diagnostics, stripQuery,
 } = stats;
 
@@ -225,4 +225,10 @@ test("declared and reported versions are compared, and a difference does not cha
   assert.equal(versionInfo({ ...incidents, serverInfo: { name: "only-a-name" } }).differs, false);
   assert.equal(serverHealth(differs, []).label, "Routed", "a version difference must not mark the server as needing attention");
   assert.match(diagnostics(differs, [], "x"), /Reported: incidents-mcp 0\.2\.0/);
+});
+
+// Verifies SPEC-0008-R06.
+test("the scope note names the Gateway replica whose traffic is shown", () => {
+  assert.equal(scopeNote("kavrynt-gateway-7d9f-abcde"), "Gateway replica kavrynt-gateway-7d9f-abcde only · last 500 requests · use /metrics for history");
+  for (const missing of ["", undefined, null, 42]) assert.equal(scopeNote(missing), SCOPE_NOTE);
 });

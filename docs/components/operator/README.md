@@ -101,7 +101,7 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
 | --- | --- | --- |
 | `--metrics-bind-address` | `:8080` | controller-runtime metrics |
 | `--health-probe-bind-address` | `:8081` | `/healthz`, `/readyz` |
-| `--leader-elect` | `false` (chart: `true`) | Leader election through a Lease |
+| `--leader-elect` | `false` (chart: `true`) | Leader election through the Lease `kavrynt-k8s-operator`. Only the leader reconciles, discovers tools, and syncs to Kavrynt Cloud; a stopping leader releases the Lease so a standby takes over at once. The chart refuses more than one replica without it and adds a PodDisruptionBudget for several |
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |

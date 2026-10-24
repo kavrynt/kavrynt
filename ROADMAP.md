@@ -15,6 +15,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - Signed multi-architecture images and an OCI Helm chart.
 - `helm upgrade` and `helm rollback` that carry the `MCPServer` CRD, tested
   from the previous release on every change.
+- A high-availability profile (several Gateway replicas with graceful drain,
+  a standby Operator), tested with a rolling restart under load.
 
 ## Next
 
@@ -25,7 +27,6 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 4. Audit and usage events.
 5. Upgrade and rollback commands in `kavryctl`.
 6. Recovery workflows (restoring into a new cluster).
-7. Tested high-availability deployment profiles.
 
 ## Project and community
 

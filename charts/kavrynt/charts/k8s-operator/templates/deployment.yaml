@@ -7,6 +7,9 @@
 {{- fail "cloud.tokenSecret.name is required when cloud.enabled is true" }}
 {{- end }}
 {{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.config.leaderElect) }}
+{{- fail "replicaCount above 1 requires config.leaderElect: true, or every replica would reconcile" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:

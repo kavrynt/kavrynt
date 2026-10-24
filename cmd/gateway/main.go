@@ -34,7 +34,9 @@ func main() {
 	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
 	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
+	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
+	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic, normally the pod name")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
 		flag.PrintDefaults()
@@ -70,6 +72,7 @@ func main() {
 	handler.StripRequestHeaders(splitList(*stripHeaders)...)
 	handler.SetRequestTimeout(*requestTimeout)
 	handler.AllowOrigins(splitList(*allowedOrigins)...)
+	handler.SetInstance(*instance)
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
 	}
@@ -102,21 +105,37 @@ func main() {
 	}()
 
 	exitCode := 0
+	delay := *shutdownDelay
 	select {
 	case <-ctx.Done():
+		slog.Info("draining gateway", "delay", delay)
 	case err := <-errCh:
 		slog.Error("gateway failed", "error", err)
 		exitCode = 1
+		delay = 0
 	}
 
-	shutdownCtx, cancel := context.WithTimeout(context.Background(), *shutdownTimeout)
-	defer cancel()
-	if err := server.Shutdown(shutdownCtx); err != nil {
+	if err := shutdown(handler, server, delay, *shutdownTimeout, time.Sleep); err != nil {
 		slog.Error("gateway shutdown failed", "error", err)
 		exitCode = 1
 	}
 	slog.Info("gateway stopped")
 	os.Exit(exitCode)
+}
+
+// shutdown drains the Gateway (SPEC-0008-R01): /readyz fails first so the
+// Service stops routing new requests here, every request is still served for
+// delay, then the server stops accepting connections and waits up to timeout
+// for in-flight requests to finish. While draining, every response closes its
+// connection, so clients open their next one to a replica that is staying.
+func shutdown(handler *api.Handler, server *http.Server, delay, timeout time.Duration, sleep func(time.Duration)) error {
+	handler.SetDraining()
+	if delay > 0 {
+		sleep(delay)
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), timeout)
+	defer cancel()
+	return server.Shutdown(ctx)
 }
 
 // newConsoleAuth returns the console admin login, or nil when the console or
@@ -143,6 +162,11 @@ func splitList(value string) []string {
 		}
 	}
 	return items
+}
+
+func hostname() string {
+	name, _ := os.Hostname()
+	return name
 }
 
 func getenv(key, fallback string) string {

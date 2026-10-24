@@ -202,11 +202,13 @@ log "loading local images"
 kind load docker-image --name "${CLUSTER_NAME}" \
   "${GATEWAY_IMAGE}" "${OPERATOR_IMAGE}" "${SAMPLE_IMAGE}"
 
-log "installing Kavrynt control plane"
+# Verifies SPEC-0008-R10: the end-to-end test runs the production profile.
+log "installing Kavrynt control plane with the production profile"
 helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
+  --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
   --set gateway.image.repository=kavrynt/gateway \
   --set-string gateway.image.tag="${LOCAL_VERSION}" \
   --set operator.image.repository=kavrynt/operator \
@@ -262,7 +264,8 @@ done
   fail "Gateway must not read Secrets"
 
 log "verifying the Operator has the permissions it uses"
-if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs deployment/kavrynt-operator |
+if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
+  --selector app.kubernetes.io/name=operator,app.kubernetes.io/instance=kavrynt |
   grep --fixed-strings --quiet "forbidden"; then
   fail "Operator logged a forbidden API request; check its RBAC"
 fi
@@ -393,6 +396,11 @@ printf '%s' "${TRAFFIC}" | jq --exit-status --arg route "${SERVER_ID}" '
 if grep --fixed-strings --quiet "secret-argument" <<<"${TRAFFIC}"; then
   fail "/v1/traffic contains tool arguments"
 fi
+# Verifies SPEC-0008-R06: recent traffic names the replica that answered.
+TRAFFIC_INSTANCE="$(printf '%s' "${TRAFFIC}" | jq -r '.instance')"
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get pod "${TRAFFIC_INSTANCE}" \
+  --output jsonpath='{.metadata.labels.app\.kubernetes\.io/name}' 2>/dev/null | grep --fixed-strings --quiet gateway ||
+  fail "/v1/traffic instance '${TRAFFIC_INSTANCE}' is not a Gateway pod"
 
 # The console in a real browser: login, keyboard, layout, and traffic views.
 # test/console-smoke/smoke.mjs cites the requirements it verifies. CI sets
@@ -454,6 +462,88 @@ curl --fail --silent --show-error \
   jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
 "${TEMP_DIR}/kavryctl" unregister --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" kavryctl-mcp-server >/dev/null
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") == null" 30
+
+# Verifies SPEC-0008-R01, SPEC-0008-R03, and SPEC-0008-R11: a client inside
+# the cluster calls the Gateway Service throughout a rolling restart of every
+# replica, and no call fails.
+log "verifying a Gateway rolling restart fails no MCP call"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Pod
+metadata:
+  name: gateway-load
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: load
+      image: ${SAMPLE_IMAGE}
+      imagePullPolicy: Never
+      args:
+        - load
+        - -url
+        - http://kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local:8080/mcp/${SERVER_ID}
+        - -duration
+        - 10m
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait pod/gateway-load --for=condition=Ready --timeout=60s
+# Let the client reach steady state with pooled connections first.
+for ((i = 1; i <= 30; i++)); do
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" logs pod/gateway-load | grep --quiet '^progress ok=[1-9]' && break
+  sleep 1
+done
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout restart deployment/kavrynt-gateway >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=300s
+# The last replaced pod drains for its shutdown delay after rollout status returns.
+sleep 10
+LOAD_LOG="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" logs pod/gateway-load)"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/gateway-load --wait=false >/dev/null
+if grep --quiet '^FAIL' <<<"${LOAD_LOG}"; then
+  fail "MCP calls failed during the Gateway rolling restart: $(grep '^FAIL' <<<"${LOAD_LOG}" | head -n 5)"
+fi
+grep --quiet '^progress ok=[1-9]' <<<"${LOAD_LOG}" || fail "the load client made no successful call: ${LOAD_LOG}"
+log "rolling restart: $(grep '^progress' <<<"${LOAD_LOG}" | tail -n 1)"
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_url "${GATEWAY_URL}/readyz"
+
+# Verifies SPEC-0008-R08 and SPEC-0008-R11: deleting the Operator leader lets
+# the standby replica reconcile new servers.
+log "verifying a standby Operator takes over from a deleted leader"
+LEADER="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get lease kavrynt-k8s-operator \
+  -o jsonpath='{.spec.holderIdentity}')"
+LEADER_POD="${LEADER%%_*}"
+[ -n "${LEADER_POD}" ] || fail "no Operator holds the leader lease"
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" delete pod "${LEADER_POD}" --wait=false >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: failover-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/failover-mcp-server --for=condition=Ready --timeout=120s
+NEW_LEADER="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get lease kavrynt-k8s-operator \
+  -o jsonpath='{.spec.holderIdentity}')"
+[ "${NEW_LEADER%%_*}" != "${LEADER_POD}" ] || fail "the deleted Operator ${LEADER_POD} still holds the lease"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  delete mcpserver/failover-mcp-server --wait=true --timeout=60s >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
+  rollout status deployment/kavrynt-operator --timeout=120s
 
 log "verifying deletion cleanup"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \

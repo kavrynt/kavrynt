@@ -5,11 +5,19 @@ metadata:
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  # Start a new pod before stopping an old one, so capacity never drops
+  # during an upgrade (SPEC-0008-R03).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "gateway.name" . }}
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- include "gateway.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
@@ -22,6 +30,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "gateway.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ include "gateway.terminationGracePeriodSeconds" . }}
       # The Gateway watches MCPServer resources through the Kubernetes API.
       automountServiceAccountToken: true
       {{- with .Values.imagePullSecrets }}
@@ -47,6 +56,10 @@ spec:
             {{- end }}
             - --request-timeout
             - {{ .Values.config.requestTimeout | quote }}
+            - --shutdown-delay
+            - {{ .Values.config.shutdownDelay | default "5s" | quote }}
+            - --shutdown-timeout
+            - {{ .Values.config.shutdownTimeout | default "10s" | quote }}
             {{- with .Values.config.allowedOrigins }}
             - --allowed-origins
             - {{ join "," . | quote }}
@@ -59,6 +72,12 @@ spec:
             {{- else }}
             - --console-auth=false
             {{- end }}
+          env:
+            # Names this replica in /v1/traffic (SPEC-0008-R06).
+            - name: KAVRYNT_INSTANCE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -100,4 +119,19 @@ spec:
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else if include "gateway.multiReplica" . }}
+      # Prefer different nodes and zones; never block scheduling (SPEC-0008-R04).
+      topologySpreadConstraints:
+        {{- range list "kubernetes.io/hostname" "topology.kubernetes.io/zone" }}
+        - maxSkew: 1
+          topologyKey: {{ . }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "gateway.selectorLabels" $ | nindent 14 }}
+        {{- end }}
       {{- end }}

@@ -29,6 +29,9 @@ type responseError struct {
 }
 
 func main() {
+	if len(os.Args) > 1 && os.Args[1] == "load" {
+		os.Exit(runLoad(os.Args[2:]))
+	}
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {

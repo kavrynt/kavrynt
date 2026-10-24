@@ -235,7 +235,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     until a login with the generated admin password; the console,
     `/v1/servers`, and `/v1/traffic` work and never expose tool arguments;
     the console browser smoke test passes (always in CI).
-11. `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
+11. With the production profile, a Gateway rolling restart under load fails
+    no MCP call, and a standby Operator takes over from a deleted leader.
+12. `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
     the previous published release fails cleanly until the CRD is adopted,
     then keeps servers `Ready` and routed; `helm rollback` keeps them too.
 

@@ -7,7 +7,13 @@
   `503 {"status":"draining"}`; after the delay it calls
   `server.Shutdown(ctx)` with the existing timeout. The draining flag is an
   `atomic.Bool` in `api.Handler`. Endpoints controllers remove the pod
-  within the delay, so no new request arrives after `Shutdown`.
+  within the delay, so no new request arrives after `Shutdown`. While
+  draining, every response carries `Connection: close`, so pooled clients
+  open their next connection to a replica that stays. Idle connections are
+  not closed at once (`SetKeepAlivesEnabled(false)` did that, and a client
+  sending on one at that moment got `EOF`); `Shutdown` closes the ones
+  left after the delay. The sequence is the
+  testable `shutdown` function in `cmd/gateway`.
 - **Chart (R02–R05, R09).** Gateway Deployment: `strategy.rollingUpdate`
   with `maxUnavailable: 0`, `maxSurge: 1`; computed
   `terminationGracePeriodSeconds`; `topologySpreadConstraints` default
@@ -25,10 +31,14 @@
   `NeedLeaderElection() == false` on the leader only) and add tests.
 - **Profile (R10, R11).** `examples/helm/values-production.yaml`.
   `scripts/e2e-kind.sh` installs with it (Kind single node: spread is
-  `ScheduleAnyway`, so it schedules), runs a background `tools/list` loop
-  during `kubectl rollout restart deployment/kavrynt-gateway`, counts
-  non-200 answers, and deletes the Operator leader (from the Lease holder)
-  before applying a new `MCPServer`.
+  `ScheduleAnyway`, so it schedules). The client is a pod running the e2e
+  MCP server image in its `load` mode (`test/e2e/mcp-server/load.go`), so
+  calls go through the Gateway Service inside the cluster, with pooled
+  connections like a real client; it prints every failure. The test
+  restarts the Gateway Deployment, waits for the rollout and the last
+  drain, and fails on any `FAIL` line. It then deletes the Operator leader
+  (the Lease holder) and applies a new `MCPServer`. The Operator releases
+  the Lease on shutdown (`LeaderElectionReleaseOnCancel`).
 
 ## Affected files
 
@@ -49,12 +59,12 @@
 
 | Requirement | Test |
 | --- | --- |
-| SPEC-0008-R01 | `api_test.go` draining readiness; `cmd/gateway` drain test with a fake clock |
-| SPEC-0008-R02, R03, R04, R05 | `gateway_test.yaml` |
-| SPEC-0008-R06 | `traffic_test.go` instance field; console smoke test |
+| SPEC-0008-R01 | `ha_test.go` draining readiness; `cmd/gateway/main_test.go` drain sequence; `e2e-kind.sh` rolling restart |
+| SPEC-0008-R02, R03, R04, R05 | `ha_test.yaml` |
+| SPEC-0008-R06 | `ha_test.go` instance field; `test/console/stats.test.mjs` scope note; `ha_test.yaml` env; `e2e-kind.sh` instance is a Gateway pod |
 | SPEC-0008-R07 | `auth_test.go` two authenticators sharing a key directory |
-| SPEC-0008-R08 | Operator leader-only runnable test; `e2e-kind.sh` leader deletion |
-| SPEC-0008-R09 | `operator_test.yaml` |
+| SPEC-0008-R08 | `cloudsync_test.go` leader-only connector; `e2e-kind.sh` leader deletion |
+| SPEC-0008-R09 | `ha_test.yaml` |
 | SPEC-0008-R10, R11 | `e2e-kind.sh` HA section |
 
 ## Rollout

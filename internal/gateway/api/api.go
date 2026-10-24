@@ -58,6 +58,12 @@ type Handler struct {
 	// /v1/traffic open (SPEC-0005-R03).
 	auth ConsoleAuth
 
+	// instance names this replica (its pod name) in /v1/traffic.
+	instance string
+	// draining is set on shutdown so /readyz fails while requests are still
+	// served (SPEC-0008-R01).
+	draining atomic.Bool
+
 	requests         atomic.Uint64
 	proxied          atomic.Uint64
 	strippedRequests atomic.Uint64
@@ -120,6 +126,19 @@ func (h *Handler) AllowOrigins(origins ...string) {
 	}
 }
 
+// SetInstance names this replica in /v1/traffic, whose recent traffic is per
+// replica (SPEC-0008-R06).
+func (h *Handler) SetInstance(name string) {
+	h.instance = name
+}
+
+// SetDraining makes /readyz answer 503 so the Service stops sending new
+// requests, while every other request is still served, each closing its
+// connection (SPEC-0008-R01).
+func (h *Handler) SetDraining() {
+	h.draining.Store(true)
+}
+
 // ConsoleAuth is the console admin login (internal/gateway/auth).
 type ConsoleAuth interface {
 	http.Handler
@@ -141,6 +160,12 @@ func (h *Handler) EnableConsole(console http.Handler) {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.requests.Add(1)
+	if h.draining.Load() {
+		// Close each connection after its response, so clients move their
+		// next request to a replica that stays. Closing idle connections
+		// instead would race with requests already being sent on them.
+		w.Header().Set("Connection", "close")
+	}
 
 	// Browsers send Origin on cross-origin and state-changing requests. The
 	// Gateway does not authenticate callers yet, so a web page must not be
@@ -189,6 +214,10 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) ready(w http.ResponseWriter, _ *http.Request) {
 	ready, lastSync, lastError, routes := h.table.Status()
+	if h.draining.Load() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "routes": routes})
+		return
+	}
 	if !ready {
 		status := map[string]any{
 			"status":    "not ready",
@@ -251,7 +280,10 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]TrafficRecord{"requests": h.recent.list()})
+	writeJSON(w, http.StatusOK, struct {
+		Instance string          `json:"instance"`
+		Requests []TrafficRecord `json:"requests"`
+	}{h.instance, h.recent.list()})
 }
 
 // originAllowed accepts requests without an Origin header, loopback origins

@@ -114,6 +114,25 @@ removed:
 kubectl delete crd mcpservers.kavrynt.io
 ```
 
+## High availability
+
+[`examples/helm/values-production.yaml`](../../examples/helm/values-production.yaml)
+is the tested production profile: three Gateway replicas and two Operator
+replicas, each with a PodDisruptionBudget, and the Gateway spread across
+nodes and zones.
+
+```bash
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version <version> --namespace kavrynt-system --create-namespace \
+  --values values-production.yaml
+```
+
+The end-to-end test installs it, restarts every Gateway replica while a
+client calls tools continuously (no call may fail), and deletes the Operator
+leader (the standby must reconcile new servers). Recent traffic in the
+console and the console login limiter are per Gateway replica; use
+Prometheus for cluster-wide traffic.
+
 ## Backing up
 
 `MCPServer` resources are ordinary Kubernetes objects: the cluster's backup
@@ -171,7 +190,14 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `gateway.replicaCount` | int | `1` | Gateway replicas. Recent traffic in the console is per replica. |
+| `gateway.replicaCount` | int | `1` | Gateway replicas. Recent traffic in the console is per replica. Ignored when autoscaling is on |
+| `gateway.autoscaling.enabled` | bool | `false` | HorizontalPodAutoscaler on CPU (needs metrics-server) |
+| `gateway.autoscaling.minReplicas` | int | `2` | Minimum replicas (at least 2) |
+| `gateway.autoscaling.maxReplicas` | int | `5` | Maximum replicas |
+| `gateway.autoscaling.targetCPUUtilizationPercentage` | int | `70` | Target average CPU utilisation |
+| `gateway.podDisruptionBudget.enabled` | bool | `true` | PodDisruptionBudget when more than one replica runs |
+| `gateway.podDisruptionBudget.maxUnavailable` | int or string | `1` | Replicas a voluntary disruption may take at once (`1` or a percentage) |
+| `gateway.topologySpreadConstraints` | list | `[]` | Pod spread; empty uses a soft spread across nodes and zones when more than one replica runs |
 | `gateway.image.repository` | string | `kavrynt/gateway` | Gateway image repository |
 | `gateway.image.tag` | string | release version | Gateway image tag |
 | `gateway.image.pullPolicy` | string | `IfNotPresent` | Image pull policy |
@@ -185,6 +211,8 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.config.requestTimeout` | string | `"30s"` | Upstream request timeout; event streams only until response headers |
 | `gateway.config.stripRequestHeaders` | list | `[]` | Extra request headers never forwarded. `Authorization`, `Cookie`, and `Proxy-Authorization` are always removed. |
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
+| `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |
+| `gateway.config.shutdownTimeout` | string | `10s` | Then wait this long for in-flight requests (whole seconds). The termination grace period is both plus 5 seconds |
 | `gateway.console.enabled` | bool | `true` | Serve the read-only web console at `/ui/` |
 | `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
@@ -207,7 +235,9 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
-| `operator.replicaCount` | int | `1` | Operator replicas (leader election keeps one active) |
+| `operator.replicaCount` | int | `1` | Operator replicas (leader election keeps one active; more than one requires `config.leaderElect`) |
+| `operator.podDisruptionBudget.enabled` | bool | `true` | PodDisruptionBudget when more than one replica runs |
+| `operator.podDisruptionBudget.maxUnavailable` | int or string | `1` | Replicas a voluntary disruption may take at once |
 | `operator.crds.install` | bool | `true` | Install and upgrade the `MCPServer` CRD with the chart |
 | `operator.crds.keep` | bool | `true` | Keep the CRD, and with it every `MCPServer`, on uninstall and rollback |
 | `operator.image.repository` | string | `kavrynt/operator` | Operator image repository |

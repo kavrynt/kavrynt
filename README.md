@@ -415,7 +415,8 @@ the current release is not production-security complete:
 - The console has a single `admin` login with a generated password. It
   protects the console and the endpoints it reads, not MCP routes: anyone
   who can reach the Gateway can still call every routed tool.
-- Gateway is single-replica by default.
+- Gateway and Operator are single-replica by default; the tested
+  high-availability profile is `examples/helm/values-production.yaml`.
 - Audit, policy, approval, and usage services are not part of the current
   runtime beta.
 
@@ -451,8 +452,7 @@ are:
 3. policy decisions and tool-level authorization;
 4. audit and usage events;
 5. upgrade and rollback commands in kavryctl;
-6. recovery workflows (restoring into a new cluster);
-7. tested high-availability deployment profiles.
+6. recovery workflows (restoring into a new cluster).
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this

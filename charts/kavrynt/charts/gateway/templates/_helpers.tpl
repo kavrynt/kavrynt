@@ -53,3 +53,24 @@ global so the Operator reads the same list.
 {{- $auth := (.Values.console | default dict).auth | default dict -}}
 {{- default (printf "%s-console-admin" (include "gateway.fullname" .)) $auth.existingSecret -}}
 {{- end -}}
+
+{{/* Pod selector labels. */}}
+{{- define "gateway.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "gateway.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{/* "true" when more than one Gateway replica can run (SPEC-0008-R04). */}}
+{{- define "gateway.multiReplica" -}}
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Seconds the kubelet waits after SIGTERM: the drain delay, the shutdown
+timeout, and 5 seconds of margin (SPEC-0008-R02).
+*/}}
+{{- define "gateway.terminationGracePeriodSeconds" -}}
+{{- $delay := .Values.config.shutdownDelay | default "5s" | trimSuffix "s" | int -}}
+{{- $timeout := .Values.config.shutdownTimeout | default "10s" | trimSuffix "s" | int -}}
+{{- add $delay $timeout 5 -}}
+{{- end -}}

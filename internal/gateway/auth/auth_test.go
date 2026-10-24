@@ -302,3 +302,16 @@ func TestMissingCredentialsFailClosed(t *testing.T) {
 		}
 	}
 }
+
+// Verifies SPEC-0008-R07: every Gateway replica mounts the same Secret, so a
+// session signed by one replica is accepted by the others.
+func TestSessionsWorkAcrossReplicas(t *testing.T) {
+	first, c, _, dir := newTestAuth(t)
+	second := New(dir, time.Hour)
+	second.now = c.now
+
+	cookie := sessionCookie(t, login(t, first, "admin", testPassword))
+	if !second.Authorized(withCookie(cookie)) {
+		t.Fatal("a session from one replica is rejected by another replica with the same Secret")
+	}
+}
