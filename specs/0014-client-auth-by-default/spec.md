@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Accepted |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -51,9 +51,11 @@ reserves `1.0.0-beta.1` for the release where that is no longer the default.
 - **SPEC-0014-R05** The README quick start, the chart README, and
   `docs/DEMO.md` MUST show both an authenticated install and the explicit
   opt-out for trials.
-- **SPEC-0014-R06** `make e2e-kind` MUST install with authentication on from
-  the start (test authorization server) and keep one explicit opt-out
-  install, so both paths are tested.
+- **SPEC-0014-R06** `make e2e-kind` MUST test both paths: an install with the
+  explicit opt-out, and authentication on with the test authorization
+  server. It MUST also show that an install with default values and an
+  upgrade from the previous release without `gateway.auth` values both fail
+  with the R02 message and change nothing.
 
 ## Acceptance criteria
 
@@ -81,9 +83,17 @@ binary's `--auth` default stays `false`; only the chart changes.
 README quick start, chart README (upgrading to `1.0.0-beta.1`), DEMO,
 release notes, CLAUDE.md "What works today".
 
-## Open questions
+## Decisions
 
-- Should the opt-out be a separate value (`gateway.auth.allowUnauthenticated`)
-  so `enabled: false` cannot be set by copying an old values file?
-- Should the chart refuse a `LoadBalancer` or `NodePort` Service while
-  authentication is off?
+- The opt-out is `gateway.auth.enabled=false`, not a separate value.
+  `helm upgrade --reuse-values` keeps only values the user set, so an
+  upgrade cannot inherit the old default; a values file that sets
+  `enabled: false` records a choice someone made.
+- The chart does not refuse `LoadBalancer` or `NodePort` Services while
+  authentication is off; the start-up warning and the console notice say
+  the routes are open, and NetworkPolicies (SPEC-0007) limit who reaches
+  the Gateway.
+- The e2e keeps its first install unauthenticated (with the explicit
+  opt-out) and turns authentication on by upgrade, because every earlier
+  check (load clients, NetworkPolicy probes, the browser smoke test) calls
+  routes without tokens.
