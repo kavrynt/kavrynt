@@ -15,8 +15,8 @@ concurrency:
   cancel-in-progress: true
 
 env:
-  STATICCHECK_VERSION: v0.8.0
-  GOSEC_VERSION: v2.28.0
+  STATICCHECK_VERSION: v0.8.2
+  GOSEC_VERSION: v2.30.0
   GOVULNCHECK_VERSION: v1.7.0
 
 jobs:

@@ -5,8 +5,8 @@ IMAGES := gateway operator
 CHART := charts/kavrynt
 GO_DIRS := api cmd examples internal test
 
-STATICCHECK_VERSION ?= v0.8.0
-GOSEC_VERSION ?= v2.28.0
+STATICCHECK_VERSION ?= v0.8.2
+GOSEC_VERSION ?= v2.30.0
 GOVULNCHECK_VERSION ?= v1.7.0
 HELM_UNITTEST_VERSION ?= v1.1.2
 
