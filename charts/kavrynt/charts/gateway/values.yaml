@@ -78,8 +78,16 @@ auth:
   # - issuer: https://login.example.com/realms/agents   # must equal the tokens' iss
   #   jwksURI: ""        # optional; discovered from the issuer's metadata
   #   allowHTTP: false   # true only for an in-cluster authorization server on http
+  #   tokenExchange:     # optional: exchange callers' tokens for servers
+  #     clientID: kavrynt-gateway       # that declare spec.tokenExchange
+  #     clientSecretKey: client-secret  # key in tokenExchangeSecret
+  #     tokenEndpoint: ""               # optional; from the issuer's metadata
   # Scopes every token must carry, for example [mcp:tools].
   requiredScopes: []
+  # Secret in the release namespace with the Gateway's client secrets for
+  # token exchange (SPEC-0015), one key per issuer's clientSecretKey. The
+  # kubelet mounts it; the Gateway gets no RBAC on Secrets.
+  tokenExchangeSecret: ""
 
 # Audit events (SPEC-0013): one JSON line per MCP request on the Gateway's
 # standard output ("type":"kavrynt.audit.v1"), with the caller, route, method,

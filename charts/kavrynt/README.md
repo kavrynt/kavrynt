@@ -301,6 +301,27 @@ console shows that MCP routes are open. Agents without a valid token get `401` w
 `resource_metadata` URL that tells them where to get one. Token rules and
 answers: [Gateway: MCP client authentication](../../docs/components/gateway/README.md#mcp-client-authentication).
 
+### Token exchange for servers that need the user
+
+An MCP server that checks who the user is declares
+`spec.tokenExchange.audience`; the Gateway exchanges each caller's token for
+one with that audience at the caller's authorization server (RFC 8693). Give
+the Gateway an OAuth client there, store its secret, and name both:
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-token-exchange \
+  --from-literal=client-secret='<the Gateway client secret>'
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents","tokenExchange":{"clientID":"kavrynt-gateway","clientSecretKey":"client-secret"}}]' \
+  --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange
+```
+
+The authorization server must allow that client to exchange tokens for the
+server's audience. Details:
+[Gateway: Token exchange](../../docs/components/gateway/README.md#token-exchange)
+and [`examples/kavryctl/mcp-server-token-exchange.yaml`](../../examples/kavryctl/mcp-server-token-exchange.yaml).
+
 ## Keeping traffic on the Gateway
 
 Everything the Gateway enforces is skipped by a client that calls an MCP

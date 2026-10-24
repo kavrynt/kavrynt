@@ -59,3 +59,19 @@ tests:
     asserts:
       - hasDocuments:
           count: 0
+
+  # Verifies SPEC-0015-R01.
+  - it: rejects token exchange together with a credential or on stdio
+    asserts:
+      - exists:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.tokenExchange.properties.audience
+      - contains:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.spec.x-kubernetes-validations
+          content:
+            rule: "!(has(self.tokenExchange) && has(self.credential))"
+            message: spec.tokenExchange and spec.credential are mutually exclusive
+      - contains:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.spec.x-kubernetes-validations
+          content:
+            rule: "!has(self.tokenExchange) || self.transport == 'http'"
+            message: spec.tokenExchange is only supported with spec.transport http

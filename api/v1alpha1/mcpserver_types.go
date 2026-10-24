@@ -27,6 +27,10 @@ const (
 	// ReasonCredentialUnavailable: the server declares a credential that is
 	// not stored, or not pinned to its endpoint (SPEC-0011).
 	ReasonCredentialUnavailable = "CredentialUnavailable" // #nosec G101 -- a condition reason, not a credential.
+	// ReasonCallerTokenRequired: the server gets per-caller tokens by token
+	// exchange, so the Operator, which has no caller, does not list its tools
+	// (SPEC-0015-R10).
+	ReasonCallerTokenRequired = "CallerTokenRequired" // #nosec G101 -- a condition reason, not a credential.
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
@@ -43,6 +47,29 @@ type MCPServerSpec struct {
 	// platform team stores for this server (SPEC-0011). The value is never
 	// part of the MCPServer.
 	Credential *MCPServerCredential `json:"credential,omitempty"`
+	// TokenExchange makes the Gateway exchange each caller's access token
+	// for one issued to this server (RFC 8693, SPEC-0015). It excludes
+	// Credential.
+	TokenExchange *MCPServerTokenExchange `json:"tokenExchange,omitempty"`
+}
+
+// MCPServerTokenExchange names the token the Gateway asks the caller's
+// authorization server for.
+type MCPServerTokenExchange struct {
+	// Audience is the server's audience, an absolute URI.
+	Audience string `json:"audience"`
+	// Scopes are requested for the exchanged token.
+	Scopes []string `json:"scopes,omitempty"`
+}
+
+// Copy returns a deep copy.
+func (in *MCPServerTokenExchange) Copy() *MCPServerTokenExchange {
+	if in == nil {
+		return nil
+	}
+	out := *in
+	out.Scopes = append([]string(nil), in.Scopes...)
+	return &out
 }
 
 // MCPServerCredential says how the Gateway and the Operator send a server's
@@ -138,6 +165,7 @@ func (in *MCPServer) DeepCopyObject() runtime.Object {
 		credential := *in.Spec.Credential
 		out.Spec.Credential = &credential
 	}
+	out.Spec.TokenExchange = in.Spec.TokenExchange.Copy()
 	if in.Status.Conditions != nil {
 		out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)
 	}

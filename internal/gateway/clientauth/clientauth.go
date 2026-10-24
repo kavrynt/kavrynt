@@ -53,6 +53,20 @@ type Issuer struct {
 	// AllowHTTP permits http:// metadata and key URLs, for in-cluster
 	// authorization servers (SPEC-0006-R20).
 	AllowHTTP bool `json:"allowHTTP,omitempty"`
+	// TokenExchange is how the Gateway authenticates to this issuer for
+	// token exchange (SPEC-0015-R02); nil means it does not exchange
+	// tokens from this issuer.
+	TokenExchange *TokenExchangeClient `json:"tokenExchange,omitempty"`
+}
+
+// TokenExchangeClient is the Gateway's OAuth client at one issuer.
+type TokenExchangeClient struct {
+	ClientID string `json:"clientID"`
+	// ClientSecretKey names the file with the client secret in the mounted
+	// token exchange Secret.
+	ClientSecretKey string `json:"clientSecretKey"`
+	// TokenEndpoint is used instead of the one in the issuer metadata.
+	TokenEndpoint string `json:"tokenEndpoint,omitempty"`
 }
 
 // Config configures client authentication.
@@ -64,6 +78,9 @@ type Config struct {
 	Issuers     []Issuer
 	// RequiredScopes must all be in the token's scope.
 	RequiredScopes []string
+	// TokenExchangeSecretDir is the mounted Secret with the client secrets
+	// of the issuers' TokenExchange settings.
+	TokenExchangeSecretDir string
 }
 
 // Validate reports configuration the Gateway must refuse to start with
@@ -91,10 +108,34 @@ func (c Config) Validate() error {
 				return fmt.Errorf("issuer %s: jwksURI: %w", issuer.Issuer, err)
 			}
 		}
+		if exchange := issuer.TokenExchange; exchange != nil {
+			if err := exchange.validate(issuer.AllowHTTP, c.TokenExchangeSecretDir); err != nil {
+				return fmt.Errorf("issuer %s: tokenExchange: %w", issuer.Issuer, err)
+			}
+		}
 	}
 	for _, scope := range c.RequiredScopes {
 		if !scopeToken.MatchString(scope) {
 			return fmt.Errorf("required scope %q is not a valid scope token", scope)
+		}
+	}
+	return nil
+}
+
+var secretKeyName = regexp.MustCompile(`^[-._a-zA-Z0-9]{1,253}$`)
+
+func (c *TokenExchangeClient) validate(allowHTTP bool, secretDir string) error {
+	switch {
+	case c.ClientID == "":
+		return errors.New("clientID is required")
+	case !secretKeyName.MatchString(c.ClientSecretKey) || strings.HasPrefix(c.ClientSecretKey, "."):
+		return errors.New("clientSecretKey must name a key of the token exchange Secret")
+	case secretDir == "":
+		return errors.New("needs the token exchange Secret (--token-exchange-secret-dir)")
+	}
+	if c.TokenEndpoint != "" {
+		if err := checkURL(c.TokenEndpoint, allowHTTP); err != nil {
+			return fmt.Errorf("tokenEndpoint %w", err)
 		}
 	}
 	return nil
@@ -145,6 +186,11 @@ type Authenticator struct {
 	requiredScopes []string
 	now            func() time.Time
 	logger         *slog.Logger
+
+	// Token exchange (SPEC-0015).
+	secretDir string
+	exchanged *exchangeCache
+	warned    warnOnce
 }
 
 // New returns an Authenticator. Metadata and key requests go through
@@ -168,6 +214,8 @@ func New(cfg Config, transport http.RoundTripper, logger *slog.Logger) (*Authent
 		requiredScopes: slices.Clone(cfg.RequiredScopes),
 		now:            time.Now,
 		logger:         logger,
+		secretDir:      cfg.TokenExchangeSecretDir,
+		exchanged:      newExchangeCache(exchangeCacheSize),
 	}
 	for _, issuer := range cfg.Issuers {
 		if issuer.AllowHTTP {

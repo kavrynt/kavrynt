@@ -82,6 +82,10 @@
       cls: "warn",
       definition: "The request is not a well-formed MCP Streamable HTTP request (400): an unsupported MCP-Protocol-Version, a JSON-RPC batch, or Mcp-Method or Mcp-Name headers that disagree with the body. The server was not called.",
     },
+    exchange_failed: {
+      cls: "bad",
+      definition: "The server gets per-caller tokens by token exchange, and the caller's authorization server did not issue one (502), could not be reached (503), or MCP client authentication is off (503). The server was not called.",
+    },
     auth_unavailable: {
       cls: "bad",
       definition: "The Gateway could not load the signing keys of the token's authorization server and refused the call (503). Check the issuer's metadata and key URLs.",

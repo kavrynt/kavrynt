@@ -38,8 +38,8 @@ and `operator` repositories are archived and must not receive new changes.
   design. Implemented: no token passthrough, MCP client authentication
   (SPEC-0006, on by default in the chart per SPEC-0014), static upstream
   credentials (SPEC-0011), tool authorization policy (SPEC-0012, opt-in),
-  and audit events (SPEC-0013, opt-in, stdout only). Not yet: token exchange, approvals, audit delivery to
-  Kavrynt Cloud.
+  audit events (SPEC-0013, opt-in, stdout only), and token exchange
+  (SPEC-0015). Not yet: approvals, audit delivery to Kavrynt Cloud.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -113,8 +113,14 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
   chained per instance, verified by `kavryctl audit verify`; never arguments,
   results, or tokens. `X-Request-Id` on every `/mcp/` response.
-- Not implemented: token exchange, approvals, audit delivery to Kavrynt
-  Cloud.
+- `MCPServer.spec.tokenExchange` (SPEC-0015): the Gateway exchanges the
+  caller's verified token at its issuer (RFC 8693, `client_secret_basic`
+  with a client secret from the kubelet-mounted
+  `gateway.auth.tokenExchangeSecret`) for one with the server's audience,
+  sends only that, and caches it until shortly before expiry; failures
+  answer `502`/`503` (`exchange_failed`). The Operator skips tool discovery
+  for such servers (`CallerTokenRequired`).
+- Not implemented: approvals, audit delivery to Kavrynt Cloud.
   Never claim them in code comments, docs, or release notes until they are
   implemented and tested.
 
@@ -280,7 +286,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     With MCP client authentication on (test authorization server in the e2e
     image), calls without a token get `401` pointing at the route's metadata,
     a valid token works and never reaches the MCP server, and wrong
-    audiences, missing scopes, and query tokens are refused. A policy from a
+    audiences, missing scopes, and query tokens are refused. A server that
+    declares token exchange receives the caller's exchanged token for its
+    own audience, never the caller's. A policy from a
     ConfigMap allows one client's tool call and denies another's, each
     client's `tools/list` shows only the tools it may call, and a broken
     policy update leaves those decisions in force. Audit events record

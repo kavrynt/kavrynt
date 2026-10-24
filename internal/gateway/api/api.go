@@ -13,6 +13,7 @@ import (
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
@@ -99,6 +100,9 @@ type Handler struct {
 	filteredTools   *prometheus.CounterVec
 	// audit records every MCP request when set (SPEC-0013).
 	audit *audit.Writer
+	// exchangeWithoutAuth remembers routes logged as needing token exchange
+	// without client authentication (SPEC-0015-R07).
+	exchangeWithoutAuth sync.Map
 }
 
 type errorResponse struct {
@@ -561,6 +565,20 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		req.Header.Set(route.Credential.HeaderName(), route.Credential.HeaderValue(value))
 	}
+	if route.TokenExchange != nil {
+		// Only the exchanged token reaches the server; the caller's was
+		// stripped with the other credential headers (SPEC-0015-R03).
+		token, status, err := h.exchangeToken(r, route)
+		if err != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionUnavailable, err.Error()
+			}
+			writeError(w, status, err)
+			h.finish(r, route.Name, call, outcomeExchangeFailed, status, time.Since(start), upstreamBody.n, 0)
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Host = req.URL.Host
 	req.Header.Set(routeHeader, route.Name)
 	req.Header.Set("X-Forwarded-Host", r.Host)
@@ -696,6 +714,26 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 	})
 	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
 	return false
+}
+
+// exchangeToken returns the token for route in exchange for the caller's,
+// or the status and fixed message to answer with (SPEC-0015-R06, R07).
+func (h *Handler) exchangeToken(r *http.Request, route model.Route) (string, int, error) {
+	if h.clientAuth == nil {
+		if _, logged := h.exchangeWithoutAuth.LoadOrStore(route.Name, true); !logged {
+			slog.Error("MCP server needs token exchange, which needs MCP client authentication; its calls are refused", "route", route.Name)
+		}
+		return "", http.StatusServiceUnavailable, errors.New("token exchange needs MCP client authentication")
+	}
+	identity, _ := clientauth.IdentityFrom(r.Context())
+	token, err := h.clientAuth.Exchange(r, identity, route.TokenExchange.Audience, route.TokenExchange.Scopes)
+	switch {
+	case errors.Is(err, clientauth.ErrExchangeUnreachable):
+		return "", http.StatusServiceUnavailable, errors.New("token exchange unavailable")
+	case err != nil:
+		return "", http.StatusBadGateway, errors.New("token exchange failed")
+	}
+	return token, 0, nil
 }
 
 // policyInput is the policy input of a request without its MCP method and

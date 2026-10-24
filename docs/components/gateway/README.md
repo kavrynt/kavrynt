@@ -74,7 +74,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   allowed or denied by Rego policy before it is forwarded.
 - Audit events (opt-in, see below): one JSON line per MCP request.
 - Every `/mcp/` response carries `X-Request-Id`.
-- Not implemented: token exchange, approvals. See ADR-0003.
+- Token exchange (see below): servers that declare `spec.tokenExchange` get
+  the caller's token exchanged for one with their own audience.
+- Not implemented: approvals. See ADR-0003.
 
 ## Upstream credentials
 
@@ -116,8 +118,8 @@ unchanged. `/v1/servers` shows `credential: {required, available}`; values
 and pins never appear in responses, status, logs, metrics, or Kavrynt Cloud.
 The CRD rejects credential headers that frame or route the request
 (`Host`, `Content-Length`, `Connection`, ...), `Cookie`, and `Mcp-*`
-headers, and `credential` on `stdio` servers. Token exchange on behalf of
-the caller is not implemented.
+headers, and `credential` on `stdio` servers. For a token on behalf of the
+caller, use token exchange instead (below); a server cannot declare both.
 
 ## Audit events
 
@@ -287,6 +289,66 @@ Playground offers a field for an access token, kept in page memory only and
 sent only in the `Authorization` header of its own calls, and explains `401`,
 `403`, and `503` answers. The console login never authorizes `/mcp/` calls.
 
+## Token exchange
+
+An `MCPServer` that needs a token on behalf of the caller declares
+`spec.tokenExchange` (SPEC-0015):
+
+```yaml
+spec:
+  transport: http
+  endpoint: http://tickets.team-a.svc.cluster.local:8080/mcp
+  tokenExchange:
+    audience: https://tickets.example.com   # required, an absolute URI
+    scopes: [tickets:read]                  # optional
+```
+
+For each call the Gateway exchanges the caller's verified access token at
+the caller's authorization server (OAuth 2.0 Token Exchange, RFC 8693:
+`subject_token` the caller's token, `subject_token_type` and
+`requested_token_type` `urn:ietf:params:oauth:token-type:access_token`,
+`audience` and `scope` from the spec) and sends only the returned token as
+`Authorization: Bearer`. The server learns the user from the token; the
+caller's own token never leaves the Gateway.
+
+The Gateway is an OAuth client of each issuer that allows exchange, set on
+the trusted issuer:
+
+```yaml
+gateway:
+  auth:
+    issuers:
+      - issuer: https://login.example.com/realms/agents
+        tokenExchange:
+          clientID: kavrynt-gateway
+          clientSecretKey: client-secret   # key in tokenExchangeSecret
+          tokenEndpoint: ""                # optional; else token_endpoint from the issuer metadata
+    tokenExchangeSecret: kavrynt-token-exchange
+```
+
+It authenticates with `client_secret_basic`. The client secret is read from
+the Secret mounted by the kubelet (the Gateway has no RBAC on Secrets) at
+each exchange, so rotating the Secret applies once the kubelet updates the
+mount. Exchanged tokens are cached in memory per caller token (by SHA-256),
+audience, and scopes until 30 seconds before `expires_in` (at most 10,000;
+not cached without `expires_in`). Token endpoint requests use https unless
+the issuer sets `allowHTTP`, time out after 5 s, read at most 1 MiB, follow
+no redirects, and pass the egress guard. Your authorization server decides
+which audiences the Gateway may ask for, and may add the acting client as
+`act`.
+
+| Case | Status | Outcome |
+| --- | --- | --- |
+| The authorization server refuses, or answers without a bearer `access_token` | `502 token exchange failed` | `exchange_failed` |
+| The token endpoint cannot be reached or times out | `503 token exchange unavailable` | `exchange_failed` |
+| MCP client authentication is off | `503` (logged once per route) | `exchange_failed` |
+
+None of these reach the server. Caller tokens, exchanged tokens, and the
+client secret never appear in logs, metrics, traffic, audit events, status,
+or responses. The Operator does not list the tools of such a server (it has
+no caller): `ToolsDiscovered=False` with reason `CallerTokenRequired`, and
+`Ready` is unaffected. `/v1/servers` shows `tokenExchange: {audience}`.
+
 ## High availability
 
 The Gateway keeps no state that replicas must share: routes come from the
@@ -425,9 +487,10 @@ tool arguments, and results are never recorded.
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
   unavailable, `503`); `credential_unavailable` (`503`) when a server's
   stored upstream credential is missing or not pinned to its endpoint;
-  `denied` (`403`) when the tool authorization policy refuses the call; and
+  `denied` (`403`) when the tool authorization policy refuses the call;
   `protocol_error` (`400`) when the request is not well-formed MCP
-  Streamable HTTP. JSON responses up
+  Streamable HTTP; and `exchange_failed` (`502`/`503`) when the caller's
+  token could not be exchanged for the server. JSON responses up
   to 1 MiB are inspected; event streams are not.
 
 The chart adds `prometheus.io/*` scrape annotations by default
@@ -454,6 +517,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--auth` | `false` (chart: `auth.enabled`, default `true`) | Require a bearer access token for the route on every `/mcp/` request |
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
+| `--token-exchange-secret-dir` | none (chart: the mounted `auth.tokenExchangeSecret`) | Directory of the Secret with the client secrets named by the issuers' `tokenExchange.clientSecretKey` (`KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
 | `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
 | `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |

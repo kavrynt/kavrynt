@@ -61,7 +61,11 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     route's Protected Resource Metadata, that a valid token is accepted and
     not forwarded, that tokens for another route, without the required scope,
     or in the query string are refused, that refusals are recorded, and that
-    no token appears in metrics or logs. Tool authorization policy: a
+    no token appears in metrics or logs. Token exchange: a server with its
+    own audience is `Ready` with `CallerTokenRequired` discovery, answers
+    `tools/list`, and receives a token with its audience, the caller's
+    subject, and the calling agent as `act`, never the caller's token; no
+    token or client secret appears in logs or metrics. Tool authorization policy: a
     per-client allow-list from a ConfigMap allows one client's `echo` call
     and denies another's with a JSON-RPC error, and with
     `filterToolsList` the first client lists `echo` while the other lists

@@ -90,8 +90,8 @@ make demo-down          # delete the cluster
 
 Show this list as a slide as well. Do not soften it.
 
-- MCP client authentication is on by default, but this demo opts out, and
-  there is no token exchange: without authentication, anyone who can reach
+- MCP client authentication is on by default, but this demo opts out (and
+  token exchange needs it): without authentication, anyone who can reach
   the Gateway can call every routed tool. The console has an admin login,
   but it does not protect MCP routes.
 - Tool authorization policy and audit events exist but are off by default;

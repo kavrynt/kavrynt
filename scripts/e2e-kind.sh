@@ -800,6 +800,10 @@ kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
 # MCP client authentication (SPEC-0006) with a test authorization server, the
 # e2e image's issuer mode, reached by the Gateway over in-cluster http.
 log "deploying a test authorization server"
+# The Gateway's client secret for token exchange (SPEC-0015).
+EXCHANGE_CLIENT_SECRET="e2e-exchange-secret-$(date +%s)"
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" create secret generic kavrynt-token-exchange \
+  --from-literal=client-secret="${EXCHANGE_CLIENT_SECRET}" >/dev/null
 ISSUER_URL="http://e2e-issuer.${E2E_NAMESPACE}.svc.cluster.local:8080"
 RESOURCE_URL="https://mcp.e2e.test"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
@@ -831,6 +835,10 @@ spec:
           env:
             - name: ISSUER
               value: ${ISSUER_URL}
+            - name: CLIENT_ID
+              value: kavrynt-gateway
+            - name: CLIENT_SECRET
+              value: ${EXCHANGE_CLIENT_SECRET}
           ports:
             - name: http
               containerPort: 8080
@@ -865,7 +873,8 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --reuse-values \
   --set gateway.auth.enabled=true \
   --set gateway.auth.resourceURL="${RESOURCE_URL}" \
-  --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true}]" \
+  --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true,\"tokenExchange\":{\"clientID\":\"kavrynt-gateway\",\"clientSecretKey\":\"client-secret\"}}]" \
+  --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange \
   --set "gateway.auth.requiredScopes={mcp:tools}" \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
@@ -934,6 +943,52 @@ if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 
   --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt | grep --fixed-strings --quiet "${TOKEN}"; then
   fail "the Gateway logged an access token"
 fi
+
+# Verifies SPEC-0015-R09 and SPEC-0015-R10: a server that needs a token for
+# its own audience gets the caller's exchanged token, never the caller's.
+log "verifying token exchange for a server with its own audience"
+TICKETS_AUDIENCE="https://tickets.e2e.test"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: tickets-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  tokenExchange:
+    audience: ${TICKETS_AUDIENCE}
+    scopes: [tickets:read]
+MANIFEST
+TICKETS_ID="${E2E_NAMESPACE}.tickets-mcp-server"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/tickets-mcp-server --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/tickets-mcp-server \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=CallerTokenRequired --timeout=60s
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${TICKETS_ID}\") != null"
+TICKETS_CALLER="$(mint "${RESOURCE_URL}/mcp/${TICKETS_ID}" "mcp:tools")"
+curl --fail --silent --show-error --request POST "${GATEWAY_URL}/mcp/${TICKETS_ID}" \
+  --header 'Content-Type: application/json' --header "Authorization: Bearer ${TICKETS_CALLER}" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' |
+  jq --exit-status '.result.tools[0].name == "echo"' >/dev/null ||
+  fail "tools/list through a token exchange route failed"
+FORWARDED_TOKEN="$(curl --fail --silent --show-error --header "Authorization: Bearer ${TICKETS_CALLER}" \
+  "${GATEWAY_URL}/mcp/${TICKETS_ID}/debug/headers" | jq -r '.Authorization[0] // ""' | sed 's/^Bearer //')"
+[ -n "${FORWARDED_TOKEN}" ] || fail "the server behind a token exchange route received no token"
+[ "${FORWARDED_TOKEN}" != "${TICKETS_CALLER}" ] || fail "the Gateway passed the caller's token through"
+FORWARDED_CLAIMS="$(printf '%s' "${FORWARDED_TOKEN}" | cut -d. -f2 | tr '_-' '/+' |
+  awk '{ while (length($0) % 4) $0 = $0 "="; print }' | base64 --decode)"
+printf '%s' "${FORWARDED_CLAIMS}" | jq --exit-status --arg aud "${TICKETS_AUDIENCE}" \
+  '.aud == $aud and .sub == "e2e-user" and .act.sub == "e2e-agent" and .scope == "tickets:read"' >/dev/null ||
+  fail "the exchanged token does not carry the server's audience and the caller: ${FORWARDED_CLAIMS}"
+GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
+  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+for value in "${TICKETS_CALLER}" "${FORWARDED_TOKEN}" "${EXCHANGE_CLIENT_SECRET}"; do
+  if grep --fixed-strings --quiet "${value}" <<<"${GATEWAY_LOGS}$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"; then
+    fail "a token or the client secret appears in the Gateway logs or metrics"
+  fi
+done
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/tickets-mcp-server --wait=true --timeout=60s >/dev/null
 
 # Verifies SPEC-0012-R12: a per-client tool allow-list from a ConfigMap
 # decides calls of authenticated clients, and a broken update leaves the
