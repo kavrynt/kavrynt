@@ -22,6 +22,7 @@ done
 
 # The PrometheusRule's spec is a Prometheus rule file indented by two spaces.
 helm template kavrynt "${ROOT_DIR}/charts/kavrynt" --namespace kavrynt-system \
+  --set gateway.auth.enabled=false \
   --set metrics.prometheusRule.enabled=true \
   --set metrics.prometheusRule.runbookBaseURL=https://runbooks.test \
   --set operator.cloud.enabled=true \

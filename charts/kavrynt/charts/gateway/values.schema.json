@@ -222,6 +222,10 @@
           "type": "string",
           "description": "Whole seconds, for example 5s.",
           "pattern": "^[1-9][0-9]*s$"
+        },
+        "strictProtocol": {
+          "type": "boolean",
+          "description": "Refuse requests that are not well-formed MCP Streamable HTTP (SPEC-0018)."
         }
       }
     },
@@ -255,6 +259,28 @@
               },
               "allowHTTP": {
                 "type": "boolean"
+              },
+              "tokenExchange": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": [
+                  "clientID",
+                  "clientSecretKey"
+                ],
+                "properties": {
+                  "clientID": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "clientSecretKey": {
+                    "type": "string",
+                    "pattern": "^[-_a-zA-Z0-9][-._a-zA-Z0-9]{0,252}$"
+                  },
+                  "tokenEndpoint": {
+                    "type": "string",
+                    "pattern": "^(https?://\\S+)?$"
+                  }
+                }
               }
             }
           }
@@ -265,6 +291,11 @@
             "type": "string",
             "pattern": "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"
           }
+        },
+        "tokenExchangeSecret": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
         }
       }
     },
@@ -300,6 +331,9 @@
           "type": "string",
           "maxLength": 253,
           "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "filterToolsList": {
+          "type": "boolean"
         }
       }
     },

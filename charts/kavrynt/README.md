@@ -9,11 +9,24 @@ Kavrynt MCP Control Plane runtime chart.
 ## TL;DR
 
 ```bash
+# With your authorization server (MCP client authentication is on by default):
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version 0.0.5-beta.1 \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.resourceURL=https://mcp.example.com \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]'
+
+# A trial without one: MCP routes accept unauthenticated calls.
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+  --version 0.0.5-beta.1 \
+  --namespace kavrynt-system \
+  --create-namespace \
+  --set gateway.auth.enabled=false
 ```
+
+Without either, the install fails and names both. See
+[Authenticating MCP clients](#authenticating-mcp-clients).
 
 ## Introduction
 
@@ -45,7 +58,8 @@ repository:
 ```bash
 helm upgrade --install kavrynt charts/kavrynt \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.enabled=false
 ```
 
 Authenticate with `helm registry login ghcr.io` first when the chart package
@@ -85,6 +99,31 @@ kubectl annotate crd mcpservers.kavrynt.io \
 ```
 
 Then run `helm upgrade` as above. Existing `MCPServer` resources are kept.
+
+### Once, when upgrading to 1.0.0-beta.1
+
+From `1.0.0-beta.1`, MCP client authentication is on by default. An upgrade
+of a release that never set `gateway.auth` fails before changing anything,
+with a message naming both ways forward. Add your authorization server:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set gateway.auth.resourceURL=https://mcp.example.com \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]'
+```
+
+or keep MCP routes open, as they were, with
+`--set gateway.auth.enabled=false`.
+
+### With kavryctl
+
+`kavryctl upgrade --version <version>` runs the same upgrade with checks:
+it stops before changing anything when the release or the version is
+missing or the CRD needs adoption (`--adopt-crd` adopts it), reuses the
+release's values, and reports every server that was routed before and is
+not now. `kavryctl rollback [--revision N]` does the same for `helm
+rollback`. See [kavryctl: Upgrade and rollback](../../docs/components/kavryctl/README.md#upgrade-and-rollback).
 
 ### Rolling back
 
@@ -180,10 +219,10 @@ Operator; it does not need to be restored.
 
 ## Security notes
 
-- MCP client authentication is off by default: until `gateway.auth.enabled`
-  is set, anyone who can reach the Gateway can call every routed tool through
-  `/mcp/`. Keep the Gateway Service `ClusterIP` until it is on (see
-  "Authenticating MCP clients").
+- MCP client authentication is on by default. With
+  `gateway.auth.enabled=false`, anyone who can reach the Gateway can call
+  every routed tool through `/mcp/`: keep the Gateway Service `ClusterIP`
+  while it is off (see "Authenticating MCP clients").
 - The console has a single `admin` login. The chart generates its password
   into the Secret `kavrynt-gateway-console-admin` (kept on uninstall); read it
   with `kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d`. The login protects the console and
@@ -241,14 +280,17 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 ```
 
 Anything the policy does not allow is denied. Use it with MCP client
-authentication so decisions can name the caller. Details:
+authentication so decisions can name the caller. Add
+`--set gateway.policy.filterToolsList=true` so each caller's `tools/list`
+shows only the tools it may call. Details:
 [Gateway: Tool authorization policy](../../docs/components/gateway/README.md#tool-authorization-policy).
 
 ## Authenticating MCP clients
 
-The Gateway can require an OAuth 2.1 bearer token from your authorization
-server on every MCP call. Each route accepts only tokens whose audience is
-its resource URI, `<resourceURL>/mcp/<namespace>.<name>`.
+The Gateway requires an OAuth 2.1 bearer token from your authorization
+server on every MCP call; it is on by default. Each route accepts only
+tokens whose audience is its resource URI,
+`<resourceURL>/mcp/<namespace>.<name>`.
 
 ```bash
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
@@ -262,9 +304,32 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 `resourceURL` is the origin agents use to reach the Gateway (no path).
 Issuers must be https; an in-cluster authorization server on plain http
 needs `allowHTTP: true`. The chart refuses to render authentication without
-a resource URL or an issuer. Agents without a valid token get `401` with a
+a resource URL or an issuer; `gateway.auth.enabled=false` runs without
+authentication instead, and the Gateway logs a warning at start and the
+console shows that MCP routes are open. Agents without a valid token get `401` with a
 `resource_metadata` URL that tells them where to get one. Token rules and
 answers: [Gateway: MCP client authentication](../../docs/components/gateway/README.md#mcp-client-authentication).
+
+### Token exchange for servers that need the user
+
+An MCP server that checks who the user is declares
+`spec.tokenExchange.audience`; the Gateway exchanges each caller's token for
+one with that audience at the caller's authorization server (RFC 8693). Give
+the Gateway an OAuth client there, store its secret, and name both:
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-token-exchange \
+  --from-literal=client-secret='<the Gateway client secret>'
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents","tokenExchange":{"clientID":"kavrynt-gateway","clientSecretKey":"client-secret"}}]' \
+  --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange
+```
+
+The authorization server must allow that client to exchange tokens for the
+server's audience. Details:
+[Gateway: Token exchange](../../docs/components/gateway/README.md#token-exchange)
+and [`examples/kavryctl/mcp-server-token-exchange.yaml`](../../examples/kavryctl/mcp-server-token-exchange.yaml).
 
 ## Keeping traffic on the Gateway
 

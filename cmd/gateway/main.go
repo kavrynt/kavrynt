@@ -46,15 +46,18 @@ func main() {
 	authEnabled := flag.Bool("auth", false, "Require a bearer access token for the route on every /mcp/ request (MCP client authentication)")
 	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
 	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
+	tokenExchangeDir := flag.String("token-exchange-secret-dir", getenv("KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR", ""), "Directory of the mounted Secret with the client secrets named by the issuers' tokenExchange.clientSecretKey (token exchange)")
 	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
 	auditEnabled := flag.Bool("audit", false, "Write one audit event per MCP request as a JSON line on standard output")
 	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
 	auditOverflow := flag.String("audit-on-overflow", audit.Reject, "With a full audit queue: reject (refuse new MCP requests with 503) or drop (serve them, count the lost events)")
 	policyDir := flag.String("policy-dir", getenv("KAVRYNT_POLICY_DIR", ""), "Directory of the mounted tool authorization policy (.rego files defining data.kavrynt.authz.decision); every MCP request is then allowed or denied by it")
+	policyFilterToolsList := flag.Bool("policy-filter-tools-list", false, "With --policy-dir, list in each tools/list answer only the tools the policy lets the caller call")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
+	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
 	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic, normally the pod name")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
@@ -68,11 +71,12 @@ func main() {
 		os.Exit(1)
 	}
 
-	clientAuth, err := newClientAuth(*authEnabled, *authResourceURL, *authIssuers, *authScopes)
+	clientAuth, err := newClientAuth(*authEnabled, *authResourceURL, *authIssuers, *authScopes, *tokenExchangeDir)
 	if err != nil {
 		slog.Error("configure MCP client authentication", "error", err)
 		os.Exit(1)
 	}
+	warnUnauthenticated(slog.Default(), clientAuth != nil)
 
 	var policyEngine *policy.Engine
 	if *policyDir != "" {
@@ -82,6 +86,9 @@ func main() {
 			slog.Error("load tool authorization policy", "error", err)
 			os.Exit(1)
 		}
+	} else if *policyFilterToolsList {
+		slog.Error("--policy-filter-tools-list needs --policy-dir: the tools are filtered by the policy")
+		os.Exit(1)
 	}
 
 	cfg, err := ctrl.GetConfig()
@@ -108,6 +115,7 @@ func main() {
 	handler.SetRequestTimeout(*requestTimeout)
 	handler.AllowOrigins(splitList(*allowedOrigins)...)
 	handler.SetInstance(*instance)
+	handler.SetStrictProtocol(*strictProtocol)
 	var auditWriter *audit.Writer
 	if *auditEnabled {
 		// A random suffix keeps chains apart when a pod's container restarts.
@@ -127,6 +135,9 @@ func main() {
 	}
 	if policyEngine != nil {
 		handler.EnablePolicy(policyEngine)
+		if *policyFilterToolsList {
+			handler.EnableToolsListFilter()
+		}
 	}
 	if clientAuth != nil {
 		handler.EnableClientAuth(clientAuth)
@@ -222,11 +233,19 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 	return auth.New(dir, ttl), nil
 }
 
+// warnUnauthenticated says at start that MCP routes are open when client
+// authentication is off (SPEC-0014-R03).
+func warnUnauthenticated(logger *slog.Logger, authenticated bool) {
+	if !authenticated {
+		logger.Warn("MCP client authentication is off: every /mcp/ route accepts unauthenticated calls; configure --auth for production")
+	}
+}
+
 // newClientAuth returns the MCP client authenticator, or nil when --auth is
 // off. Authentication without a resource URL or a trusted issuer is refused
 // (SPEC-0006-R02). Key and metadata requests use the egress guard without the
 // loopback exception (SPEC-0006-R11).
-func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes string) (*clientauth.Authenticator, error) {
+func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes, tokenExchangeDir string) (*clientauth.Authenticator, error) {
 	if !enabled {
 		return nil, nil
 	}
@@ -239,9 +258,10 @@ func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes string) (*clie
 		}
 	}
 	return clientauth.New(clientauth.Config{
-		ResourceURL:    resourceURL,
-		Issuers:        issuers,
-		RequiredScopes: splitList(scopes),
+		ResourceURL:            resourceURL,
+		Issuers:                issuers,
+		RequiredScopes:         splitList(scopes),
+		TokenExchangeSecretDir: tokenExchangeDir,
 	}, egress.Transport(false), slog.Default())
 }
 

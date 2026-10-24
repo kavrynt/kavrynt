@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -74,6 +74,12 @@ New commands; no change to existing ones.
 
 kavryctl component doc, chart README (upgrading), README.
 
-## Open questions
+## Decisions
 
-- Shell out to `helm`, or embed the Helm SDK (a large dependency)?
+- `kavryctl` runs the `helm` binary instead of embedding the Helm SDK, which
+  would add a large dependency tree to every `kavryctl` download.
+- `--chart` names the chart (default `oci://ghcr.io/kavrynt/charts/kavrynt`;
+  a local directory is accepted for tests and air-gapped installs), and
+  `--values FILE` passes extra values on top of the reused ones.
+- "Routed" means `Ready=True`, the same rule `kavryctl list` uses for the
+  ROUTE column.

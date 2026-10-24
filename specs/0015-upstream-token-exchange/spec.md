@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -77,6 +77,13 @@ the MCP authorization specification.
 - **SPEC-0015-R08** Subject tokens, exchanged tokens, and client secrets MUST
   NOT appear in logs, metrics, traffic, audit events, status, or responses.
 
+### Tool discovery
+
+- **SPEC-0015-R10** The Operator MUST NOT run tool discovery for a server
+  with `tokenExchange` (it has no caller token), and MUST set
+  `ToolsDiscovered=False` with reason `CallerTokenRequired`; `Ready` is not
+  affected.
+
 ### End to end
 
 - **SPEC-0015-R09** With the e2e test authorization server extended with a
@@ -105,16 +112,25 @@ decides whether the Gateway may exchange for an audience.
 ## Compatibility
 
 Additive CRD field (both copies), new issuer settings and Secret values, new
-outcome. No change for servers without `tokenExchange`.
+outcome `exchange_failed`, new `ToolsDiscovered` reason `CallerTokenRequired`.
+No change for servers without `tokenExchange`.
 
 ## Documentation
 
 Gateway component doc (token exchange), chart README, examples, README
 security posture, CLAUDE.md.
 
-## Open questions
+## Decisions
 
-- Should the Gateway also support `private_key_jwt` client authentication
-  instead of a client secret?
-- How should `act` (actor) be requested: from the token's `client_id`, or
-  an explicit `actor_token`?
+- The Gateway authenticates to the token endpoint with `client_secret_basic`
+  only. `private_key_jwt` can follow in its own spec when an authorization
+  server needs it.
+- No `actor_token` is sent. The authorization server knows the acting
+  client from the Gateway's client authentication and the subject token's
+  `client_id`, and adds `act` if it supports it.
+- Exchange settings live on each trusted issuer (`tokenExchange.clientID`,
+  `tokenExchange.clientSecretKey`, optional `tokenExchange.tokenEndpoint`);
+  the client secrets come from one Secret,
+  `gateway.auth.tokenExchangeSecret`, mounted by the kubelet.
+- The exchange request carries `audience`; `resource` (RFC 8707) is not
+  sent, as authorization servers differ in which one they accept.

@@ -1,0 +1,18 @@
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: tickets
+  annotations:
+    kavrynt.io/description: HTTP MCP server that checks who the user is; the Gateway exchanges each caller's token for one with this server's audience
+spec:
+  version: 1.0.0
+  transport: http
+  endpoint: http://tickets.team-a.svc.cluster.local:8080/mcp
+  # Needs MCP client authentication and a trusted issuer with tokenExchange
+  # settings (chart values gateway.auth.issuers[].tokenExchange and
+  # gateway.auth.tokenExchangeSecret). The authorization server must allow
+  # the Gateway's client to exchange tokens for this audience.
+  tokenExchange:
+    audience: https://tickets.example.com
+    scopes:
+      - tickets:read

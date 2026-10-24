@@ -19,6 +19,20 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   at connect time, so DNS names and rebinding cannot bypass it. Refused
   requests return `502`.
 - Upstream redirects are passed to the client, never followed.
+- MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
+  `400` and outcome `protocol_error` before anything is forwarded: an
+  `MCP-Protocol-Version` other than `2024-11-05`, `2025-03-26`,
+  `2025-06-18`, `2025-11-25`, or `2026-07-28` (the answer lists them); a
+  JSON-RPC batch (an array body); an `Mcp-Method` header that names another
+  method than the body, or an `Mcp-Name` header on `tools/call` that names
+  another tool than `params.name`; and, from `2026-07-28`, a request whose
+  body has a `method` but no `Mcp-Method` header. Requests without
+  `MCP-Protocol-Version` are treated as `2025-03-26`. `GET` event streams
+  and `DELETE` session requests are not checked, and `Last-Event-ID` and
+  `Mcp-Session-Id` are forwarded unchanged. Bodies over 1 MiB or not JSON
+  are forwarded unchecked (unless a policy is on). `--strict-protocol=false`
+  (chart: `config.strictProtocol`) forwards such requests while clients are
+  migrated.
 - Path suffixes with `.` or `..` segments are rejected with `400`, so callers
   cannot leave the endpoint's path.
 - A request that already carries `X-Kavrynt-Route` (an endpoint pointing back
@@ -54,13 +68,15 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   only from the Gateway and the Operator, so clients cannot skip the
   Gateway; `networkPolicy.gateway` limits who can call the Gateway. Both
   need a CNI that enforces NetworkPolicy.
-- MCP client authentication (opt-in, see below): every `/mcp/` request needs
-  a bearer token for its route.
+- MCP client authentication (on by default in the chart, see below): every
+  `/mcp/` request needs a bearer token for its route.
 - Tool authorization policy (opt-in, see below): every MCP request is
   allowed or denied by Rego policy before it is forwarded.
 - Audit events (opt-in, see below): one JSON line per MCP request.
 - Every `/mcp/` response carries `X-Request-Id`.
-- Not implemented: token exchange, approvals. See ADR-0003.
+- Token exchange (see below): servers that declare `spec.tokenExchange` get
+  the caller's token exchanged for one with their own audience.
+- Not implemented: approvals. See ADR-0003.
 
 ## Upstream credentials
 
@@ -102,8 +118,8 @@ unchanged. `/v1/servers` shows `credential: {required, available}`; values
 and pins never appear in responses, status, logs, metrics, or Kavrynt Cloud.
 The CRD rejects credential headers that frame or route the request
 (`Host`, `Content-Length`, `Connection`, ...), `Cookie`, and `Mcp-*`
-headers, and `credential` on `stdio` servers. Token exchange on behalf of
-the caller is not implemented.
+headers, and `credential` on `stdio` servers. For a token on behalf of the
+caller, use token exchange instead (below); a server cannot declare both.
 
 ## Audit events
 
@@ -127,9 +143,13 @@ credential, or an unknown route, when it completes.
 | `reason` | Why it was refused |
 | `policy_revision` | SHA-256 of the policy in force, with a policy |
 | `outcome`, `status`, `duration_ms`, `bytes_in`, `bytes_out` | How it ended (traffic outcome) |
+| `filtered_tools` | Tools removed from a `tools/list` answer by the policy (SPEC-0016); only present when some were |
 | `prev_hash`, `hash` | The chain |
 
-Fields that do not apply are present and empty. Events never contain tool
+Fields that do not apply are present and empty, except `filtered_tools`.
+`kavryctl audit verify` of a release before `filtered_tools` existed reports
+events that carry it as breaks; verify with the `kavryctl` of the Gateway's
+release. Events never contain tool
 arguments, results, bodies, tokens, credentials, cookies, or headers; they do
 identify people and agents, so treat them as personal data.
 
@@ -191,10 +211,27 @@ authorization: restrict it with RBAC. Examples, tested in CI:
 [`examples/policy`](../../examples/policy) (allow authenticated callers, a
 per-client tool allow-list, read-only methods).
 
+**Filtered tool lists.** With `--policy-filter-tools-list` (chart:
+`gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
+only the tools the policy would let the same caller call (SPEC-0016): for
+each tool the policy is asked with `mcp_method: tools/call` and `tool: <name>`
+and the caller's other input. Every other field of the answer (`nextCursor`,
+`_meta`, the kept tools as sent) is unchanged; in an event stream only the
+response event is changed. The Gateway asks the server for an uncompressed
+answer. If the evaluations take longer than 500 ms together, the answer is
+over 1 MiB, or it is not a `tools/list` result, the caller gets an empty
+`tools` list and the reason is logged. `kavrynt_gateway_policy_filtered_tools_total{route}`
+counts removed tools, and the audit event has `filtered_tools`. A policy
+that denies every `tools/call` lists no tools. Answers are filtered afresh
+each time, so a policy update applies to the next list.
+
 ## MCP client authentication
 
-With `--auth` (chart: `gateway.auth.enabled`) the Gateway is an OAuth 2.1
-resource server (SPEC-0006). It never issues tokens: agents get them from
+With `--auth` (chart: `gateway.auth.enabled`, on by default; SPEC-0014) the
+Gateway is an OAuth 2.1 resource server (SPEC-0006). The chart refuses to
+render without `gateway.auth.resourceURL` and `gateway.auth.issuers` unless
+`gateway.auth.enabled=false` is set, in which case every route is open and
+the Gateway logs a warning at start. It never issues tokens: agents get them from
 your authorization server, which the Gateway trusts by configuration.
 
 A request to `/mcp/<namespace>.<name>` is forwarded only with
@@ -251,6 +288,66 @@ only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's
 Playground offers a field for an access token, kept in page memory only and
 sent only in the `Authorization` header of its own calls, and explains `401`,
 `403`, and `503` answers. The console login never authorizes `/mcp/` calls.
+
+## Token exchange
+
+An `MCPServer` that needs a token on behalf of the caller declares
+`spec.tokenExchange` (SPEC-0015):
+
+```yaml
+spec:
+  transport: http
+  endpoint: http://tickets.team-a.svc.cluster.local:8080/mcp
+  tokenExchange:
+    audience: https://tickets.example.com   # required, an absolute URI
+    scopes: [tickets:read]                  # optional
+```
+
+For each call the Gateway exchanges the caller's verified access token at
+the caller's authorization server (OAuth 2.0 Token Exchange, RFC 8693:
+`subject_token` the caller's token, `subject_token_type` and
+`requested_token_type` `urn:ietf:params:oauth:token-type:access_token`,
+`audience` and `scope` from the spec) and sends only the returned token as
+`Authorization: Bearer`. The server learns the user from the token; the
+caller's own token never leaves the Gateway.
+
+The Gateway is an OAuth client of each issuer that allows exchange, set on
+the trusted issuer:
+
+```yaml
+gateway:
+  auth:
+    issuers:
+      - issuer: https://login.example.com/realms/agents
+        tokenExchange:
+          clientID: kavrynt-gateway
+          clientSecretKey: client-secret   # key in tokenExchangeSecret
+          tokenEndpoint: ""                # optional; else token_endpoint from the issuer metadata
+    tokenExchangeSecret: kavrynt-token-exchange
+```
+
+It authenticates with `client_secret_basic`. The client secret is read from
+the Secret mounted by the kubelet (the Gateway has no RBAC on Secrets) at
+each exchange, so rotating the Secret applies once the kubelet updates the
+mount. Exchanged tokens are cached in memory per caller token (by SHA-256),
+audience, and scopes until 30 seconds before `expires_in` (at most 10,000;
+not cached without `expires_in`). Token endpoint requests use https unless
+the issuer sets `allowHTTP`, time out after 5 s, read at most 1 MiB, follow
+no redirects, and pass the egress guard. Your authorization server decides
+which audiences the Gateway may ask for, and may add the acting client as
+`act`.
+
+| Case | Status | Outcome |
+| --- | --- | --- |
+| The authorization server refuses, or answers without a bearer `access_token` | `502 token exchange failed` | `exchange_failed` |
+| The token endpoint cannot be reached or times out | `503 token exchange unavailable` | `exchange_failed` |
+| MCP client authentication is off | `503` (logged once per route) | `exchange_failed` |
+
+None of these reach the server. Caller tokens, exchanged tokens, and the
+client secret never appear in logs, metrics, traffic, audit events, status,
+or responses. The Operator does not list the tools of such a server (it has
+no caller): `ToolsDiscovered=False` with reason `CallerTokenRequired`, and
+`Ready` is unaffected. `/v1/servers` shows `tokenExchange: {audience}`.
 
 ## High availability
 
@@ -389,8 +486,11 @@ tool arguments, and results are never recorded.
   client authentication on, `unauthenticated` (no valid token, `401`/`400`),
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
   unavailable, `503`); `credential_unavailable` (`503`) when a server's
-  stored upstream credential is missing or not pinned to its endpoint; and
-  `denied` (`403`) when the tool authorization policy refuses the call. JSON responses up
+  stored upstream credential is missing or not pinned to its endpoint;
+  `denied` (`403`) when the tool authorization policy refuses the call;
+  `protocol_error` (`400`) when the request is not well-formed MCP
+  Streamable HTTP; and `exchange_failed` (`502`/`503`) when the caller's
+  token could not be exchanged for the server. JSON responses up
   to 1 MiB are inspected; event streams are not.
 
 The chart adds `prometheus.io/*` scrape annotations by default
@@ -414,9 +514,10 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
-| `--auth` | `false` (chart: `auth.enabled`) | Require a bearer access token for the route on every `/mcp/` request |
+| `--auth` | `false` (chart: `auth.enabled`, default `true`) | Require a bearer access token for the route on every `/mcp/` request |
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
+| `--token-exchange-secret-dir` | none (chart: the mounted `auth.tokenExchangeSecret`) | Directory of the Secret with the client secrets named by the issuers' `tokenExchange.clientSecretKey` (`KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
 | `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
 | `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |
@@ -425,6 +526,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
+| `--strict-protocol` | `true` (chart: `config.strictProtocol`) | Refuse requests that are not well-formed MCP Streamable HTTP; `false` forwards them |
 | `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`

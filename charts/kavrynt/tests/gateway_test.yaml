@@ -1,6 +1,8 @@
 suite: gateway
 release:
   namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
 tests:
   # Verifies SPEC-0003-R06.
   - it: grants cluster-wide read-only access to MCPServers by default
@@ -121,6 +123,24 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: X-Api-Key,X-Tenant
+
+  # Verifies SPEC-0018-R06.
+  - it: checks MCP requests strictly unless told not to
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --strict-protocol=true
+
+  # Verifies SPEC-0018-R06.
+  - it: forwards malformed MCP requests while clients migrate
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.config.strictProtocol: false
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --strict-protocol=false
 
   # Verifies SPEC-0003-R11.
   - it: refuses the removed gateway.config.watchNamespaces

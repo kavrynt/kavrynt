@@ -13,7 +13,7 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | --- | --- | --- |
 | `Accepted` | spec is valid | `InvalidSpec` |
 | `Ready` | accepted, `transport: http`, and in a namespace the Gateway watches (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched` |
-| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable`, `CredentialUnavailable` (the server declares `spec.credential` and its stored credential is missing or not pinned to the endpoint) |
+| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable`, `CredentialUnavailable` (the server declares `spec.credential` and its stored credential is missing or not pinned to the endpoint), `CallerTokenRequired` (the server declares `spec.tokenExchange`: its tools are listed with a caller's token, which the Operator does not have) |
 
 - Lists the tools of each `Ready` server into `status.tools` (see
   [Tool discovery](#tool-discovery)).

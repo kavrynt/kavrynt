@@ -54,8 +54,11 @@ type Event struct {
 	DurationMS     float64 `json:"duration_ms"`
 	BytesIn        int64   `json:"bytes_in"`
 	BytesOut       int64   `json:"bytes_out"`
-	PrevHash       string  `json:"prev_hash"`
-	Hash           string  `json:"hash,omitempty"`
+	// FilteredTools counts the tools removed from a tools/list answer by
+	// the policy (SPEC-0016-R05); omitted when none were.
+	FilteredTools int    `json:"filtered_tools,omitempty"`
+	PrevHash      string `json:"prev_hash"`
+	Hash          string `json:"hash,omitempty"`
 }
 
 // Route names the MCPServer of a request.

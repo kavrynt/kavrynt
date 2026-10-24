@@ -4,6 +4,8 @@ templates:
 release:
   name: kavrynt
   namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
 tests:
   # Verifies SPEC-0012-R01.
   - it: evaluates no policy by default
@@ -41,3 +43,32 @@ tests:
     asserts:
       - failedTemplate:
           errorMessage: "policy.configMap is required when policy.enabled is true: the ConfigMap with the .rego files"
+
+  # Verifies SPEC-0016-R01.
+  - it: filters tools/list answers only on request
+    set:
+      gateway.policy.enabled: true
+      gateway.policy.configMap: kavrynt-policy
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --policy-filter-tools-list
+
+  # Verifies SPEC-0016-R01.
+  - it: passes the tools/list filter switch to the Gateway
+    set:
+      gateway.policy.enabled: true
+      gateway.policy.configMap: kavrynt-policy
+      gateway.policy.filterToolsList: true
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --policy-filter-tools-list
+
+  # Verifies SPEC-0016-R01.
+  - it: refuses the tools/list filter without a policy
+    set:
+      gateway.policy.filterToolsList: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "policy.filterToolsList needs policy.enabled: the tools are filtered by the policy"

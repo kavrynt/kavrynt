@@ -155,3 +155,14 @@ test("the notice tells whether MCP routes require tokens", () => {
   assert.equal(notice({ enabled: true, mcpAuth: false }).title, "MCP routes are not authenticated.");
   assert.equal(notice({ enabled: false, mcpAuth: false }).title, "No login.");
 });
+
+// Verifies SPEC-0014-R03: with MCP client authentication turned off, the
+// notice says every routed tool can be called without authentication.
+test("the notice says MCP routes are open when authentication is off", () => {
+  const { notice } = state;
+  for (const enabled of [true, false]) {
+    const { title, text } = notice({ enabled, mcpAuth: false });
+    assert.match(title + " " + text, /call every routed tool/);
+    assert.match(title + " " + text, /turn on MCP client authentication/);
+  }
+});

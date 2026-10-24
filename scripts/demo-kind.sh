@@ -134,9 +134,12 @@ cmd_up() {
     kubectl annotate crd mcpservers.kavrynt.io \
       meta.helm.sh/release-name=kavrynt meta.helm.sh/release-namespace="${CONTROL_NAMESPACE}" --overwrite >/dev/null
   fi
+  # A local demo has no authorization server: MCP routes stay open
+  # (SPEC-0014).
   helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
     --namespace "${CONTROL_NAMESPACE}" \
     --create-namespace \
+    --set gateway.auth.enabled=false \
     --set gateway.image.repository=kavrynt/gateway \
     --set-string gateway.image.tag="${LOCAL_VERSION}" \
     --set operator.image.repository=kavrynt/operator \

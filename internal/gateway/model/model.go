@@ -15,6 +15,15 @@ type Route struct {
 	// Credential is set when the server needs its stored upstream credential
 	// (SPEC-0011). It never holds the value.
 	Credential *kavryntv1alpha1.MCPServerCredential `json:"-"`
+	// TokenExchange is set when the server gets each caller's exchanged
+	// token (SPEC-0015).
+	TokenExchange *kavryntv1alpha1.MCPServerTokenExchange `json:"-"`
+}
+
+// ServerTokenExchange tells the console that a server gets per-caller
+// tokens by token exchange (SPEC-0015).
+type ServerTokenExchange struct {
+	Audience string `json:"audience"`
 }
 
 // ServerCredential reports whether a server needs a stored credential and
@@ -43,7 +52,9 @@ type Server struct {
 	ServerInfo *ServerInfo `json:"serverInfo,omitempty"`
 	// Credential is set for servers that declare spec.credential.
 	Credential *ServerCredential `json:"credential,omitempty"`
-	CreatedAt  time.Time         `json:"createdAt"`
+	// TokenExchange is set for servers that declare spec.tokenExchange.
+	TokenExchange *ServerTokenExchange `json:"tokenExchange,omitempty"`
+	CreatedAt     time.Time            `json:"createdAt"`
 }
 
 // ServerInfo is an MCP server's reported name and version.

@@ -43,20 +43,23 @@ global so the Operator reads the same list.
 
 {{/*
 "true" when MCP client authentication is on. Fails rendering for settings the
-Gateway would refuse at start-up (SPEC-0006-R02, SPEC-0006-R20).
+Gateway would refuse at start-up (SPEC-0006-R02, SPEC-0006-R20), and with
+one message naming both ways forward when it is on by default without
+settings (SPEC-0014-R02).
 */}}
 {{- define "gateway.clientAuthEnabled" -}}
 {{- $auth := .Values.auth | default dict -}}
 {{- if $auth.enabled -}}
-{{- if not $auth.resourceURL -}}
-{{- fail "auth.resourceURL is required when auth.enabled is true: the Gateway's external https origin" -}}
-{{- end -}}
-{{- if not $auth.issuers -}}
-{{- fail "auth.issuers needs at least one trusted authorization server when auth.enabled is true" -}}
+{{- if or (not $auth.resourceURL) (not $auth.issuers) -}}
+{{- fail "gateway.auth: MCP client authentication is on by default. Set gateway.auth.resourceURL (the Gateway's external https origin) and gateway.auth.issuers to trust your authorization server, or set gateway.auth.enabled=false to run with unauthenticated MCP routes" -}}
 {{- end -}}
 {{- range $auth.issuers -}}
-{{- if and (or (hasPrefix "http://" .issuer) (hasPrefix "http://" (.jwksURI | default ""))) (not .allowHTTP) -}}
+{{- $tokenEndpoint := (.tokenExchange | default dict).tokenEndpoint | default "" -}}
+{{- if and (or (hasPrefix "http://" .issuer) (hasPrefix "http://" (.jwksURI | default "")) (hasPrefix "http://" $tokenEndpoint)) (not .allowHTTP) -}}
 {{- fail (printf "auth.issuers: %s uses http; set allowHTTP: true for an in-cluster authorization server" .issuer) -}}
+{{- end -}}
+{{- if and .tokenExchange (not $auth.tokenExchangeSecret) -}}
+{{- fail (printf "auth.issuers: %s has tokenExchange settings; set auth.tokenExchangeSecret to the Secret with its client secret" .issuer) -}}
 {{- end -}}
 {{- end -}}
 true

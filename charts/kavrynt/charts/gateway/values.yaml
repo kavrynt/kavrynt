@@ -54,14 +54,22 @@ config:
   # derived from both.
   shutdownDelay: 5s
   shutdownTimeout: 10s
+  # Refuse MCP requests that are not well-formed MCP Streamable HTTP
+  # (SPEC-0018): an unsupported MCP-Protocol-Version, JSON-RPC batches, and
+  # Mcp-Method or Mcp-Name headers that disagree with the body. Set false
+  # only while migrating clients; such requests are then forwarded.
+  strictProtocol: true
 
 # MCP client authentication (SPEC-0006): the Gateway is an OAuth 2.1 resource
 # server. Every /mcp/ request needs a bearer access token (a JWT) from a
 # trusted authorization server, whose audience is the route's resource URI,
 # <resourceURL>/mcp/<namespace>.<name>. Clients discover where to get one from
 # the 401 answer and /.well-known/oauth-protected-resource/mcp/<route>.
+# On by default (SPEC-0014): set resourceURL and issuers, or set
+# enabled: false to run with unauthenticated MCP routes, for example for a
+# local trial.
 auth:
-  enabled: false
+  enabled: true
   # The Gateway's external https origin, as clients reach it (no path), for
   # example https://mcp.example.com.
   resourceURL: ""
@@ -70,8 +78,16 @@ auth:
   # - issuer: https://login.example.com/realms/agents   # must equal the tokens' iss
   #   jwksURI: ""        # optional; discovered from the issuer's metadata
   #   allowHTTP: false   # true only for an in-cluster authorization server on http
+  #   tokenExchange:     # optional: exchange callers' tokens for servers
+  #     clientID: kavrynt-gateway       # that declare spec.tokenExchange
+  #     clientSecretKey: client-secret  # key in tokenExchangeSecret
+  #     tokenEndpoint: ""               # optional; from the issuer's metadata
   # Scopes every token must carry, for example [mcp:tools].
   requiredScopes: []
+  # Secret in the release namespace with the Gateway's client secrets for
+  # token exchange (SPEC-0015), one key per issuer's clientSecretKey. The
+  # kubelet mounts it; the Gateway gets no RBAC on Secrets.
+  tokenExchangeSecret: ""
 
 # Audit events (SPEC-0013): one JSON line per MCP request on the Gateway's
 # standard output ("type":"kavrynt.audit.v1"), with the caller, route, method,
@@ -93,6 +109,10 @@ audit:
 policy:
   enabled: false
   configMap: ""
+  # List in each tools/list answer only the tools the policy lets that
+  # caller call (SPEC-0016). Answers the filter cannot finish within 500 ms,
+  # or larger than 1 MiB, list no tools.
+  filterToolsList: false
 
 # Read-only web console at /ui/: MCP servers and their tools, a playground that
 # calls tools through the Gateway, and recent traffic. It needs no extra RBAC.

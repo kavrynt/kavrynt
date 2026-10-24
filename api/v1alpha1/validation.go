@@ -2,6 +2,7 @@ package v1alpha1
 
 import (
 	"errors"
+	"fmt"
 	"net/url"
 	"regexp"
 	"strings"
@@ -41,6 +42,9 @@ func (in *MCPServer) Validate() error {
 	if in.Spec.Credential != nil {
 		problems = append(problems, validateCredential(in.Spec.Credential, in.Spec.Transport)...)
 	}
+	if in.Spec.TokenExchange != nil {
+		problems = append(problems, validateTokenExchange(in.Spec.TokenExchange, in.Spec.Transport, in.Spec.Credential != nil)...)
+	}
 
 	if len(problems) > 0 {
 		return errors.New(strings.Join(problems, "; "))
@@ -74,6 +78,36 @@ func validateCredential(credential *MCPServerCredential, transport string) []str
 	}
 	if credential.Scheme != "" && !headerName.MatchString(credential.Scheme) {
 		problems = append(problems, "spec.credential.scheme must be a single token, for example Bearer")
+	}
+	return problems
+}
+
+// scopeToken is an OAuth scope token (RFC 6749 section 3.3).
+var scopeToken = regexp.MustCompile(`^[\x21\x23-\x5b\x5d-\x7e]{1,256}$`)
+
+// maxTokenExchangeScopes bounds spec.tokenExchange.scopes.
+const maxTokenExchangeScopes = 20
+
+func validateTokenExchange(exchange *MCPServerTokenExchange, transport string, hasCredential bool) []string {
+	var problems []string
+	if strings.TrimSpace(transport) != "http" {
+		problems = append(problems, "spec.tokenExchange is only supported with spec.transport http")
+	}
+	if hasCredential {
+		problems = append(problems, "spec.tokenExchange and spec.credential are mutually exclusive")
+	}
+	audience, err := url.Parse(exchange.Audience)
+	if exchange.Audience == "" || len(exchange.Audience) > 2048 || err != nil || !audience.IsAbs() || audience.Fragment != "" || audience.User != nil {
+		problems = append(problems, "spec.tokenExchange.audience must be an absolute URI without credentials or fragment")
+	}
+	if len(exchange.Scopes) > maxTokenExchangeScopes {
+		problems = append(problems, fmt.Sprintf("spec.tokenExchange.scopes must have at most %d scopes", maxTokenExchangeScopes))
+	}
+	for _, scope := range exchange.Scopes {
+		if !scopeToken.MatchString(scope) {
+			problems = append(problems, "spec.tokenExchange.scopes must be OAuth scope tokens")
+			break
+		}
 	}
 	return problems
 }

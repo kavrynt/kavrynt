@@ -25,19 +25,25 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   with `kavryctl audit verify`.
 - Opt-in tool authorization policy: Rego evaluated in the Gateway, deny by
   default, from a ConfigMap.
-- Opt-in MCP client authentication: the Gateway is an OAuth 2.1 resource
-  server with per-route token audiences and Protected Resource Metadata.
+- `kavryctl upgrade` and `kavryctl rollback`: Helm's upgrade and rollback
+  with checks before and after.
+- Token exchange (RFC 8693) for MCP servers that need the user: the caller's
+  token is exchanged for one with the server's audience.
+- MCP Streamable HTTP checks on every route: supported protocol revisions,
+  no batches, and `Mcp-Method`/`Mcp-Name` headers that match the body.
+- MCP client authentication, on by default with an explicit opt-out for
+  trials: the Gateway is an OAuth 2.1 resource server with per-route token
+  audiences and Protected Resource Metadata.
 
 ## Next
 
-1. Token exchange for upstream servers
+1. Approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
-2. MCP client authentication on by default (`1.0.0-beta.1`), with the
-   console behind it.
+2. The console signed in through the authorization server.
 3. Audit delivery to Kavrynt Cloud and usage events.
-4. MCP Streamable HTTP and protocol-aware routing.
-5. Upgrade and rollback commands in `kavryctl`.
-6. Recovery workflows (restoring into a new cluster).
+4. Protocol-aware routing beyond the request checks, such as sessions that
+   follow a Gateway replica.
+5. Recovery workflows (restoring into a new cluster).
 
 ## Project and community
 

@@ -11,6 +11,7 @@ import (
 
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/apimachinery/pkg/types"
@@ -157,6 +158,9 @@ func useFakeClient(t *testing.T, defaultNamespace string, objects ...client.Obje
 	t.Helper()
 	scheme := runtime.NewScheme()
 	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		t.Fatal(err)
 	}
 	k8sClient := fake.NewClientBuilder().

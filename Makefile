@@ -3,6 +3,9 @@ SHELL := /bin/bash
 LOCAL_VERSION ?= 0.0.5-beta.1-local
 IMAGES := gateway operator
 CHART := charts/kavrynt
+# The chart refuses to render without MCP client authentication settings or
+# the explicit opt-out (SPEC-0014); lint and template use the opt-out.
+HELM_CHECK_VALUES := --set gateway.auth.enabled=false
 GO_DIRS := api cmd examples internal test
 
 STATICCHECK_VERSION ?= v0.8.2
@@ -92,11 +95,11 @@ vulncheck:
 
 .PHONY: helm-lint
 helm-lint:
-	helm lint $(CHART)
+	helm lint $(CHART) $(HELM_CHECK_VALUES)
 
 .PHONY: helm-template
 helm-template:
-	helm template kavrynt $(CHART) --namespace kavrynt-system >/dev/null
+	helm template kavrynt $(CHART) --namespace kavrynt-system $(HELM_CHECK_VALUES) >/dev/null
 
 .PHONY: helm-unittest
 helm-unittest:

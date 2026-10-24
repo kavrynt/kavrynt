@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -73,6 +73,15 @@ turning R01–R04 off during migration.
 
 Gateway component doc (routing), release notes.
 
-## Open questions
+## Decisions
 
-- Which protocol versions are supported, and where is the list kept?
+- Supported versions are `2024-11-05`, `2025-03-26`, `2025-06-18`,
+  `2025-11-25`, and `2026-07-28`, listed once in `internal/mcpmeta` so the
+  Gateway and the Operator agree. A request without `MCP-Protocol-Version`
+  is treated as `2025-03-26`, as the MCP specification says.
+- `Mcp-Name` is checked against `params.name` of `tools/call`, the only
+  method whose name the Gateway reads today. A POST whose body has no
+  `method` (a JSON-RPC response from the client) needs no `Mcp-Method`.
+- `gateway.config.strictProtocol` (default `true`) is included: `false`
+  forwards requests that fail R01 to R04, still records them, and keeps the
+  SPEC-0012 checks when a policy is on.

@@ -233,7 +233,7 @@ BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 log "building kavryctl client"
 (
   cd "${ROOT_DIR}"
-  GOCACHE="${TEMP_DIR}/go-build" go build -o "${TEMP_DIR}/kavryctl" ./cmd/kavryctl
+  go build -o "${TEMP_DIR}/kavryctl" ./cmd/kavryctl
 )
 
 log "building runtime images"
@@ -251,7 +251,7 @@ done
 docker build --tag "${SAMPLE_IMAGE}" "${ROOT_DIR}/test/e2e/mcp-server"
 
 log "creating Kind cluster ${CLUSTER_NAME}"
-kind create cluster --name "${CLUSTER_NAME}" --wait 120s
+kind create cluster --name "${CLUSTER_NAME}" --config "${ROOT_DIR}/test/e2e/kind-config.yaml" --wait 120s
 CREATED_CLUSTER=1
 
 log "loading local images"
@@ -270,12 +270,32 @@ kubectl --context "${KUBE_CONTEXT}" create namespace "${CONTROL_NAMESPACE}" >/de
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" create secret generic kavrynt-upstream-credentials \
   --from-literal="${E2E_NAMESPACE}.secured-mcp-server=${UPSTREAM_SECRET_VALUE}" \
   --from-literal="${E2E_NAMESPACE}.secured-mcp-server.origin=http://secured-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080" >/dev/null
+# Verifies SPEC-0014-R01, SPEC-0014-R02, and SPEC-0014-R06: an install with
+# default values names both ways forward and creates no release.
+AUTH_REFUSAL="MCP client authentication is on by default"
+log "verifying an install with default values is refused"
+if helm install kavrynt "${ROOT_DIR}/charts/kavrynt" --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" >"${TEMP_DIR}/default-install.log" 2>&1; then
+  fail "helm install with default values succeeded without MCP client authentication settings"
+fi
+for want in "${AUTH_REFUSAL}" gateway.auth.issuers gateway.auth.enabled=false; do
+  grep --fixed-strings --quiet "${want}" "${TEMP_DIR}/default-install.log" ||
+    fail "the refused install does not name ${want}: $(cat "${TEMP_DIR}/default-install.log")"
+done
+if helm status kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" >/dev/null 2>&1; then
+  fail "the refused install left a release behind"
+fi
+
+# The first install opts out of MCP client authentication explicitly
+# (SPEC-0014-R06): the checks before the authentication section call routes
+# without tokens. Authentication is turned on later by upgrade.
 log "installing Kavrynt control plane with the production profile"
 helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
   --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
+  --set gateway.auth.enabled=false \
   --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials \
   --set networkPolicy.mcpServers.enabled=true \
   --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
@@ -292,6 +312,13 @@ for deployment in kavrynt-gateway kavrynt-operator; do
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
     rollout status "deployment/${deployment}" --timeout=120s
 done
+
+# Verifies SPEC-0014-R03. The logs are read first: grep --quiet would stop
+# reading early and fail the pipeline.
+GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
+  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+grep --fixed-strings --quiet "MCP client authentication is off" <<<"${GATEWAY_LOGS}" ||
+  fail "the Gateway did not warn that MCP routes are unauthenticated"
 
 log "deploying the Alpha-0 MCP server"
 sed "s|__SAMPLE_IMAGE__|${SAMPLE_IMAGE}|g" \
@@ -773,6 +800,10 @@ kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
 # MCP client authentication (SPEC-0006) with a test authorization server, the
 # e2e image's issuer mode, reached by the Gateway over in-cluster http.
 log "deploying a test authorization server"
+# The Gateway's client secret for token exchange (SPEC-0015).
+EXCHANGE_CLIENT_SECRET="e2e-exchange-secret-$(date +%s)"
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" create secret generic kavrynt-token-exchange \
+  --from-literal=client-secret="${EXCHANGE_CLIENT_SECRET}" >/dev/null
 ISSUER_URL="http://e2e-issuer.${E2E_NAMESPACE}.svc.cluster.local:8080"
 RESOURCE_URL="https://mcp.e2e.test"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
@@ -804,6 +835,10 @@ spec:
           env:
             - name: ISSUER
               value: ${ISSUER_URL}
+            - name: CLIENT_ID
+              value: kavrynt-gateway
+            - name: CLIENT_SECRET
+              value: ${EXCHANGE_CLIENT_SECRET}
           ports:
             - name: http
               containerPort: 8080
@@ -838,7 +873,8 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --reuse-values \
   --set gateway.auth.enabled=true \
   --set gateway.auth.resourceURL="${RESOURCE_URL}" \
-  --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true}]" \
+  --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true,\"tokenExchange\":{\"clientID\":\"kavrynt-gateway\",\"clientSecretKey\":\"client-secret\"}}]" \
+  --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange \
   --set "gateway.auth.requiredScopes={mcp:tools}" \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
@@ -908,6 +944,52 @@ if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 
   fail "the Gateway logged an access token"
 fi
 
+# Verifies SPEC-0015-R09 and SPEC-0015-R10: a server that needs a token for
+# its own audience gets the caller's exchanged token, never the caller's.
+log "verifying token exchange for a server with its own audience"
+TICKETS_AUDIENCE="https://tickets.e2e.test"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: tickets-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  tokenExchange:
+    audience: ${TICKETS_AUDIENCE}
+    scopes: [tickets:read]
+MANIFEST
+TICKETS_ID="${E2E_NAMESPACE}.tickets-mcp-server"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/tickets-mcp-server --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/tickets-mcp-server \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=CallerTokenRequired --timeout=60s
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${TICKETS_ID}\") != null"
+TICKETS_CALLER="$(mint "${RESOURCE_URL}/mcp/${TICKETS_ID}" "mcp:tools")"
+curl --fail --silent --show-error --request POST "${GATEWAY_URL}/mcp/${TICKETS_ID}" \
+  --header 'Content-Type: application/json' --header "Authorization: Bearer ${TICKETS_CALLER}" \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' |
+  jq --exit-status '.result.tools[0].name == "echo"' >/dev/null ||
+  fail "tools/list through a token exchange route failed"
+FORWARDED_TOKEN="$(curl --fail --silent --show-error --header "Authorization: Bearer ${TICKETS_CALLER}" \
+  "${GATEWAY_URL}/mcp/${TICKETS_ID}/debug/headers" | jq -r '.Authorization[0] // ""' | sed 's/^Bearer //')"
+[ -n "${FORWARDED_TOKEN}" ] || fail "the server behind a token exchange route received no token"
+[ "${FORWARDED_TOKEN}" != "${TICKETS_CALLER}" ] || fail "the Gateway passed the caller's token through"
+FORWARDED_CLAIMS="$(printf '%s' "${FORWARDED_TOKEN}" | cut -d. -f2 | tr '_-' '/+' |
+  awk '{ while (length($0) % 4) $0 = $0 "="; print }' | base64 --decode)"
+printf '%s' "${FORWARDED_CLAIMS}" | jq --exit-status --arg aud "${TICKETS_AUDIENCE}" \
+  '.aud == $aud and .sub == "e2e-user" and .act.sub == "e2e-agent" and .scope == "tickets:read"' >/dev/null ||
+  fail "the exchanged token does not carry the server's audience and the caller: ${FORWARDED_CLAIMS}"
+GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
+  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+for value in "${TICKETS_CALLER}" "${FORWARDED_TOKEN}" "${EXCHANGE_CLIENT_SECRET}"; do
+  if grep --fixed-strings --quiet "${value}" <<<"${GATEWAY_LOGS}$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"; then
+    fail "a token or the client secret appears in the Gateway logs or metrics"
+  fi
+done
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/tickets-mcp-server --wait=true --timeout=60s >/dev/null
+
 # Verifies SPEC-0012-R12: a per-client tool allow-list from a ConfigMap
 # decides calls of authenticated clients, and a broken update leaves the
 # decisions in force.
@@ -938,6 +1020,7 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --reuse-values \
   --set gateway.policy.enabled=true \
   --set gateway.policy.configMap=kavrynt-policy \
+  --set gateway.policy.filterToolsList=true \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
 stop_gateway_port_forwards
@@ -961,6 +1044,19 @@ verify_policy_decisions() {
     fail "a denial is not a JSON-RPC error: $(cat "${TEMP_DIR}/policy-body")"
 }
 verify_policy_decisions
+
+# Verifies SPEC-0016-R01: each client lists only the tools it may call.
+log "verifying tools/list shows each client only the tools it may call"
+list_tools() {
+  curl --fail --silent --show-error --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
+    --header 'Content-Type: application/json' --header "Authorization: Bearer $1" \
+    --data '{"jsonrpc":"2.0","id":5,"method":"tools/list","params":{}}' | jq --compact-output '[.result.tools[].name]'
+}
+[ "$(list_tools "${ALLOWED_TOKEN}")" = '["echo"]' ] || fail "the allowed client does not see echo: $(list_tools "${ALLOWED_TOKEN}")"
+[ "$(list_tools "${DENIED_TOKEN}")" = '[]' ] || fail "another client sees tools it may not call: $(list_tools "${DENIED_TOKEN}")"
+METRICS="$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"
+grep --quiet "^kavrynt_gateway_policy_filtered_tools_total{route=\"${SERVER_ID}\"} [1-9]" <<<"${METRICS}" ||
+  fail "the Gateway did not count the filtered tool"
 
 # Verifies SPEC-0013-R10: the production profile turns audit on; the allowed
 # and the denied call each have an event with the caller, tool, and
@@ -1004,6 +1100,7 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --reuse-values \
   --set gateway.auth.enabled=false \
   --set gateway.policy.enabled=false \
+  --set gateway.policy.filterToolsList=false \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
 stop_gateway_port_forwards
@@ -1019,7 +1116,7 @@ wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 # The Kind node pulls that release's images from Docker Hub.
 UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-0.0.5-beta.1}"
 UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
-LOCAL_RELEASE_ARGS=(
+LOCAL_IMAGE_ARGS=(
   --kube-context "${KUBE_CONTEXT}"
   --namespace "${CONTROL_NAMESPACE}"
   --set gateway.image.repository=kavrynt/gateway
@@ -1027,6 +1124,7 @@ LOCAL_RELEASE_ARGS=(
   --set operator.image.repository=kavrynt/operator
   --set-string operator.image.tag="${LOCAL_VERSION}"
 )
+LOCAL_RELEASE_ARGS=("${LOCAL_IMAGE_ARGS[@]}" --set gateway.auth.enabled=false)
 
 # Verifies SPEC-0009-R05.
 log "verifying helm uninstall keeps the CRD and MCPServers"
@@ -1054,9 +1152,24 @@ start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed on ${UPGRADE_FROM_VERSION}"
 
+# Verifies SPEC-0014-R04 and SPEC-0014-R06: the previous release never set
+# gateway.auth, so upgrading it without a choice fails before any change.
+log "verifying an upgrade without MCP client authentication settings is refused"
+GENERATIONS_BEFORE="$(deployment_generations)"
+REVISION_BEFORE="$(helm history kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --max 1 --output json | jq '.[0].revision')"
+if helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" "${LOCAL_IMAGE_ARGS[@]}" --timeout 120s \
+  >"${TEMP_DIR}/unauthenticated-upgrade.log" 2>&1; then
+  fail "helm upgrade succeeded without MCP client authentication settings"
+fi
+grep --fixed-strings --quiet "${AUTH_REFUSAL}" "${TEMP_DIR}/unauthenticated-upgrade.log" ||
+  fail "the refused upgrade does not name the authentication choice: $(cat "${TEMP_DIR}/unauthenticated-upgrade.log")"
+[ "$(deployment_generations)" = "${GENERATIONS_BEFORE}" ] ||
+  fail "the refused upgrade changed the Gateway or Operator Deployment"
+[ "$(helm history kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --max 1 --output json | jq '.[0].revision')" = "${REVISION_BEFORE}" ] ||
+  fail "the refused upgrade recorded a new release revision"
+
 # Verifies SPEC-0009-R07.
 log "verifying an upgrade without CRD adoption fails before changing workloads"
-GENERATIONS_BEFORE="$(deployment_generations)"
 if helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" "${LOCAL_RELEASE_ARGS[@]}" --timeout 120s \
   >"${TEMP_DIR}/unadopted-upgrade.log" 2>&1; then
   fail "helm upgrade succeeded although the CRD was not adopted"
@@ -1086,9 +1199,11 @@ start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed after the upgrade"
 
-# Verifies SPEC-0009-R05 and SPEC-0009-R09.
-log "rolling back to ${UPGRADE_FROM_VERSION}"
-helm rollback kavrynt 1 --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --wait --timeout 180s >/dev/null
+# Verifies SPEC-0009-R05, SPEC-0009-R09, and SPEC-0019-R04: kavryctl runs
+# helm rollback and confirms the server is routed again.
+log "rolling back to ${UPGRADE_FROM_VERSION} with kavryctl"
+"${TEMP_DIR}/kavryctl" rollback --context "${KUBE_CONTEXT}" --revision 1 --timeout 3m ||
+  fail "kavryctl rollback failed"
 kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
   fail "helm rollback deleted the MCPServer CRD"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
@@ -1097,5 +1212,38 @@ stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed after the rollback"
+
+# Verifies SPEC-0019-R02 and SPEC-0019-R03: kavryctl upgrade checks the
+# release and the CRD, upgrades with the release's values plus a file, and
+# reports the server routed. --dry-run changes nothing.
+log "upgrading to the build under test with kavryctl"
+cat >"${TEMP_DIR}/local-release-values.yaml" <<VALUES
+gateway:
+  image:
+    repository: kavrynt/gateway
+    tag: "${LOCAL_VERSION}"
+  auth:
+    enabled: false
+operator:
+  image:
+    repository: kavrynt/operator
+    tag: "${LOCAL_VERSION}"
+VALUES
+GENERATIONS_BEFORE="$(deployment_generations)"
+"${TEMP_DIR}/kavryctl" upgrade --context "${KUBE_CONTEXT}" --chart "${ROOT_DIR}/charts/kavrynt" \
+  --values "${TEMP_DIR}/local-release-values.yaml" --dry-run >"${TEMP_DIR}/upgrade-dry-run.log" ||
+  fail "kavryctl upgrade --dry-run failed: $(cat "${TEMP_DIR}/upgrade-dry-run.log")"
+grep --fixed-strings --quiet "would run: helm upgrade kavrynt" "${TEMP_DIR}/upgrade-dry-run.log" ||
+  fail "kavryctl upgrade --dry-run did not print the helm command"
+[ "$(deployment_generations)" = "${GENERATIONS_BEFORE}" ] || fail "kavryctl upgrade --dry-run changed a Deployment"
+"${TEMP_DIR}/kavryctl" upgrade --context "${KUBE_CONTEXT}" --chart "${ROOT_DIR}/charts/kavrynt" \
+  --values "${TEMP_DIR}/local-release-values.yaml" --timeout 3m >"${TEMP_DIR}/kavryctl-upgrade.log" ||
+  fail "kavryctl upgrade failed: $(cat "${TEMP_DIR}/kavryctl-upgrade.log")"
+grep --fixed-strings --quiet "ok    ${E2E_NAMESPACE}/example-mcp-server is routed" "${TEMP_DIR}/kavryctl-upgrade.log" ||
+  fail "kavryctl upgrade did not report the server routed: $(cat "${TEMP_DIR}/kavryctl-upgrade.log")"
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed after kavryctl upgrade"
 
 log "end-to-end workflow passed"

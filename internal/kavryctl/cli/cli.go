@@ -15,6 +15,7 @@ import (
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/kavryctl/manifest"
+	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -69,6 +70,10 @@ var newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
 	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, "", err
 	}
+	// upgrade reads and adopts the MCPServer CRD (SPEC-0019).
+	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
+		return nil, "", err
+	}
 	c, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, "", fmt.Errorf("create Kubernetes client: %w", err)
@@ -101,6 +106,10 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 		return runInspect(args[1:], stdout, stderr)
 	case "audit":
 		return runAudit(args[1:], os.Stdin, stdout, stderr)
+	case "upgrade":
+		return runUpgrade(args[1:], stdout, stderr)
+	case "rollback":
+		return runRollback(args[1:], stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printUsage(stderr)
@@ -384,6 +393,11 @@ Usage:
   kavryctl list       [cluster flags] [-A]
   kavryctl inspect    [cluster flags] <name>
   kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin)
+  kavryctl upgrade  [cluster flags] --version V [--chart REF|DIR] [--values FILE] [--adopt-crd] [--dry-run]
+  kavryctl rollback [cluster flags] [--revision N] [--dry-run]
+                    Upgrade or roll back the Kavrynt release with helm, checking
+                    before that nothing blocks it and after that every routed
+                    server is routed again (--release kavrynt, -n kavrynt-system)
 
 Cluster flags:
   --kubeconfig PATH   Kubeconfig file (defaults to KUBECONFIG or ~/.kube/config)

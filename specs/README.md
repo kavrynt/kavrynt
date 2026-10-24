@@ -138,12 +138,12 @@ against the assistant's summary of them.
 | [0011](0011-upstream-credentials/spec.md) | Upstream credentials | Implemented |
 | [0012](0012-tool-authorization-policy/spec.md) | Tool authorization policy | Implemented |
 | [0013](0013-audit-events/spec.md) | Audit events | Implemented |
-| [0014](0014-client-auth-by-default/spec.md) | MCP client authentication on by default | Draft |
-| [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Draft |
-| [0016](0016-policy-filtered-tools-list/spec.md) | Policy-filtered tools/list | Draft |
+| [0014](0014-client-auth-by-default/spec.md) | MCP client authentication on by default | Implemented |
+| [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Implemented |
+| [0016](0016-policy-filtered-tools-list/spec.md) | Policy-filtered tools/list | Implemented |
 | [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Draft |
-| [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Draft |
-| [0019](0019-kavryctl-upgrade-rollback/spec.md) | kavryctl upgrade and rollback | Draft |
+| [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Implemented |
+| [0019](0019-kavryctl-upgrade-rollback/spec.md) | kavryctl upgrade and rollback | Implemented |
 | [0020](0020-console-alerts/spec.md) | Alerts in the console | Draft |
 | [0021](0021-tool-and-discovery-alerts/spec.md) | Tool error and discovery alerts | Draft |
 | [0022](0022-alert-notifications/spec.md) | Alert notifications | Draft |

@@ -1,7 +1,14 @@
 {{- $credentials := (((.Values.global | default dict).upstreamCredentials | default dict).secretName) }}
 {{- $policy := .Values.policy | default dict }}
+{{- $exchange := "" }}
+{{- if include "gateway.clientAuthEnabled" . }}
+{{- $exchange = .Values.auth.tokenExchangeSecret | default "" }}
+{{- end }}
 {{- if and $policy.enabled (not $policy.configMap) }}
 {{- fail "policy.configMap is required when policy.enabled is true: the ConfigMap with the .rego files" }}
+{{- end }}
+{{- if and $policy.filterToolsList (not $policy.enabled) }}
+{{- fail "policy.filterToolsList needs policy.enabled: the tools are filtered by the policy" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -65,6 +72,7 @@ spec:
             - {{ .Values.config.shutdownDelay | default "5s" | quote }}
             - --shutdown-timeout
             - {{ .Values.config.shutdownTimeout | default "10s" | quote }}
+            - --strict-protocol={{ ne (toString .Values.config.strictProtocol) "false" }}
             {{- with .Values.config.allowedOrigins }}
             - --allowed-origins
             - {{ join "," . | quote }}
@@ -79,12 +87,18 @@ spec:
             - --auth-required-scopes
             - {{ join "," . | quote }}
             {{- end }}
+            {{- if $exchange }}
+            - --token-exchange-secret-dir=/etc/kavrynt/token-exchange
+            {{- end }}
             {{- end }}
             {{- if $credentials }}
             - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
             {{- end }}
             {{- if $policy.enabled }}
             - --policy-dir=/etc/kavrynt/policy
+            {{- if $policy.filterToolsList }}
+            - --policy-filter-tools-list
+            {{- end }}
             {{- end }}
             {{- with .Values.audit }}
             {{- if .enabled }}
@@ -122,7 +136,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled }}
+          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
           # The kubelet mounts these Secrets; the Gateway's service account has
           # no RBAC on Secrets.
           volumeMounts:
@@ -141,8 +155,13 @@ spec:
               mountPath: /etc/kavrynt/policy
               readOnly: true
             {{- end }}
+            {{- if $exchange }}
+            - name: token-exchange
+              mountPath: /etc/kavrynt/token-exchange
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled }}
+      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
       volumes:
         {{- if include "gateway.consoleAuthEnabled" . }}
         - name: console-auth
@@ -167,6 +186,14 @@ spec:
         - name: policy
           configMap:
             name: {{ $policy.configMap | quote }}
+        {{- end }}
+        {{- if $exchange }}
+        # The Gateway's client secrets for token exchange (SPEC-0015). Not
+        # optional: the issuers that name a key need it.
+        - name: token-exchange
+          secret:
+            secretName: {{ $exchange | quote }}
+            defaultMode: 0444
         {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
