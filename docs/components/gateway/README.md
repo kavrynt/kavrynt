@@ -46,6 +46,11 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   connections and waits up to `--shutdown-timeout` for in-flight requests.
   A rolling restart of several replicas fails no MCP call (tested end to
   end).
+- Bypass protection: with the chart's `networkPolicy.mcpServers` values,
+  MCP server pods labelled `kavrynt.io/gateway-only: "true"` accept traffic
+  only from the Gateway and the Operator, so clients cannot skip the
+  Gateway; `networkPolicy.gateway` limits who can call the Gateway. Both
+  need a CNI that enforces NetworkPolicy.
 - Not implemented: authentication, policy, audit, token exchange. See
   ADR-0003.
 

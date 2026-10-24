@@ -162,6 +162,45 @@ Operator; it does not need to be restored.
 
 See [SECURITY.md](../../SECURITY.md) for known limitations.
 
+## Keeping traffic on the Gateway
+
+Everything the Gateway enforces is skipped by a client that calls an MCP
+server's Service directly. Two opt-in NetworkPolicies close those paths; they
+need a CNI that enforces NetworkPolicy (Calico, Cilium, and kindnet do) and
+have no effect elsewhere.
+
+1. Label the pods of each MCP server to protect:
+
+   ```yaml
+   spec:
+     template:
+       metadata:
+         labels:
+           kavrynt.io/gateway-only: "true"
+   ```
+
+2. Enable isolation for their namespaces (the namespaces must exist, and
+   must be in `global.watchNamespaces` when that is set):
+
+   ```bash
+   helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+     --namespace kavrynt-system --reuse-values \
+     --set networkPolicy.mcpServers.enabled=true \
+     --set 'networkPolicy.mcpServers.namespaces={team-a,team-b}'
+   ```
+
+   Labelled pods then accept connections only from this release's Gateway
+   and Operator (tool discovery); unlabelled pods are not affected.
+
+3. Optionally restrict who may call the Gateway: `networkPolicy.gateway`
+   admits its own namespace, namespaces matching `allowedNamespaceLabels`,
+   and `allowedCIDRs`, on the Gateway port only. Include your agents, your
+   Ingress controller, and Prometheus. Egress is not restricted.
+
+The end-to-end test runs with both policies on and checks that a direct call
+to a labelled MCP server fails, even from its own namespace, while the same
+call through the Gateway succeeds.
+
 ## Values
 
 Values of the component subcharts are set under `gateway.` and `operator.`.
@@ -185,6 +224,16 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `global.watchNamespaces` | list | `[]` | Namespaces whose `MCPServer` resources the Gateway routes; empty means all. A list switches Gateway RBAC to per-namespace Roles, and the Operator reports servers elsewhere as not `Ready` (`NamespaceNotWatched`). |
+
+### Network policies
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `networkPolicy.mcpServers.enabled` | bool | `false` | In each listed namespace, pods labelled `kavrynt.io/gateway-only: "true"` accept traffic only from the Gateway and the Operator |
+| `networkPolicy.mcpServers.namespaces` | list | `[]` | Namespaces to isolate; required when enabled, existing, and within `global.watchNamespaces` when that is set |
+| `networkPolicy.gateway.enabled` | bool | `false` | Limit ingress to the Gateway port to the release namespace and the entries below |
+| `networkPolicy.gateway.allowedNamespaceLabels` | list | `[]` | Label sets of namespaces allowed to call the Gateway, for example `[{kubernetes.io/metadata.name: agents}]` |
+| `networkPolicy.gateway.allowedCIDRs` | list | `[]` | CIDRs allowed to call the Gateway |
 
 ### Gateway
 

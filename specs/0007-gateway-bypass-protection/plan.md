@@ -23,9 +23,13 @@
   `values.schema.json` gains `networkPolicy` with
   `additionalProperties: false` and a CIDR `pattern` (R08).
 - **End to end.** Kind's default CNI (kindnet) enforces NetworkPolicy.
-  `scripts/e2e-kind.sh` labels the test MCP server pod, upgrades the release
-  with isolation for its namespace, then checks the Gateway path, tool
-  discovery, and a direct `curl` from a throwaway pod (expect failure).
+  The test MCP server's pods carry the label, and `scripts/e2e-kind.sh`
+  installs with both policies on from the start (creating the server
+  namespace first), so tool discovery and every Gateway check run under
+  them. Probe pods running the e2e image's `load` client then show that a
+  direct call to the server fails even from its own namespace, the same
+  call through the Gateway succeeds, and a pod in `default` cannot reach
+  the Gateway.
 
 ## Affected files
 
@@ -34,8 +38,7 @@
 | `charts/kavrynt/templates/networkpolicy.yaml` | New |
 | `charts/kavrynt/values.yaml`, `values.schema.json` | `networkPolicy` values |
 | `charts/kavrynt/tests/networkpolicy_test.yaml` | New chart unit tests |
-| `scripts/e2e-kind.sh` | Isolation check |
-| `examples/` | Labelled MCP server example |
+| `scripts/e2e-kind.sh`, `test/e2e/manifests/mcp-server.yaml`, `test/e2e/mcp-server/load.go` | Isolation check, labelled sample server, probe timeout |
 | Chart README, `docs/components/gateway/README.md`, `README.md` | On `Implemented` |
 
 ## Verification

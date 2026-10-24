@@ -14,7 +14,9 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 1. Builds `kavryctl`, the Gateway and Operator images, and a sample MCP server.
 2. Installs `charts/kavrynt` into `kavrynt-system` with the production profile
    (`examples/helm/values-production.yaml`: three Gateway and two Operator
-   replicas) and confirms the chart
+   replicas) and both NetworkPolicies on (the sample server's pods carry
+   `kavrynt.io/gateway-only: "true"`; only `kavrynt-e2e` may call the
+   Gateway), and confirms the chart
    installed the `MCPServer` CRD of `config/crd/bases`, owned by Helm with
    the keep policy.
 3. Applies `test/e2e/manifests/mcp-server.yaml` and waits for `Ready`.
@@ -37,7 +39,10 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
    `DiscoveryFailed` in the Operator).
 9. Registers, inspects, routes to, and unregisters a second server with
    `kavryctl`.
-10. High availability: `/v1/traffic` names the answering Gateway pod; a
+10. Bypass protection: a pod calling the sample MCP server directly, even
+    from its own namespace, and a pod in `default` calling the Gateway are
+    both blocked, while a pod in `kavrynt-e2e` reaches the server through
+    the Gateway. High availability: `/v1/traffic` names the answering Gateway pod; a
     client pod calls `tools/list` through the Gateway Service throughout a
     rolling restart of every Gateway replica and no call may fail; deleting
     the Operator leader lets the standby reconcile a new server to `Ready`.
