@@ -263,12 +263,20 @@ kind load docker-image --name "${CLUSTER_NAME}" \
 # runs with MCP servers reachable only through the Gateway and the Operator.
 # The policy for the MCP server namespace needs that namespace to exist.
 kubectl --context "${KUBE_CONTEXT}" create namespace "${E2E_NAMESPACE}" >/dev/null
+# The upstream credentials Secret (SPEC-0011) exists before the pods start,
+# so the test does not wait for the kubelet to refresh a mount.
+UPSTREAM_SECRET_VALUE="e2e-upstream-secret-$(date +%s)"
+kubectl --context "${KUBE_CONTEXT}" create namespace "${CONTROL_NAMESPACE}" >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" create secret generic kavrynt-upstream-credentials \
+  --from-literal="${E2E_NAMESPACE}.secured-mcp-server=${UPSTREAM_SECRET_VALUE}" \
+  --from-literal="${E2E_NAMESPACE}.secured-mcp-server.origin=http://secured-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080" >/dev/null
 log "installing Kavrynt control plane with the production profile"
 helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --create-namespace \
   --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
+  --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials \
   --set networkPolicy.mcpServers.enabled=true \
   --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
   --set networkPolicy.gateway.enabled=true \
@@ -298,7 +306,23 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
 log "verifying the chart installed the CRD from config/crd/bases"
 verify_installed_crd
 
-log "verifying CRD admission rejects unsafe endpoints"
+log "verifying CRD admission rejects unsafe endpoints and credential headers"
+# Verifies SPEC-0011-R01.
+if kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply --dry-run=server -f - >/dev/null 2>&1 <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: cookie-credential
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server:8080
+  credential:
+    header: Cookie
+MANIFEST
+then
+  fail "API server accepted a credential sent as a Cookie"
+fi
 if kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply --dry-run=server -f - >/dev/null 2>&1 <<MANIFEST
 apiVersion: kavrynt.io/v1alpha1
 kind: MCPServer
@@ -526,6 +550,129 @@ curl --fail --silent --show-error \
   jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
 "${TEMP_DIR}/kavryctl" unregister --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" kavryctl-mcp-server >/dev/null
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SECOND_ID}\") == null" 30
+
+# Verifies SPEC-0011-R01, SPEC-0011-R02, SPEC-0011-R10: an MCP server that
+# requires its own bearer token is routed with the stored credential, a
+# server whose credential is not stored is refused, and neither component
+# can read Secrets.
+log "verifying upstream credentials from the mounted Secret"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: secured-mcp-server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: secured-mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: secured-mcp-server
+        kavrynt.io/gateway-only: "true"
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp-server
+          image: ${SAMPLE_IMAGE}
+          imagePullPolicy: Never
+          env:
+            - name: REQUIRE_BEARER
+              value: ${UPSTREAM_SECRET_VALUE}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: secured-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: secured-mcp-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: secured-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://secured-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  credential:
+    scheme: Bearer
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: unstored-credential
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://secured-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  credential:
+    scheme: Bearer
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" rollout status deployment/secured-mcp-server --timeout=120s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/secured-mcp-server --for=condition=ToolsDiscovered --timeout=120s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/secured-mcp-server -o json |
+  jq --exit-status '.status.tools | map(.name) == ["echo"]' >/dev/null ||
+  fail "the Operator did not discover the tools of a server that needs its stored credential"
+SECURED_ID="${E2E_NAMESPACE}.secured-mcp-server"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SECURED_ID}\") != null"
+curl --fail --silent --show-error --request POST "${GATEWAY_URL}/mcp/${SECURED_ID}" \
+  --header 'Content-Type: application/json' --header 'Authorization: Bearer caller-token' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' |
+  jq --exit-status '.result.tools[0].name == "echo"' >/dev/null ||
+  fail "the Gateway did not send the stored credential to the secured MCP server"
+
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/unstored-credential --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/unstored-credential \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=CredentialUnavailable --timeout=60s
+UNSTORED_ID="${E2E_NAMESPACE}.unstored-credential"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${UNSTORED_ID}\") != null"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST "${GATEWAY_URL}/mcp/${UNSTORED_ID}" \
+  --header 'Content-Type: application/json' --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
+[ "${STATUS}" = "503" ] || fail "a server without a stored credential answered HTTP ${STATUS}, want 503"
+
+OPERATOR_SA="system:serviceaccount:${CONTROL_NAMESPACE}:kavrynt-operator"
+[ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${OPERATOR_SA}" -A)" = "no" ] ||
+  fail "the Operator must not read Secrets"
+[ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
+  fail "the Gateway must not read Secrets"
+# Verifies SPEC-0011-R09.
+SERVERS_JSON="$(curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/servers")"
+printf '%s' "${SERVERS_JSON}" | jq --exit-status --arg route "${SECURED_ID}" \
+  '.servers | map(select(.route == $route)) | .[0].credential == {"required": true, "available": true}' >/dev/null ||
+  fail "/v1/servers does not report the stored credential as available"
+for output in "${SERVERS_JSON}" "$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")" \
+  "$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpservers -o yaml)" \
+  "$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 --selector app.kubernetes.io/instance=kavrynt)"; do
+  if grep --fixed-strings --quiet "${UPSTREAM_SECRET_VALUE}" <<<"${output}"; then
+    fail "the upstream credential appears in an API response, status, or log"
+  fi
+done
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/secured-mcp-server mcpserver/unstored-credential --wait=true --timeout=60s >/dev/null
 
 # Verifies SPEC-0007-R09. Tool discovery and every Gateway call above already
 # ran under the policies; here a direct call to the labelled MCP server, even

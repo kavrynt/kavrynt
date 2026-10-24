@@ -114,11 +114,13 @@ func New(version string, transport http.RoundTripper) *Client {
 }
 
 // ListTools initializes an MCP session with endpoint and lists its tools.
-func (c *Client) ListTools(ctx context.Context, endpoint string) (Result, error) {
+// header is sent with every request, for a server's stored credential
+// (SPEC-0011-R08); it may be nil.
+func (c *Client) ListTools(ctx context.Context, endpoint string, header http.Header) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
-	s := &session{client: c, endpoint: endpoint}
+	s := &session{client: c, endpoint: endpoint, header: header}
 	var initialized struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Capabilities    struct {
@@ -305,6 +307,7 @@ func CanonicalTools(tools []kavryntv1alpha1.MCPServerTool) []kavryntv1alpha1.MCP
 type session struct {
 	client          *Client
 	endpoint        string
+	header          http.Header
 	sessionID       string
 	protocolVersion string
 	nextID          int64
@@ -386,6 +389,9 @@ func (s *session) send(ctx context.Context, method string, body []byte) (*http.R
 	req, err := http.NewRequestWithContext(ctx, method, s.endpoint, reader)
 	if err != nil {
 		return nil, err
+	}
+	for name, values := range s.header {
+		req.Header[name] = append([]string(nil), values...)
 	}
 	req.Header.Set("User-Agent", "kavrynt-operator/"+s.client.version)
 	if body != nil {

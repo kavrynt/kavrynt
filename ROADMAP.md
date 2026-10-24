@@ -19,12 +19,14 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   runbook, tested with `promtool`.
 - A high-availability profile (several Gateway replicas with graceful drain,
   a standby Operator), tested with a rolling restart under load.
+- Static upstream credentials for MCP servers that need an API key, from a
+  Secret the platform team manages, pinned to each server's endpoint.
 - Opt-in MCP client authentication: the Gateway is an OAuth 2.1 resource
   server with per-route token audiences and Protected Resource Metadata.
 
 ## Next
 
-1. Upstream credentials and token exchange
+1. Token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 2. Policy decisions and tool-level authorization.
 3. Audit and usage events.

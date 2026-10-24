@@ -18,6 +18,18 @@
             "maxLength": 63,
             "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
           }
+        },
+        "upstreamCredentials": {
+          "type": "object",
+          "description": "Secret in the release namespace with the credentials of MCP servers that declare spec.credential (SPEC-0011).",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+            }
+          }
         }
       }
     },

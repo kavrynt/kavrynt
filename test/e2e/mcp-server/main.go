@@ -46,7 +46,19 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(r.Header)
 	})
-	mux.HandleFunc("POST /", handleMCP)
+	// REQUIRE_BEARER makes the server demand "Authorization: Bearer <value>",
+	// like an MCP server with its own API key (SPEC-0011 end-to-end test).
+	if token := os.Getenv("REQUIRE_BEARER"); token != "" {
+		mux.HandleFunc("POST /", func(w http.ResponseWriter, r *http.Request) {
+			if r.Header.Get("Authorization") != "Bearer "+token {
+				http.Error(w, "unauthorized", http.StatusUnauthorized)
+				return
+			}
+			handleMCP(w, r)
+		})
+	} else {
+		mux.HandleFunc("POST /", handleMCP)
+	}
 
 	server := &http.Server{
 		Addr:              ":8080",

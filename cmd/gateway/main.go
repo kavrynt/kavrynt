@@ -22,6 +22,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/console"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
 
@@ -39,6 +40,7 @@ func main() {
 	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
 	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
 	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
+	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
@@ -85,6 +87,7 @@ func main() {
 	handler.SetRequestTimeout(*requestTimeout)
 	handler.AllowOrigins(splitList(*allowedOrigins)...)
 	handler.SetInstance(*instance)
+	handler.EnableUpstreamCredentials(upstreamcred.Store{Dir: *upstreamCredentialsDir})
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
 	}

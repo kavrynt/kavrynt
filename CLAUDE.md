@@ -35,8 +35,9 @@ and `operator` repositories are archived and must not receive new changes.
 - [ADR-0002](docs/ADR-0002-Remove-In-Cluster-Registry.md): the `MCPServer` API
   replaces the in-cluster Registry (removed in `0.0.2-beta.1`).
 - [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
-  design. Implemented: no token passthrough and MCP client authentication
-  (SPEC-0006, opt-in). Not yet: token exchange, policy, audit.
+  design. Implemented: no token passthrough, MCP client authentication
+  (SPEC-0006, opt-in), and static upstream credentials (SPEC-0011). Not yet:
+  token exchange, policy, audit.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -92,6 +93,11 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   is an OAuth 2.1 resource server; every `/mcp/` request needs a bearer JWT
   from a trusted issuer whose audience is the route, and Protected Resource
   Metadata is served per route. Off by default: `/mcp/` routes stay open.
+- `MCPServer.spec.credential` (SPEC-0011): the Gateway and Operator send a
+  server's credential from the kubelet-mounted upstream credentials Secret
+  (`global.upstreamCredentials.secretName`, keys `<ns>.<name>` and
+  `<ns>.<name>.origin`), only to the pinned endpoint origin; neither has
+  Secret RBAC.
 - Not implemented: token exchange, policy and tool authorization, audit.
   Never claim them in code comments, docs, or release notes until they are
   implemented and tested.
@@ -252,6 +258,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     With the chart's NetworkPolicies on, a direct call to a labelled MCP
     server and a call from a namespace the Gateway policy does not allow
     both fail, while calls through the Gateway succeed.
+    A server that needs its own token is routed and discovered with the
+    stored upstream credential; an unstored one answers `503`; the value
+    appears in no response, status, metric, or log.
     With MCP client authentication on (test authorization server in the e2e
     image), calls without a token get `401` pointing at the route's metadata,
     a valid token works and never reaches the MCP server, and wrong

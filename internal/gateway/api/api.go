@@ -20,6 +20,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 )
 
 type Metadata struct {
@@ -63,6 +64,9 @@ type Handler struct {
 	// clientAuth authenticates MCP clients; nil leaves /mcp/ routes open
 	// (SPEC-0006-R01).
 	clientAuth *clientauth.Authenticator
+	// credentials holds the upstream credentials of servers that need one;
+	// the zero value has none (SPEC-0011).
+	credentials upstreamcred.Store
 
 	// instance names this replica (its pod name) in /v1/traffic.
 	instance string
@@ -162,6 +166,13 @@ func (h *Handler) EnableConsoleAuth(auth ConsoleAuth) {
 // /mcp/ request and serves Protected Resource Metadata (SPEC-0006).
 func (h *Handler) EnableClientAuth(a *clientauth.Authenticator) {
 	h.clientAuth = a
+}
+
+// EnableUpstreamCredentials sends each server's stored credential, from the
+// mounted upstream credentials Secret, to servers that declare one
+// (SPEC-0011).
+func (h *Handler) EnableUpstreamCredentials(store upstreamcred.Store) {
+	h.credentials = store
 }
 
 // EnableConsole serves console under /ui/ and redirects / to it. The console
@@ -303,9 +314,17 @@ func (h *Handler) protectedResource(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h *Handler) listServers(w http.ResponseWriter, _ *http.Request) {
-	servers := h.table.Servers()
-	if servers == nil {
-		servers = []model.Server{}
+	// A copy: the table's slice is shared with other requests.
+	servers := append([]model.Server{}, h.table.Servers()...)
+	// Availability depends on the mounted Secret, which changes on its own,
+	// so it is checked per request; the value is never read into the view.
+	for i := range servers {
+		if servers[i].Credential != nil {
+			servers[i].Credential = &model.ServerCredential{
+				Required:  true,
+				Available: h.credentials.Available(servers[i].Route, servers[i].Endpoint),
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string][]model.Server{"servers": servers})
 }
@@ -447,6 +466,17 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if copyHeaders(req.Header, r.Header, h.stripRequest) {
 		h.strippedRequests.Add(1)
+	}
+	if route.Credential != nil {
+		// The stored credential replaces any header of that name the client
+		// sent; without it the request is not forwarded (SPEC-0011-R05, R06).
+		value, err := h.credentials.Lookup(route.Name, route.Endpoint)
+		if err != nil {
+			writeError(w, http.StatusServiceUnavailable, errors.New("upstream credential unavailable"))
+			h.observe(route.Name, call, outcomeCredentialUnavailable, http.StatusServiceUnavailable, time.Since(start), upstreamBody.n, 0)
+			return
+		}
+		req.Header.Set(route.Credential.HeaderName(), route.Credential.HeaderValue(value))
 	}
 	req.Host = req.URL.Host
 	req.Header.Set(routeHeader, route.Name)

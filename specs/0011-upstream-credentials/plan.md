@@ -27,12 +27,16 @@
   the header; a miss sets `ToolsDiscovered=False/CredentialUnavailable`.
 - **Chart (R02).** When `global.upstreamCredentials.secretName` is set, both
   Deployments mount it read-only at `/etc/kavrynt/upstream-credentials`
-  (mode `0444`, as with the console Secret) and pass
-  `--upstream-credentials-dir`. RBAC templates are untouched.
+  (mode `0444`, as with the console Secret, and `optional: true` so pods
+  start before the Secret exists) and pass `--upstream-credentials-dir`.
+  RBAC templates are untouched.
 - **End to end (R10).** `test/e2e/mcp-server` gains `REQUIRE_BEARER`
-  (env); `e2e-kind.sh` deploys a second instance with it, checks `503`,
-  creates the Secret, checks success and discovery, and re-runs the RBAC
-  assertions.
+  (env). `e2e-kind.sh` creates the Secret before installing (so no wait for
+  the kubelet to refresh a mount), deploys a server requiring the token and
+  two `MCPServer`s: one with a stored, pinned credential (discovered and
+  routed) and one without (`503`, `CredentialUnavailable`). It checks Secret
+  RBAC for both components and scans responses, status, metrics, and logs
+  for the value. Rotation and pin mismatch are unit-tested.
 
 ## Affected files
 

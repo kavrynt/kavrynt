@@ -13,7 +13,7 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | --- | --- | --- |
 | `Accepted` | spec is valid | `InvalidSpec` |
 | `Ready` | accepted, `transport: http`, and in a namespace the Gateway watches (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched` |
-| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable` |
+| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable`, `CredentialUnavailable` (the server declares `spec.credential` and its stored credential is missing or not pinned to the endpoint) |
 
 - Lists the tools of each `Ready` server into `status.tools` (see
   [Tool discovery](#tool-discovery)).
@@ -107,6 +107,7 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
 | `--metrics-bind-address` | `:8080` | controller-runtime metrics |
 | `--health-probe-bind-address` | `:8081` | `/healthz`, `/readyz` |
 | `--leader-elect` | `false` (chart: `true`) | Leader election through the Lease `kavrynt-k8s-operator`. Only the leader reconciles, discovers tools, and syncs to Kavrynt Cloud; a stopping leader releases the Lease so a standby takes over at once. The chart refuses more than one replica without it and adds a PodDisruptionBudget for several |
+| `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret; discovery sends a server's stored credential like the Gateway ([Upstream credentials](../gateway/README.md#upstream-credentials)) |
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |

@@ -39,6 +39,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   headers named in `Connection`. Upstream `Set-Cookie` is dropped because
   every route shares the Gateway origin. Extra headers can be stripped with
   `--strip-request-headers`.
+- Upstream credentials: for a server that declares `spec.credential`, the
+  Gateway sends the credential stored for it in the upstream credentials
+  Secret (see below), replacing any header of that name from the client.
 - Graceful shutdown: on `SIGTERM` the Gateway answers `/readyz` with `503`
   (`draining`), keeps serving for `--shutdown-delay` with every response
   closing its connection (`Connection: close`) so clients reconnect to
@@ -54,6 +57,49 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - MCP client authentication (opt-in, see below): every `/mcp/` request needs
   a bearer token for its route.
 - Not implemented: policy, audit, token exchange. See ADR-0003.
+
+## Upstream credentials
+
+MCP servers that need their own API key or token declare it in the
+`MCPServer` (SPEC-0011):
+
+```yaml
+spec:
+  credential:
+    header: Authorization   # default
+    scheme: Bearer          # optional; the header value is "<scheme> <value>"
+```
+
+The platform team stores the value in one Secret in the Kavrynt namespace,
+named by `global.upstreamCredentials.secretName`, under two keys per server:
+
+| Key | Value |
+| --- | --- |
+| `<namespace>.<name>` | The credential |
+| `<namespace>.<name>.origin` | The endpoint origin it may be sent to, `scheme://host:port` |
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-upstream-credentials \
+  --from-literal=team-a.search="$SEARCH_TOKEN" \
+  --from-literal=team-a.search.origin=http://search.team-a.svc.cluster.local:8080
+```
+
+The kubelet mounts the Secret into the Gateway and the Operator (`optional`,
+so they start without it); neither has RBAC on Secrets. The credential is
+used only when the pin matches the server's current endpoint (default ports
+made explicit), so editing the `MCPServer` cannot send it to another host;
+the pin also makes plain `http` an explicit choice. Changes apply without a
+restart once the kubelet updates the mount. When the credential is missing,
+empty, or not pinned to the endpoint, the Gateway answers `503 upstream
+credential unavailable` without calling the server (outcome
+`credential_unavailable`), and the Operator reports `ToolsDiscovered=False`
+with reason `CredentialUnavailable` (naming the key) while `Ready` is
+unchanged. `/v1/servers` shows `credential: {required, available}`; values
+and pins never appear in responses, status, logs, metrics, or Kavrynt Cloud.
+The CRD rejects credential headers that frame or route the request
+(`Host`, `Content-Length`, `Connection`, ...), `Cookie`, and `Mcp-*`
+headers, and `credential` on `stdio` servers. Token exchange on behalf of
+the caller is not implemented.
 
 ## MCP client authentication
 
@@ -252,7 +298,8 @@ tool arguments, and results are never recorded.
   `gateway_error` (unsupported transport or bad endpoint), or, with MCP
   client authentication on, `unauthenticated` (no valid token, `401`/`400`),
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
-  unavailable, `503`). JSON responses up
+  unavailable, `503`); `credential_unavailable` (`503`) when a server's
+  stored upstream credential is missing or not pinned to its endpoint. JSON responses up
   to 1 MiB are inspected; event streams are not.
 
 The chart adds `prometheus.io/*` scrape annotations by default
@@ -280,6 +327,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
+| `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
 | `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |

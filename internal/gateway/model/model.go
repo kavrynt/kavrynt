@@ -3,6 +3,8 @@ package model
 import (
 	"encoding/json"
 	"time"
+
+	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 )
 
 type Route struct {
@@ -10,6 +12,16 @@ type Route struct {
 	Version   string `json:"version"`
 	Transport string `json:"transport"`
 	Endpoint  string `json:"endpoint"`
+	// Credential is set when the server needs its stored upstream credential
+	// (SPEC-0011). It never holds the value.
+	Credential *kavryntv1alpha1.MCPServerCredential `json:"-"`
+}
+
+// ServerCredential reports whether a server needs a stored credential and
+// whether the Gateway has it for the current endpoint (SPEC-0011-R07).
+type ServerCredential struct {
+	Required  bool `json:"required"`
+	Available bool `json:"available"`
 }
 
 // Server is the read-only view of one MCPServer served at /v1/servers. It
@@ -29,7 +41,9 @@ type Server struct {
 	// ServerInfo is the name and version the server reported to the
 	// Operator in MCP initialize. Self-reported and untrusted.
 	ServerInfo *ServerInfo `json:"serverInfo,omitempty"`
-	CreatedAt  time.Time   `json:"createdAt"`
+	// Credential is set for servers that declare spec.credential.
+	Credential *ServerCredential `json:"credential,omitempty"`
+	CreatedAt  time.Time         `json:"createdAt"`
 }
 
 // ServerInfo is an MCP server's reported name and version.
