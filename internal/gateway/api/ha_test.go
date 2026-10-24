@@ -23,8 +23,12 @@ func TestDrainingFailsReadinessButKeepsServing(t *testing.T) {
 	if rr := get(handler, "/healthz"); rr.Code != http.StatusOK {
 		t.Fatalf("healthz while draining = %d, want 200", rr.Code)
 	}
-	if rr := post(handler, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, nil); rr.Code != http.StatusOK || *calls != 1 {
+	rr = post(handler, `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`, nil)
+	if rr.Code != http.StatusOK || *calls != 1 {
 		t.Fatalf("MCP call while draining = %d after %d upstream calls, want it proxied", rr.Code, *calls)
+	}
+	if got := rr.Header().Get("Connection"); got != "close" {
+		t.Fatalf("Connection while draining = %q, want close so the client reconnects elsewhere", got)
 	}
 }
 

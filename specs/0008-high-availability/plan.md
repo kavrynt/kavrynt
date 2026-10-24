@@ -7,10 +7,12 @@
   `503 {"status":"draining"}`; after the delay it calls
   `server.Shutdown(ctx)` with the existing timeout. The draining flag is an
   `atomic.Bool` in `api.Handler`. Endpoints controllers remove the pod
-  within the delay, so no new request arrives after `Shutdown`. Draining
-  also calls `server.SetKeepAlivesEnabled(false)`: responses carry
-  `Connection: close` and idle connections close, so pooled clients open
-  their next connection to a replica that stays. The sequence is the
+  within the delay, so no new request arrives after `Shutdown`. While
+  draining, every response carries `Connection: close`, so pooled clients
+  open their next connection to a replica that stays. Idle connections are
+  not closed at once (`SetKeepAlivesEnabled(false)` did that, and a client
+  sending on one at that moment got `EOF`); `Shutdown` closes the ones
+  left after the delay. The sequence is the
   testable `shutdown` function in `cmd/gateway`.
 - **Chart (R02–R05, R09).** Gateway Deployment: `strategy.rollingUpdate`
   with `maxUnavailable: 0`, `maxSurge: 1`; computed

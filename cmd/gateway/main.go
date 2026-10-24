@@ -126,11 +126,10 @@ func main() {
 // shutdown drains the Gateway (SPEC-0008-R01): /readyz fails first so the
 // Service stops routing new requests here, every request is still served for
 // delay, then the server stops accepting connections and waits up to timeout
-// for in-flight requests to finish. Keep-alives end when draining starts, so
-// clients open their next connection to a replica that is staying.
+// for in-flight requests to finish. While draining, every response closes its
+// connection, so clients open their next one to a replica that is staying.
 func shutdown(handler *api.Handler, server *http.Server, delay, timeout time.Duration, sleep func(time.Duration)) error {
 	handler.SetDraining()
-	server.SetKeepAlivesEnabled(false)
 	if delay > 0 {
 		sleep(delay)
 	}

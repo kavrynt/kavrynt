@@ -40,8 +40,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   every route shares the Gateway origin. Extra headers can be stripped with
   `--strip-request-headers`.
 - Graceful shutdown: on `SIGTERM` the Gateway answers `/readyz` with `503`
-  (`draining`), stops HTTP keep-alives so clients reconnect to another
-  replica, keeps serving for `--shutdown-delay`, then stops accepting
+  (`draining`), keeps serving for `--shutdown-delay` with every response
+  closing its connection (`Connection: close`) so clients reconnect to
+  another replica, then stops accepting
   connections and waits up to `--shutdown-timeout` for in-flight requests.
   A rolling restart of several replicas fails no MCP call (tested end to
   end).

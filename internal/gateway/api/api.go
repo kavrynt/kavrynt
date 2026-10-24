@@ -133,7 +133,8 @@ func (h *Handler) SetInstance(name string) {
 }
 
 // SetDraining makes /readyz answer 503 so the Service stops sending new
-// requests, while every other request is still served (SPEC-0008-R01).
+// requests, while every other request is still served, each closing its
+// connection (SPEC-0008-R01).
 func (h *Handler) SetDraining() {
 	h.draining.Store(true)
 }
@@ -159,6 +160,12 @@ func (h *Handler) EnableConsole(console http.Handler) {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.requests.Add(1)
+	if h.draining.Load() {
+		// Close each connection after its response, so clients move their
+		// next request to a replica that stays. Closing idle connections
+		// instead would race with requests already being sent on them.
+		w.Header().Set("Connection", "close")
+	}
 
 	// Browsers send Origin on cross-origin and state-changing requests. The
 	// Gateway does not authenticate callers yet, so a web page must not be
