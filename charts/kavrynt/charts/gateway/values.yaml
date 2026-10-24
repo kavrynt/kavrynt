@@ -54,6 +54,11 @@ config:
   # derived from both.
   shutdownDelay: 5s
   shutdownTimeout: 10s
+  # Refuse MCP requests that are not well-formed MCP Streamable HTTP
+  # (SPEC-0018): an unsupported MCP-Protocol-Version, JSON-RPC batches, and
+  # Mcp-Method or Mcp-Name headers that disagree with the body. Set false
+  # only while migrating clients; such requests are then forwarded.
+  strictProtocol: true
 
 # MCP client authentication (SPEC-0006): the Gateway is an OAuth 2.1 resource
 # server. Every /mcp/ request needs a bearer access token (a JWT) from a

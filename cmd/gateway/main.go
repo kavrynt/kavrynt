@@ -55,6 +55,7 @@ func main() {
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
+	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
 	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic, normally the pod name")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
@@ -109,6 +110,7 @@ func main() {
 	handler.SetRequestTimeout(*requestTimeout)
 	handler.AllowOrigins(splitList(*allowedOrigins)...)
 	handler.SetInstance(*instance)
+	handler.SetStrictProtocol(*strictProtocol)
 	var auditWriter *audit.Writer
 	if *auditEnabled {
 		// A random suffix keeps chains apart when a pod's container restarts.

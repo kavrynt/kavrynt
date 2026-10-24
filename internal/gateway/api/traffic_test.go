@@ -73,8 +73,9 @@ func TestTrafficMetricsClassifyCalls(t *testing.T) {
 			series:   `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="ok",route="team-a.demo",tool="search_payments"} 1`,
 		},
 		{
+			// A body the Gateway cannot read is labelled from the headers.
 			name:     "headers take precedence",
-			body:     `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"from_body"}}`,
+			body:     `tools/call from_body`,
 			headers:  map[string]string{"Mcp-Method": "tools/call", "Mcp-Name": "from_header"},
 			response: jsonResponse(http.StatusOK, `{"jsonrpc":"2.0","id":1,"result":{}}`),
 			series:   `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="ok",route="team-a.demo",tool="from_header"} 1`,

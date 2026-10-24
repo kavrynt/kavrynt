@@ -65,6 +65,7 @@ spec:
             - {{ .Values.config.shutdownDelay | default "5s" | quote }}
             - --shutdown-timeout
             - {{ .Values.config.shutdownTimeout | default "10s" | quote }}
+            - --strict-protocol={{ ne (toString .Values.config.strictProtocol) "false" }}
             {{- with .Values.config.allowedOrigins }}
             - --allowed-origins
             - {{ join "," . | quote }}

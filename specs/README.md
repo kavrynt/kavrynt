@@ -142,5 +142,5 @@ against the assistant's summary of them.
 | [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Accepted |
 | [0016](0016-policy-filtered-tools-list/spec.md) | Policy-filtered tools/list | Accepted |
 | [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Draft |
-| [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Accepted |
+| [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Implemented |
 | [0019](0019-kavryctl-upgrade-rollback/spec.md) | kavryctl upgrade and rollback | Accepted |

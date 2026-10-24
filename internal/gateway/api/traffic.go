@@ -62,6 +62,10 @@ const (
 
 	// The tool authorization policy denied the request (SPEC-0012-R08).
 	outcomeDenied = "denied"
+
+	// The request is not a well-formed MCP Streamable HTTP request
+	// (SPEC-0018-R06).
+	outcomeProtocolError = "protocol_error"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.
@@ -76,6 +80,8 @@ type mcpCall struct {
 type bodyInfo struct {
 	// read: a POST body was inspected.
 	read bool
+	// batch: the body is a JSON array, a JSON-RPC batch.
+	batch bool
 	// classified: the body is a single JSON object within the inspection
 	// limit, so its JSON-RPC method (and tool) are known.
 	classified bool
@@ -129,6 +135,8 @@ func inspectRequest(r *http.Request) (mcpCall, io.Reader, error) {
 // inspectBody reads the JSON-RPC message of a POST body prefix.
 func inspectBody(prefix []byte) bodyInfo {
 	info := bodyInfo{read: true}
+	trimmed := bytes.TrimLeft(prefix, " \t\r\n")
+	info.batch = len(trimmed) > 0 && trimmed[0] == '['
 	if len(prefix) > maxInspectBytes {
 		return info
 	}
