@@ -110,6 +110,9 @@ jobs:
       - name: Verify specs and traceability
         run: make spec-check
 
+      - name: Test alert rules and runbooks
+        run: make alerts-test
+
       - name: Lint chart
         run: make helm-lint
 

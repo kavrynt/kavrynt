@@ -76,6 +76,9 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   redirects to the client, rejects `..` path segments, cross-origin browser
   requests (`--allowed-origins`), and Gateway loops, and sandboxes proxied
   responses with CSP.
+- Opt-in alerting rules (`metrics.prometheusRule`) for the Gateway, the
+  Operator, and MCP servers, each with a runbook in `docs/runbooks`; the
+  Operator exports `kavrynt_operator_mcpserver_ready` on a metrics Service.
 - Opt-in chart NetworkPolicies (`networkPolicy`) make labelled MCP server
   pods reachable only from the Gateway and the Operator, and can limit who
   calls the Gateway.
@@ -131,13 +134,14 @@ Merging, when the owner asks for it:
 
 ```bash
 make help            # list targets
-make qa              # release contract, spec check, gofmt, race tests, console tests, vet, staticcheck, gosec, govulncheck, helm lint/template/unittest
+make qa              # release contract, spec check, gofmt, race tests, console tests, vet, staticcheck, gosec, govulncheck, helm lint/template/unittest, alert tests
 make test            # go test -race ./...
 make console-test    # web console unit tests (node --test, no npm packages)
 make spec-check      # specs well formed; Implemented requirements cited by tests
 make spec-new NAME=x # scaffold specs/NNNN-x/spec.md
 make helm-plugins    # once: install the pinned helm-unittest plugin
 make helm-unittest   # chart unit tests (charts/kavrynt/tests)
+make alerts-test     # alert rules: runbook per alert, promtool tests (needs Docker)
 make build           # bin/kavryctl, bin/gateway, bin/operator
 make docker-build    # local images tagged $(LOCAL_VERSION)
 make e2e-kind        # disposable Kind cluster, full product loop (scripts/e2e-kind.sh)

@@ -23,6 +23,36 @@
     },
     "gateway": { "type": "object" },
     "operator": { "type": "object" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prometheusRule": {
+          "type": "object",
+          "description": "Alerting rules (SPEC-0010).",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "alertLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "jobs": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "gateway": { "type": "string" },
+                "operator": { "type": "string" }
+              }
+            },
+            "errorRatio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "minRequestsPerSecond": { "type": "number", "minimum": 0 },
+            "latencyP95Seconds": { "type": "number", "exclusiveMinimum": 0 },
+            "notReadyFor": { "type": "string", "pattern": "^[0-9]+[smh]$" },
+            "cloudSyncStaleSeconds": { "type": "integer", "minimum": 60 },
+            "runbookBaseURL": { "type": "string", "pattern": "^(https://\\S+)?$" }
+          }
+        }
+      }
+    },
     "networkPolicy": {
       "type": "object",
       "description": "NetworkPolicies that keep MCP traffic on the Gateway path (SPEC-0007).",

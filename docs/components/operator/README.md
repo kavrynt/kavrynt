@@ -19,6 +19,11 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
   [Tool discovery](#tool-discovery)).
 - Optionally sends the inventory to Kavrynt Cloud (see
   [Kavrynt Cloud sync](#kavrynt-cloud-sync)).
+- Exports `kavrynt_operator_mcpserver_ready{namespace,name}` (1 when `Ready`
+  is `True`, else 0; removed when the `MCPServer` is deleted) on the metrics
+  port, which the chart exposes through the Service
+  `<release>-operator-metrics` (`operator.metrics.service.enabled`, on by
+  default) and optionally a ServiceMonitor. Only the leader exports it.
 - Does not deploy MCP server workloads, manage secrets, or proxy MCP traffic.
 
 ## Tool discovery

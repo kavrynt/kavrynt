@@ -93,6 +93,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	status := r.desiredStatus(&server)
+	recordReady(req.NamespacedName, apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady))
 	var result ctrl.Result
 	if r.Discoverer != nil {
 		result.RequeueAfter = r.applyTools(ctx, req.NamespacedName, &server, &status)
@@ -215,6 +216,7 @@ func (r *MCPServerReconciler) forget(key types.NamespacedName) {
 	r.mu.Lock()
 	delete(r.attempts, key)
 	r.mu.Unlock()
+	forgetReady(key)
 }
 
 func (r *MCPServerReconciler) clock() time.Time {
