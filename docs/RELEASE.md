@@ -85,7 +85,9 @@ branches that describe the new version.
 
 Then, on `develop`, set the default `UPGRADE_FROM_VERSION` in
 `scripts/e2e-kind.sh` to the version just released, so every later change is
-tested as an upgrade from it and a rollback to it.
+tested as an upgrade from it and a rollback to it. `LEGACY_FROM_VERSION`
+stays `0.0.5-beta.1`: it covers the one-time CRD adoption and the
+authentication choice for installs that predate both.
 
 ## If The Workflow Fails
 

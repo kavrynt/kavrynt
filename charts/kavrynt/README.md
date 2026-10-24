@@ -47,7 +47,7 @@ both image tags are always the same release version.
 ## Prerequisites
 
 - A conformant Kubernetes cluster.
-- Helm 3.x or 4.x.
+- Helm 3.14 or newer (3.x or 4.x).
 - Permission to create CRDs, ClusterRoles, and ClusterRoleBindings.
 
 ## Installing the chart
@@ -82,8 +82,12 @@ together:
 ```bash
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version <version> \
-  --namespace kavrynt-system
+  --namespace kavrynt-system --reset-then-reuse-values
 ```
+
+`--reset-then-reuse-values` keeps your values and takes the new chart's
+defaults. Do not use `--reuse-values` across versions: it keeps the previous
+chart's defaults, including its image tags, so the old images keep running.
 
 ### Once, when upgrading from 0.0.5-beta.1 or earlier
 
@@ -108,7 +112,7 @@ with a message naming both ways forward. Add your authorization server:
 
 ```bash
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-  --namespace kavrynt-system --reuse-values \
+  --namespace kavrynt-system --reset-then-reuse-values \
   --set gateway.auth.resourceURL=https://mcp.example.com \
   --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]'
 ```
@@ -161,7 +165,7 @@ Both components expose Prometheus metrics: the Gateway on its Service
 
 ```bash
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-  --namespace kavrynt-system --reuse-values \
+  --namespace kavrynt-system --reset-then-reuse-values \
   --set gateway.metrics.serviceMonitor.enabled=true \
   --set operator.metrics.serviceMonitor.enabled=true \
   --set metrics.prometheusRule.enabled=true
@@ -245,7 +249,7 @@ kubectl -n kavrynt-system create secret generic kavrynt-upstream-credentials \
   --from-literal=team-a.search="$SEARCH_TOKEN" \
   --from-literal=team-a.search.origin=http://search.team-a.svc.cluster.local:8080
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-  --namespace kavrynt-system --reuse-values \
+  --namespace kavrynt-system --reset-then-reuse-values \
   --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials
 ```
 
@@ -275,7 +279,7 @@ tool on which server). Put the `.rego` files in a ConfigMap and enable it:
 ```bash
 kubectl -n kavrynt-system create configmap kavrynt-policy --from-file=examples/policy/client-allowlist.rego
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-  --namespace kavrynt-system --reuse-values \
+  --namespace kavrynt-system --reset-then-reuse-values \
   --set gateway.policy.enabled=true --set gateway.policy.configMap=kavrynt-policy
 ```
 
@@ -294,7 +298,7 @@ tokens whose audience is its resource URI,
 
 ```bash
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-  --namespace kavrynt-system --reuse-values \
+  --namespace kavrynt-system --reset-then-reuse-values \
   --set gateway.auth.enabled=true \
   --set gateway.auth.resourceURL=https://mcp.example.com \
   --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]' \
@@ -321,7 +325,7 @@ the Gateway an OAuth client there, store its secret, and name both:
 kubectl -n kavrynt-system create secret generic kavrynt-token-exchange \
   --from-literal=client-secret='<the Gateway client secret>'
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-  --namespace kavrynt-system --reuse-values \
+  --namespace kavrynt-system --reset-then-reuse-values \
   --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents","tokenExchange":{"clientID":"kavrynt-gateway","clientSecretKey":"client-secret"}}]' \
   --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange
 ```
@@ -353,7 +357,7 @@ have no effect elsewhere.
 
    ```bash
    helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
-     --namespace kavrynt-system --reuse-values \
+     --namespace kavrynt-system --reset-then-reuse-values \
      --set networkPolicy.mcpServers.enabled=true \
      --set 'networkPolicy.mcpServers.namespaces={team-a,team-b}'
    ```

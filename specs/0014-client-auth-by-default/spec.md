@@ -85,10 +85,13 @@ release notes, CLAUDE.md "What works today".
 
 ## Decisions
 
-- The opt-out is `gateway.auth.enabled=false`, not a separate value.
-  `helm upgrade --reuse-values` keeps only values the user set, so an
-  upgrade cannot inherit the old default; a values file that sets
-  `enabled: false` records a choice someone made.
+- The opt-out is `gateway.auth.enabled=false`, not a separate value. A
+  plain `helm upgrade` and `helm upgrade --reset-then-reuse-values` take the
+  new chart's default, so they stop until a choice is made; a values file
+  that sets `enabled: false` records a choice someone made. (Corrected:
+  `helm upgrade --reuse-values` keeps the previous chart's defaults instead,
+  so from `0.0.5-beta.1` it would keep MCP routes open, as they were. The
+  docs and `kavryctl upgrade` use `--reset-then-reuse-values`.)
 - The chart does not refuse `LoadBalancer` or `NodePort` Services while
   authentication is off; the start-up warning and the console notice say
   the routes are open, and NetworkPolicies (SPEC-0007) limit who reaches

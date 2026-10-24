@@ -26,7 +26,7 @@
      and print the two `kubectl` commands from the chart README, unless
      `--adopt-crd`, which applies the same label and annotations by patch.
 - **Upgrade (R03).** Before: the `Ready=True` servers in every namespace.
-  Then `helm upgrade <release> <chart> --version <v> --reuse-values
+  Then `helm upgrade <release> <chart> --version <v> --reset-then-reuse-values
   [--values FILE] --wait --timeout <t>`. After: poll up to `--timeout` until
   every server routed before is `Ready=True` again; print one line per
   server and exit `1` naming those that are not. Values are never printed.
@@ -60,7 +60,7 @@
 | --- | --- |
 | SPEC-0019-R01 | `upgrade_test.go`: no `helm` on PATH |
 | SPEC-0019-R02 | `upgrade_test.go`: missing release, missing version, CRD not owned (stops, no Helm upgrade call), `--adopt-crd` (patched) |
-| SPEC-0019-R03 | `upgrade_test.go`: arguments include `--reuse-values`; a server that stays not Ready exits `1`; `e2e-kind.sh` |
+| SPEC-0019-R03 | `upgrade_test.go`: arguments include `--reset-then-reuse-values`; Helm older than 3.14 is refused; a server that stays not Ready exits `1`; `e2e-kind.sh` |
 | SPEC-0019-R04 | `upgrade_test.go`: rollback arguments and checks; `e2e-kind.sh` |
 | SPEC-0019-R05 | `upgrade_test.go`: dry run makes no changing call |
 | SPEC-0019-R06 | `boundaries_test.go` |

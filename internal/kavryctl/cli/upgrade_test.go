@@ -19,15 +19,23 @@ import (
 // fakeHelm records helm commands; fail makes the command named by its first
 // argument fail, and after runs once an upgrade or rollback succeeds.
 type fakeHelm struct {
-	calls [][]string
-	fail  map[string]error
-	after func()
+	calls   [][]string
+	fail    map[string]error
+	after   func()
+	version string
 }
 
 func (f *fakeHelm) Run(_ context.Context, args ...string) ([]byte, error) {
 	f.calls = append(f.calls, args)
 	if err := f.fail[args[0]]; err != nil {
 		return nil, err
+	}
+	if args[0] == "version" {
+		version := f.version
+		if version == "" {
+			version = "v3.15.2"
+		}
+		return []byte(version), nil
 	}
 	if (args[0] == "upgrade" || args[0] == "rollback") && f.after != nil {
 		f.after()
@@ -138,7 +146,7 @@ func TestUpgradeAdoptsAndReportsRoutedServers(t *testing.T) {
 	if code != 0 {
 		t.Fatalf("upgrade: code=%d out=%q err=%q", code, out, errOut)
 	}
-	want := []string{"upgrade", "kavrynt", defaultChart, "--version", "1.0.0-beta.1", "--reuse-values", "--values", "local.yaml",
+	want := []string{"upgrade", "kavrynt", defaultChart, "--version", "1.0.0-beta.1", "--reset-then-reuse-values", "--values", "local.yaml",
 		"--wait", "--timeout", "5m0s", "--namespace", "kavrynt-system", "--kube-context", "kind-test"}
 	if got := helm.ran("upgrade"); !slices.Equal(got, want) {
 		t.Fatalf("helm upgrade = %q\nwant %q", got, want)
@@ -214,7 +222,7 @@ func TestDryRunChangesNothing(t *testing.T) {
 	k8sClient := useFakeClient(t, defaultNamespace, mcpCRD(""), readyServer("team-a", "search"))
 	out, errOut, code := run(t, "upgrade", "--version", "1.0.0-beta.1", "--adopt-crd", "--dry-run")
 	if code != 0 || !strings.Contains(out, "would adopt the mcpservers.kavrynt.io CRD") ||
-		!strings.Contains(out, "would run: helm upgrade kavrynt "+defaultChart+" --version 1.0.0-beta.1 --reuse-values") {
+		!strings.Contains(out, "would run: helm upgrade kavrynt "+defaultChart+" --version 1.0.0-beta.1 --reset-then-reuse-values") {
 		t.Fatalf("upgrade --dry-run: code=%d out=%q err=%q", code, out, errOut)
 	}
 	out, _, code = run(t, "rollback", "--dry-run")
@@ -229,5 +237,22 @@ func TestDryRunChangesNothing(t *testing.T) {
 	var crd apiextensionsv1.CustomResourceDefinition
 	if err := k8sClient.Get(context.Background(), types.NamespacedName{Name: crdName}, &crd); err != nil || crd.Labels != nil {
 		t.Fatalf("a dry run changed the CRD: %v %v", crd.Labels, err)
+	}
+}
+
+// Verifies SPEC-0019-R02 and SPEC-0019-R03: Helm without
+// --reset-then-reuse-values is refused before anything changes.
+func TestUpgradeNeedsHelm314(t *testing.T) {
+	for version, ok := range map[string]bool{"v3.13.3": false, "v2.17.0": false, "v3.14.0": true, "v4.0.1": true} {
+		helm := &fakeHelm{version: version}
+		useHelm(t, helm)
+		useFakeClient(t, defaultNamespace, mcpCRD("kavrynt"))
+		_, errOut, code := run(t, "upgrade", "--version", "1.0.0-beta.1", "--dry-run")
+		if ok != (code == 0) {
+			t.Errorf("helm %s: code=%d err=%q", version, code, errOut)
+		}
+		if !ok && (!strings.Contains(errOut, "needs Helm 3.14 or newer") || helm.ran("status") != nil) {
+			t.Errorf("helm %s: err=%q calls=%q", version, errOut, helm.calls)
+		}
 	}
 }
