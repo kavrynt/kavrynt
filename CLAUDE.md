@@ -305,11 +305,11 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     `kavryctl audit verify` accepts every Gateway's chain.
 12. An install with default values is refused until it names an
     authorization server or opts out (`gateway.auth.enabled=false`).
-    `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
-    the previous published release is refused without a `gateway.auth`
-    choice, fails cleanly until the CRD is adopted, then keeps servers
-    `Ready` and routed; `kavryctl rollback` keeps them too, and
-    `kavryctl upgrade` reports them routed again.
+    `helm uninstall` keeps the CRD and `MCPServer` resources. An upgrade from
+    `0.0.5-beta.1` is refused without a `gateway.auth` choice, fails cleanly
+    until the CRD is adopted, then keeps servers `Ready` and routed. From the
+    previous published release, `kavryctl upgrade` reports them routed and
+    `kavryctl rollback` keeps them.
 
 Keep the Kind workflow disposable and isolated from the user's current
 Kubernetes context. On macOS and Apple Silicon, build images locally and load

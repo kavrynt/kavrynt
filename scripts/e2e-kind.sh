@@ -1112,9 +1112,15 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/example-mcp-server --wait=true --timeout=120s
 wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 
-# Upgrade and rollback against the previous published release (SPEC-0009).
-# The Kind node pulls that release's images from Docker Hub.
-UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-0.0.5-beta.1}"
+# Upgrade and rollback (SPEC-0009, SPEC-0014, SPEC-0019), from two published
+# releases whose images the Kind node pulls from Docker Hub:
+# - LEGACY_FROM_VERSION, the last release that installed the CRD outside Helm
+#   and had no gateway.auth: the one-time CRD adoption and the refused
+#   upgrade without an authentication choice;
+# - UPGRADE_FROM_VERSION, the previous release: kavryctl upgrade to the build
+#   under test and kavryctl rollback to it.
+LEGACY_FROM_VERSION="${LEGACY_FROM_VERSION:-0.0.5-beta.1}"
+UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.1}"
 UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
 LOCAL_IMAGE_ARGS=(
   --kube-context "${KUBE_CONTEXT}"
@@ -1138,9 +1144,9 @@ kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/example-mcp-server >/dev/null ||
   fail "helm uninstall deleted an MCPServer"
 
-log "installing the previous release ${UPGRADE_FROM_VERSION} on a cluster without Kavrynt"
+log "installing ${LEGACY_FROM_VERSION} on a cluster without Kavrynt"
 kubectl --context "${KUBE_CONTEXT}" delete crd mcpservers.kavrynt.io --wait=true --timeout=60s >/dev/null
-helm install kavrynt "${UPGRADE_FROM_CHART}" --version "${UPGRADE_FROM_VERSION}" \
+helm install kavrynt "${UPGRADE_FROM_CHART}" --version "${LEGACY_FROM_VERSION}" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --wait \
@@ -1150,9 +1156,9 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
 start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
-call_tools_list "${SERVER_ID}" || fail "tools/list failed on ${UPGRADE_FROM_VERSION}"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed on ${LEGACY_FROM_VERSION}"
 
-# Verifies SPEC-0014-R04 and SPEC-0014-R06: the previous release never set
+# Verifies SPEC-0014-R04 and SPEC-0014-R06: the legacy release never set
 # gateway.auth, so upgrading it without a choice fails before any change.
 log "verifying an upgrade without MCP client authentication settings is refused"
 GENERATIONS_BEFORE="$(deployment_generations)"
@@ -1199,24 +1205,28 @@ start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed after the upgrade"
 
-# Verifies SPEC-0009-R05, SPEC-0009-R09, and SPEC-0019-R04: kavryctl runs
-# helm rollback and confirms the server is routed again.
-log "rolling back to ${UPGRADE_FROM_VERSION} with kavryctl"
-"${TEMP_DIR}/kavryctl" rollback --context "${KUBE_CONTEXT}" --revision 1 --timeout 3m ||
-  fail "kavryctl rollback failed"
-kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
-  fail "helm rollback deleted the MCPServer CRD"
+# From the previous release: install it (with the authentication opt-out it
+# requires) on the kept CRD and MCPServer, upgrade to the build under test
+# with kavryctl, then roll back to it with kavryctl.
+log "installing the previous release ${UPGRADE_FROM_VERSION}"
+stop_gateway_port_forwards
+helm uninstall kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --wait --timeout 120s
+helm install kavrynt "${UPGRADE_FROM_CHART}" --version "${UPGRADE_FROM_VERSION}" \
+  --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" \
+  --set gateway.auth.enabled=false \
+  --wait \
+  --timeout 300s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
-stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
-call_tools_list "${SERVER_ID}" || fail "tools/list failed after the rollback"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed on ${UPGRADE_FROM_VERSION}"
 
 # Verifies SPEC-0019-R02 and SPEC-0019-R03: kavryctl upgrade checks the
 # release and the CRD, upgrades with the release's values plus a file, and
 # reports the server routed. --dry-run changes nothing.
-log "upgrading to the build under test with kavryctl"
+log "upgrading from ${UPGRADE_FROM_VERSION} to the build under test with kavryctl"
 cat >"${TEMP_DIR}/local-release-values.yaml" <<VALUES
 gateway:
   image:
@@ -1241,9 +1251,25 @@ grep --fixed-strings --quiet "would run: helm upgrade kavrynt" "${TEMP_DIR}/upgr
   fail "kavryctl upgrade failed: $(cat "${TEMP_DIR}/kavryctl-upgrade.log")"
 grep --fixed-strings --quiet "ok    ${E2E_NAMESPACE}/example-mcp-server is routed" "${TEMP_DIR}/kavryctl-upgrade.log" ||
   fail "kavryctl upgrade did not report the server routed: $(cat "${TEMP_DIR}/kavryctl-upgrade.log")"
+verify_installed_crd
 stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed after kavryctl upgrade"
+
+# Verifies SPEC-0009-R05, SPEC-0009-R09, and SPEC-0019-R04: kavryctl runs
+# helm rollback to the previous release and confirms the server is routed
+# again.
+log "rolling back to ${UPGRADE_FROM_VERSION} with kavryctl"
+"${TEMP_DIR}/kavryctl" rollback --context "${KUBE_CONTEXT}" --revision 1 --timeout 3m ||
+  fail "kavryctl rollback failed"
+kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
+  fail "helm rollback deleted the MCPServer CRD"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed after the rollback"
 
 log "end-to-end workflow passed"
