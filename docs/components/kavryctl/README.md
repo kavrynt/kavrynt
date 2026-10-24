@@ -44,7 +44,7 @@ check after. `--dry-run` runs the checks and prints the Helm command
 without changing anything. Values are never printed.
 
 ```bash
-kavryctl upgrade --version 1.0.0-beta.1 --adopt-crd
+kavryctl upgrade --version 1.0.0-beta.2 --adopt-crd
 kavryctl rollback --revision 3
 ```
 
