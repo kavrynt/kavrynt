@@ -41,7 +41,7 @@ can reach the Gateway:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.1 \
+  --version 1.0.0-beta.2 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -139,7 +139,7 @@ supports HTTP endpoints only.
 ### Prerequisites
 
 - A conformant Kubernetes cluster.
-- Helm 3.x or 4.x.
+- Helm 3.14 or newer (3.x or 4.x).
 - `kubectl` access with permission to create CRDs, Deployments, Services,
   ServiceAccounts, ClusterRoles, and ClusterRoleBindings.
 
@@ -149,7 +149,7 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=1.0.0-beta.1
+export KAVRYNT_VERSION=1.0.0-beta.2
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \

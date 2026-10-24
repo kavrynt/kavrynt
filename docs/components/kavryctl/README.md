@@ -34,7 +34,9 @@ chart version exists (`--chart`, default `oci://ghcr.io/kavrynt/charts/kavrynt`;
 release owns the `MCPServer` CRD. A CRD installed by `0.0.5-beta.1` or
 earlier stops the upgrade with the two `kubectl` commands that adopt it, or
 is adopted with `--adopt-crd`. It records the servers that are routed
-(`Ready`), runs `helm upgrade --reuse-values [--values FILE] --wait`, then
+(`Ready`), runs `helm upgrade --reset-then-reuse-values [--values FILE] --wait`
+(Helm 3.14 or newer; `--reuse-values` would keep the previous chart's
+defaults, including its image tags), then
 waits up to `--timeout` (default `5m`) until each of them is routed again
 and prints one line per server. It exits `1` if any is not. `rollback`
 checks the release, runs `helm rollback [N] --wait`, and does the same
@@ -42,7 +44,7 @@ check after. `--dry-run` runs the checks and prints the Helm command
 without changing anything. Values are never printed.
 
 ```bash
-kavryctl upgrade --version 1.0.0-beta.1 --adopt-crd
+kavryctl upgrade --version 1.0.0-beta.2 --adopt-crd
 kavryctl rollback --revision 3
 ```
 

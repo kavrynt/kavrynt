@@ -82,17 +82,20 @@ once on the top of a stack of branches rather than on each one.
     argument appears in the Gateway output, and `kavryctl audit verify`
     accepts the collected logs. Then turns authentication and policy off.
     Then deletes the `MCPServer` and confirms the route disappears.
-11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
-    resources; the previous release (`UPGRADE_FROM_VERSION`, chart from
-    `UPGRADE_FROM_CHART`, images from Docker Hub) is installed on the clean
-    cluster with a server; `helm upgrade` to the local build without
-    `gateway.auth` values is refused before any change (SPEC-0014); with the
-    opt-out it fails before touching workloads until the CRD is adopted,
-    then succeeds with the
-    server `Ready` and routed; `kavryctl rollback` (SPEC-0019) keeps the CRD,
-    the server, and its route; `kavryctl upgrade --dry-run` changes nothing,
-    and `kavryctl upgrade` back to the build under test reports the server
-    routed. Needs network access to the registries.
+11. Upgrade and rollback, from published charts (`UPGRADE_FROM_CHART`) with
+    images from Docker Hub; needs network access to the registries.
+    `helm uninstall` keeps the CRD and `MCPServer` resources.
+    - From `LEGACY_FROM_VERSION` (`0.0.5-beta.1`, the last release with the
+      CRD outside Helm and no `gateway.auth`), installed on a clean cluster:
+      `helm upgrade` to the local build without `gateway.auth` values is
+      refused before any change (SPEC-0014); with the opt-out it fails
+      before touching workloads until the CRD is adopted, then succeeds with
+      the server `Ready` and routed.
+    - From `UPGRADE_FROM_VERSION` (the previous release), installed with the
+      opt-out on the kept CRD and server: `kavryctl upgrade --dry-run`
+      changes nothing, `kavryctl upgrade` to the build under test reports
+      the server routed (SPEC-0019), and `kavryctl rollback` back to it keeps
+      the CRD, the server, and its route.
 
 Expected final line: `==> end-to-end workflow passed`.
 

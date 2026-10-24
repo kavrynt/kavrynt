@@ -132,6 +132,25 @@ func (s *session) checkRelease(ctx context.Context) error {
 	return nil
 }
 
+// checkHelmVersion requires Helm 3.14 or newer, the first with
+// --reset-then-reuse-values.
+func (s *session) checkHelmVersion(ctx context.Context) error {
+	out, err := s.helm.Run(ctx, "version", "--template", "{{.Version}}")
+	if err != nil {
+		return fmt.Errorf("helm version: %v", err)
+	}
+	version := strings.TrimSpace(string(out))
+	var major, minor int
+	if _, err := fmt.Sscanf(version, "v%d.%d", &major, &minor); err != nil {
+		return fmt.Errorf("cannot read the helm version %q", version)
+	}
+	if major < 3 || (major == 3 && minor < 14) {
+		return fmt.Errorf("helm %s is too old: kavryctl upgrade needs Helm 3.14 or newer (--reset-then-reuse-values)", version)
+	}
+	s.check("helm %s", version)
+	return nil
+}
+
 // routedServers returns the Ready MCPServers, the ones the Gateway routes.
 func (s *session) routedServers(ctx context.Context) (map[string]string, error) {
 	var servers kavryntv1alpha1.MCPServerList
@@ -266,6 +285,10 @@ func runUpgrade(args []string, stdout, stderr io.Writer) int {
 	defer cancel()
 
 	// Preflight: nothing changes until every check passes (SPEC-0019-R02).
+	if err := s.checkHelmVersion(ctx); err != nil {
+		fmt.Fprintf(stderr, "upgrade: %v\n", err)
+		return 1
+	}
 	if err := s.checkRelease(ctx); err != nil {
 		fmt.Fprintf(stderr, "upgrade: %v\n", err)
 		return 1
@@ -304,7 +327,9 @@ Nothing was changed. Run again with --adopt-crd, or adopt it yourself:
 	if *version != "" {
 		command = append(command, "--version", *version)
 	}
-	command = append(command, "--reuse-values")
+	// --reuse-values would keep the previous chart's defaults, including its
+	// image tags, so the upgrade would not take effect (SPEC-0019-R03).
+	command = append(command, "--reset-then-reuse-values")
 	if *values != "" {
 		command = append(command, "--values", *values)
 	}
