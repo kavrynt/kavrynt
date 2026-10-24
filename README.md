@@ -315,9 +315,11 @@ step, including what Kavrynt does not do yet. See [docs/DEMO.md](docs/DEMO.md).
 
 ## Use kavryctl
 
-kavryctl manages `MCPServer` resources through your kubeconfig. It does not
-install or upgrade the control plane; Helm owns that release path. Install it
-from source when developing locally:
+kavryctl manages `MCPServer` resources through your kubeconfig. Helm
+installs the control plane; `kavryctl upgrade` and `kavryctl rollback` run
+Helm's upgrade and rollback with checks before and after (every routed
+server must be routed again). Install it from source when developing
+locally:
 
 ```bash
 go install ./cmd/kavryctl
@@ -481,8 +483,7 @@ are:
 2. the console signed in through the authorization server;
 3. audit delivery to Kavrynt Cloud and usage events;
 4. protocol-aware routing beyond the request checks;
-5. upgrade and rollback commands in kavryctl;
-6. recovery workflows (restoring into a new cluster).
+5. recovery workflows (restoring into a new cluster).
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this

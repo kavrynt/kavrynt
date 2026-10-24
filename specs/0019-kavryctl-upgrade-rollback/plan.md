@@ -30,8 +30,9 @@
   [--values FILE] --wait --timeout <t>`. After: poll up to `--timeout` until
   every server routed before is `Ready=True` again; print one line per
   server and exit `1` naming those that are not. Values are never printed.
-- **Rollback (R04).** Steps 1 and 3 of the preflight, the same before and
-  after check around `helm rollback <release> [N] --wait --timeout <t>`.
+- **Rollback (R04).** Step 1 of the preflight (the CRD is kept on rollback
+  and needs no check), the same before and after check around
+  `helm rollback <release> [N] --wait --timeout <t>`.
 - **Dry run (R05).** Runs the read-only checks, prints them and the Helm
   command (with `--adopt-crd`, the patch it would make), and runs nothing
   that changes the cluster.

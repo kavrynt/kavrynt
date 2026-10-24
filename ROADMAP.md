@@ -25,6 +25,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   with `kavryctl audit verify`.
 - Opt-in tool authorization policy: Rego evaluated in the Gateway, deny by
   default, from a ConfigMap.
+- `kavryctl upgrade` and `kavryctl rollback`: Helm's upgrade and rollback
+  with checks before and after.
 - Token exchange (RFC 8693) for MCP servers that need the user: the caller's
   token is exchanged for one with the server's audience.
 - MCP Streamable HTTP checks on every route: supported protocol revisions,
@@ -41,8 +43,7 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 3. Audit delivery to Kavrynt Cloud and usage events.
 4. Protocol-aware routing beyond the request checks, such as sessions that
    follow a Gateway replica.
-5. Upgrade and rollback commands in `kavryctl`.
-6. Recovery workflows (restoring into a new cluster).
+5. Recovery workflows (restoring into a new cluster).
 
 ## Project and community
 
