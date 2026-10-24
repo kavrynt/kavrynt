@@ -3,11 +3,13 @@ package cli
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -202,5 +204,39 @@ func TestInspectShowsReportedServerInfo(t *testing.T) {
 	out, errOut, code := run(t, "inspect", "payments")
 	if code != 0 || !strings.Contains(out, `"serverInfo": {`) || !strings.Contains(out, `"name": "payments-mcp"`) || !strings.Contains(out, `"version": "0.2.0"`) {
 		t.Fatalf("inspect: code=%d out=%q err=%q", code, out, errOut)
+	}
+}
+
+// Verifies SPEC-0013-R07.
+func TestAuditVerify(t *testing.T) {
+	prev := auditv1.GenesisHash
+	var lines []string
+	for i := 1; i <= 3; i++ {
+		e := auditv1.Event{Type: auditv1.Type, Instance: "gw/1", Seq: uint64(i), PrevHash: prev, Decision: auditv1.DecisionAllow}
+		e.Hash = auditv1.ComputeHash(e)
+		prev = e.Hash
+		data, _ := json.Marshal(e)
+		lines = append(lines, string(data))
+	}
+	dir := t.TempDir()
+	good := filepath.Join(dir, "good.log")
+	if err := os.WriteFile(good, []byte("2026/10/24 INFO starting\n"+strings.Join(lines, "\n")+"\n"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	var stdout, stderr bytes.Buffer
+	if code := Execute([]string{"audit", "verify", good}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "3 events from 1 instances: every chain verifies") {
+		t.Fatalf("good log: exit %d, %s %s", code, stdout.String(), stderr.String())
+	}
+
+	tampered := strings.Join([]string{lines[0], strings.Replace(lines[1], `"decision":"allow"`, `"decision":"deny"`, 1), lines[2]}, "\n")
+	stdout.Reset()
+	if code := runAudit([]string{"verify"}, strings.NewReader(tampered), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "BREAK instance gw/1 seq 2") {
+		t.Fatalf("tampered log: exit %d, %s", code, stdout.String())
+	}
+	if code := runAudit([]string{"verify"}, strings.NewReader("no events here\n"), &stdout, &stderr); code != 1 {
+		t.Fatal("a log without events verified")
+	}
+	if code := Execute([]string{"audit"}, &stdout, &stderr); code != 2 {
+		t.Fatal("audit without verify accepted")
 	}
 }

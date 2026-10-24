@@ -60,7 +60,10 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     no token appears in metrics or logs. Tool authorization policy: a
     per-client allow-list from a ConfigMap allows one client's `echo` call
     and denies another's with a JSON-RPC error; a broken update is counted
-    and changes no decision. Then turns both off again.
+    and changes no decision. Audit (on in the production profile): the
+    allowed, denied, and unauthenticated calls each have an event, no tool
+    argument appears in the Gateway output, and `kavryctl audit verify`
+    accepts the collected logs. Then turns authentication and policy off.
     Then deletes the `MCPServer` and confirms the route disappears.
 11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
     resources; the previous release (`UPGRADE_FROM_VERSION`, chart from

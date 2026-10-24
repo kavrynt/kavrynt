@@ -86,6 +86,13 @@ spec:
             {{- if $policy.enabled }}
             - --policy-dir=/etc/kavrynt/policy
             {{- end }}
+            {{- with .Values.audit }}
+            {{- if .enabled }}
+            - --audit
+            - --audit-queue-size={{ .queueSize | default 10000 }}
+            - --audit-on-overflow={{ .onOverflow | default "reject" }}
+            {{- end }}
+            {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true

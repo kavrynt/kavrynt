@@ -6,11 +6,13 @@ import (
 	"flag"
 	"fmt"
 	"io"
+	"os"
 	"strconv"
 	"strings"
 	"text/tabwriter"
 	"time"
 
+	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/kavryctl/manifest"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -97,6 +99,8 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 		return runList(args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
+	case "audit":
+		return runAudit(args[1:], os.Stdin, stdout, stderr)
 	default:
 		fmt.Fprintf(stderr, "unknown command %q\n\n", args[0])
 		printUsage(stderr)
@@ -120,6 +124,45 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "valid MCPServer manifest: %s\n", server.Name)
+	return 0
+}
+
+// runAudit verifies Gateway audit event chains read from a file or standard
+// input (SPEC-0013-R07). Lines that are not audit events are skipped, so
+// collected Gateway logs can be passed as they are.
+func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) == 0 || args[0] != "verify" || len(args) > 2 {
+		fmt.Fprintln(stderr, "usage: kavryctl audit verify [file]   (reads standard input without a file)")
+		return 2
+	}
+	input := stdin
+	if len(args) == 2 && args[1] != "-" {
+		// #nosec G304 -- reading the file the user names is the command's purpose.
+		file, err := os.Open(args[1])
+		if err != nil {
+			fmt.Fprintf(stderr, "audit verify: %v\n", err)
+			return 1
+		}
+		defer file.Close()
+		input = file
+	}
+	summary, err := auditv1.Verify(input)
+	if err != nil {
+		fmt.Fprintf(stderr, "audit verify: %v\n", err)
+		return 1
+	}
+	for _, b := range summary.Breaks {
+		fmt.Fprintln(stdout, "BREAK", b)
+	}
+	if summary.Events == 0 {
+		fmt.Fprintln(stderr, "audit verify: no audit events found")
+		return 1
+	}
+	if len(summary.Breaks) > 0 {
+		fmt.Fprintf(stdout, "%d events from %d instances: %d breaks\n", summary.Events, summary.Instances, len(summary.Breaks))
+		return 1
+	}
+	fmt.Fprintf(stdout, "%d events from %d instances: every chain verifies\n", summary.Events, summary.Instances)
 	return 0
 }
 
@@ -340,6 +383,7 @@ Usage:
   kavryctl unregister [cluster flags] <name>
   kavryctl list       [cluster flags] [-A]
   kavryctl inspect    [cluster flags] <name>
+  kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin)
 
 Cluster flags:
   --kubeconfig PATH   Kubeconfig file (defaults to KUBECONFIG or ~/.kube/config)

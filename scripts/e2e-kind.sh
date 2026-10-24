@@ -947,7 +947,7 @@ wait_for_url "${GATEWAY_URL}/readyz"
 echo_call() {
   curl --silent --output "${TEMP_DIR}/policy-body" --write-out '%{http_code}' --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
     --header 'Content-Type: application/json' --header "Authorization: Bearer $1" \
-    --data '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hi"}}}'
+    --data '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"echo","arguments":{"message":"audit-secret-argument"}}}'
 }
 ALLOWED_TOKEN="$(mint "${ROUTE_RESOURCE}" "mcp:tools" e2e-agent)"
 DENIED_TOKEN="$(mint "${ROUTE_RESOURCE}" "mcp:tools" other-agent)"
@@ -961,6 +961,26 @@ verify_policy_decisions() {
     fail "a denial is not a JSON-RPC error: $(cat "${TEMP_DIR}/policy-body")"
 }
 verify_policy_decisions
+
+# Verifies SPEC-0013-R10: the production profile turns audit on; the allowed
+# and the denied call each have an event with the caller, tool, and
+# decision, no argument value appears, and every chain verifies.
+log "verifying audit events and their chains"
+STATUS="$(mcp_status)"
+[ "${STATUS}" = "401" ] || fail "a call without a token answered HTTP ${STATUS}, want 401"
+sleep 2
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 --prefix=false \
+  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
+grep '"type":"kavrynt.audit.v1"' "${TEMP_DIR}/gateway-audit.log" | jq --slurp --exit-status '
+  any(.[]; .client_id == "e2e-agent" and .tool == "echo" and .decision == "allow" and .outcome == "ok" and .status == 200) and
+  any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 403) and
+  any(.[]; .decision == "unauthenticated" and .subject == "")' >/dev/null ||
+  fail "the audit events do not record the allowed, denied, and unauthenticated calls"
+if grep --fixed-strings --quiet "audit-secret-argument" "${TEMP_DIR}/gateway-audit.log"; then
+  fail "a tool argument appears in the Gateway output"
+fi
+"${TEMP_DIR}/kavryctl" audit verify "${TEMP_DIR}/gateway-audit.log" ||
+  fail "kavryctl audit verify found a break in the Gateway audit chains"
 
 log "verifying a broken policy update keeps the last good policy"
 write_policy <<'REGO'

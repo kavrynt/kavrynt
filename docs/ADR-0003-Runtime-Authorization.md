@@ -7,7 +7,9 @@ stripping) for `0.0.2-beta.1`; the Gateway as an OAuth 2.1 resource server
 (SPEC-0006, opt-in), static upstream credentials from a kubelet-mounted
 Secret (SPEC-0011), the policy decision point with OPA and policy from a
 ConfigMap (SPEC-0012; signed bundles from Kavrynt Cloud and approvals are
-not built), and the Gateway-bypass NetworkPolicy (SPEC-0007).
+not built), audit events on standard output with a per-instance hash chain
+(SPEC-0013; delivery to Kavrynt Cloud is not built), and the Gateway-bypass
+NetworkPolicy (SPEC-0007).
 Everything else in this ADR is design only.
 
 Plane 4 of `kavrynt-cloud/docs/ADR-0006-Identity-Planes.md`. Threats are

@@ -213,6 +213,21 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 The `.origin` key pins the credential to the server's endpoint. Details:
 [Gateway: Upstream credentials](../../docs/components/gateway/README.md#upstream-credentials).
 
+## Audit events
+
+`gateway.audit.enabled=true` (on in the production profile) makes the Gateway
+write one JSON line per MCP request to standard output: who called which tool
+on which server, the decision, and the outcome, never arguments or tokens.
+Collect them with your log pipeline (filter on `"type":"kavrynt.audit.v1"`)
+and check their hash chains:
+
+```bash
+kubectl -n kavrynt-system logs -l app.kubernetes.io/name=gateway --tail=-1 --prefix=false > gateway.log
+kavryctl audit verify gateway.log
+```
+
+Details: [Gateway: Audit events](../../docs/components/gateway/README.md#audit-events).
+
 ## Tool authorization policy
 
 The Gateway can decide every MCP call with a Rego policy (who may call which
@@ -372,6 +387,9 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.auth.resourceURL` | string | `""` | The Gateway's external https origin; required when enabled |
 | `gateway.auth.issuers` | list | `[]` | Trusted authorization servers: `issuer` (equals the tokens' `iss`), optional `jwksURI`, `allowHTTP`; at least one when enabled |
 | `gateway.auth.requiredScopes` | list | `[]` | Scopes every token must carry |
+| `gateway.audit.enabled` | bool | `false` | Write one audit event per MCP request to the Gateway's standard output |
+| `gateway.audit.queueSize` | int | `10000` | Audit events that may wait to be written |
+| `gateway.audit.onOverflow` | string | `reject` | With a full queue: `reject` new MCP requests or `drop` their events |
 | `gateway.policy.enabled` | bool | `false` | Decide every MCP request with the tool authorization policy |
 | `gateway.policy.configMap` | string | `""` | ConfigMap with the `.rego` files; required when enabled |
 | `gateway.console.enabled` | bool | `true` | Serve the read-only web console at `/ui/` |

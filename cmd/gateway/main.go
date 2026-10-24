@@ -2,6 +2,8 @@ package main
 
 import (
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"flag"
@@ -16,6 +18,7 @@ import (
 
 	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
+	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/auth"
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
@@ -44,6 +47,9 @@ func main() {
 	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
 	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
 	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
+	auditEnabled := flag.Bool("audit", false, "Write one audit event per MCP request as a JSON line on standard output")
+	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
+	auditOverflow := flag.String("audit-on-overflow", audit.Reject, "With a full audit queue: reject (refuse new MCP requests with 503) or drop (serve them, count the lost events)")
 	policyDir := flag.String("policy-dir", getenv("KAVRYNT_POLICY_DIR", ""), "Directory of the mounted tool authorization policy (.rego files defining data.kavrynt.authz.decision); every MCP request is then allowed or denied by it")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
@@ -102,6 +108,16 @@ func main() {
 	handler.SetRequestTimeout(*requestTimeout)
 	handler.AllowOrigins(splitList(*allowedOrigins)...)
 	handler.SetInstance(*instance)
+	var auditWriter *audit.Writer
+	if *auditEnabled {
+		// A random suffix keeps chains apart when a pod's container restarts.
+		auditWriter, err = audit.New(os.Stdout, *instance+"/"+randomSuffix(), *auditOverflow, *auditQueue)
+		if err != nil {
+			slog.Error("configure audit", "error", err)
+			os.Exit(1)
+		}
+		handler.EnableAudit(auditWriter)
+	}
 	handler.EnableUpstreamCredentials(upstreamcred.Store{Dir: *upstreamCredentialsDir})
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
@@ -161,6 +177,15 @@ func main() {
 	if err := shutdown(handler, server, delay, *shutdownTimeout, time.Sleep); err != nil {
 		slog.Error("gateway shutdown failed", "error", err)
 		exitCode = 1
+	}
+	if auditWriter != nil {
+		// Queued events are written before the Gateway exits (SPEC-0013-R09).
+		flushCtx, cancelFlush := context.WithTimeout(context.Background(), 5*time.Second)
+		if err := auditWriter.Close(flushCtx); err != nil {
+			slog.Error("audit events lost at shutdown", "error", err)
+			exitCode = 1
+		}
+		cancelFlush()
 	}
 	slog.Info("gateway stopped")
 	os.Exit(exitCode)
@@ -228,6 +253,12 @@ func splitList(value string) []string {
 		}
 	}
 	return items
+}
+
+func randomSuffix() string {
+	b := make([]byte, 4)
+	_, _ = rand.Read(b)
+	return hex.EncodeToString(b)
 }
 
 func hostname() string {

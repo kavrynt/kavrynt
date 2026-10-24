@@ -21,6 +21,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   a standby Operator), tested with a rolling restart under load.
 - Static upstream credentials for MCP servers that need an API key, from a
   Secret the platform team manages, pinned to each server's endpoint.
+- Opt-in audit events: one hash-chained JSON line per MCP request, verified
+  with `kavryctl audit verify`.
 - Opt-in tool authorization policy: Rego evaluated in the Gateway, deny by
   default, from a ConfigMap.
 - Opt-in MCP client authentication: the Gateway is an OAuth 2.1 resource
@@ -30,9 +32,9 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 
 1. Token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
-2. Audit and usage events.
-3. MCP client authentication on by default (`1.0.0-beta.1`), with the
+2. MCP client authentication on by default (`1.0.0-beta.1`), with the
    console behind it.
+3. Audit delivery to Kavrynt Cloud and usage events.
 4. MCP Streamable HTTP and protocol-aware routing.
 5. Upgrade and rollback commands in `kavryctl`.
 6. Recovery workflows (restoring into a new cluster).

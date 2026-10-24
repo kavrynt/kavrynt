@@ -27,9 +27,10 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 
 > [!IMPORTANT]
 > Kavrynt is currently an early MVP. The core registration and HTTP routing
-> loop works, MCP client authentication and tool authorization policy are
-> available but off by default, and audit is not implemented yet. Run this version only
-> in trusted development or evaluation clusters.
+> loop works; MCP client authentication, tool authorization policy, and audit
+> events are available but off by default (the production profile turns audit
+> on). Approvals and token exchange are not implemented yet. Run this version
+> only in trusted development or evaluation clusters.
 
 ## TL;DR
 
@@ -426,8 +427,10 @@ the current release is not production-security complete:
   who can reach the Gateway can still call every routed tool.
 - Gateway and Operator are single-replica by default; the tested
   high-availability profile is `examples/helm/values-production.yaml`.
-- Audit, policy, approval, and usage services are not part of the current
-  runtime beta.
+- The Gateway can write one audit event per MCP request (`gateway.audit`):
+  caller, tool, decision, and outcome, hash-chained per instance and checked
+  with `kavryctl audit verify`. Approvals and usage services are not part of
+  the current runtime beta.
 
 Keep Gateway as an internal `ClusterIP` service, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
@@ -457,8 +460,8 @@ are:
 
 1. token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
-2. audit and usage events;
-3. MCP client authentication on by default (`1.0.0-beta.1`);
+2. MCP client authentication on by default (`1.0.0-beta.1`);
+3. audit delivery to Kavrynt Cloud and usage events;
 4. MCP Streamable HTTP and protocol-aware routing;
 5. upgrade and rollback commands in kavryctl;
 6. recovery workflows (restoring into a new cluster).

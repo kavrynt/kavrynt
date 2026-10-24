@@ -37,8 +37,9 @@ and `operator` repositories are archived and must not receive new changes.
 - [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
   design. Implemented: no token passthrough, MCP client authentication
   (SPEC-0006, opt-in), static upstream credentials (SPEC-0011), and tool
-  authorization policy (SPEC-0012, opt-in). Not yet: token exchange, audit,
-  approvals.
+  authorization policy (SPEC-0012, opt-in), and audit events (SPEC-0013,
+  opt-in, stdout only). Not yet: token exchange, approvals, audit delivery to
+  Kavrynt Cloud.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -102,7 +103,12 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 - Opt-in tool authorization policy (`gateway.policy`, SPEC-0012): OPA embedded
   in the Gateway evaluates `data.kavrynt.authz.decision` from a mounted
   ConfigMap before forwarding; anything but `{"allow": true}` denies.
-- Not implemented: token exchange, audit, approvals.
+- Opt-in audit events (`gateway.audit`, SPEC-0013): one JSON line per `/mcp/`
+  request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
+  chained per instance, verified by `kavryctl audit verify`; never arguments,
+  results, or tokens. `X-Request-Id` on every `/mcp/` response.
+- Not implemented: token exchange, approvals, audit delivery to Kavrynt
+  Cloud.
   Never claim them in code comments, docs, or release notes until they are
   implemented and tested.
 
@@ -270,7 +276,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     a valid token works and never reaches the MCP server, and wrong
     audiences, missing scopes, and query tokens are refused. A policy from a
     ConfigMap allows one client's tool call and denies another's, and a
-    broken policy update leaves those decisions in force.
+    broken policy update leaves those decisions in force. Audit events record
+    the allowed, denied, and unauthenticated calls without arguments, and
+    `kavryctl audit verify` accepts every Gateway's chain.
 12. `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
     the previous published release fails cleanly until the CRD is adopted,
     then keeps servers `Ready` and routed; `helm rollback` keeps them too.

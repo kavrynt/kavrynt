@@ -18,6 +18,8 @@ import (
 	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
+	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
@@ -87,6 +89,8 @@ type Handler struct {
 
 	// policy decides every MCP request when set (SPEC-0012).
 	policy *policy.Engine
+	// audit records every MCP request when set (SPEC-0013).
+	audit *audit.Writer
 }
 
 type errorResponse struct {
@@ -189,6 +193,12 @@ func (h *Handler) EnablePolicy(engine *policy.Engine) {
 	h.registry.MustRegister(engine.Collectors()...)
 }
 
+// EnableAudit writes one audit event per MCP request (SPEC-0013).
+func (h *Handler) EnableAudit(w *audit.Writer) {
+	h.audit = w
+	h.registry.MustRegister(w.Collectors()...)
+}
+
 // EnableConsole serves console under /ui/ and redirects / to it. The console
 // receives paths without the /ui prefix.
 func (h *Handler) EnableConsole(console http.Handler) {
@@ -237,7 +247,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case h.clientAuth != nil && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, metadataPrefix):
 		h.protectedResource(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):
-		h.proxy(w, r)
+		h.serveMCP(w, r)
 	case h.console != nil && r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/ui"):
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 	case h.console != nil && strings.HasPrefix(r.URL.Path, "/ui/"):
@@ -417,14 +427,20 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		// without a valid token cannot tell registered routes from others.
 		identity, refusal := h.authenticate(r, name)
 		if refusal != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = refusalDecision(refusal.Outcome, refusal.Status), refusal.Message
+			}
 			writeRefusal(w, refusal)
 			if exists {
 				call, _, _ := inspectRequest(r)
-				h.observe(route.Name, call, refusalOutcome(refusal.Outcome), refusal.Status, time.Since(start), 0, 0)
+				h.finish(r, route.Name, call, refusalOutcome(refusal.Outcome), refusal.Status, time.Since(start), 0, 0)
 			}
 			return
 		}
 		r = r.WithContext(clientauth.WithIdentity(r.Context(), identity))
+		if rec := auditRecordFrom(r); rec != nil {
+			rec.identity = identity
+		}
 	}
 	if !exists {
 		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
@@ -434,13 +450,13 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	call, body, err := inspectRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("read request body"))
-		h.observe(route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
+		h.finish(r, route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
 		return
 	}
 	upstreamBody := &countingReader{r: body}
 	gatewayError := func(status int, err error) {
 		writeError(w, status, err)
-		h.observe(route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
+		h.finish(r, route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
 	}
 
 	if r.Header.Get(routeHeader) != "" {
@@ -489,8 +505,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		// sent; without it the request is not forwarded (SPEC-0011-R05, R06).
 		value, err := h.credentials.Lookup(route.Name, route.Endpoint)
 		if err != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionUnavailable, "upstream credential unavailable"
+			}
 			writeError(w, http.StatusServiceUnavailable, errors.New("upstream credential unavailable"))
-			h.observe(route.Name, call, outcomeCredentialUnavailable, http.StatusServiceUnavailable, time.Since(start), upstreamBody.n, 0)
+			h.finish(r, route.Name, call, outcomeCredentialUnavailable, http.StatusServiceUnavailable, time.Since(start), upstreamBody.n, 0)
 			return
 		}
 		req.Header.Set(route.Credential.HeaderName(), route.Credential.HeaderValue(value))
@@ -500,6 +519,9 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
 	// #nosec G704 -- buildTargetURL restricts MCPServer-provided targets to validated HTTP(S) URLs.
+	if rec := auditRecordFrom(r); rec != nil {
+		rec.decision = auditv1.DecisionAllow
+	}
 	resp, err := h.client.Do(req)
 	if err != nil {
 		// The error names the upstream URL; callers get a fixed message.
@@ -508,7 +530,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			outcome, status, message = outcomeTimeout, http.StatusGatewayTimeout, errRequestTimeout.Error()
 		}
 		writeError(w, status, errors.New(message))
-		h.observe(route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
+		h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
 		return
 	}
 	defer resp.Body.Close()
@@ -546,7 +568,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			outcome = outcomeTimeout
 		}
 	}
-	h.observe(route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
+	h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
 	if copyErr == nil {
 		h.proxied.Add(1)
 	}
@@ -555,9 +577,16 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 // authorize asks the policy whether the request may reach the MCP server,
 // and answers it when not (SPEC-0012). It reports whether to forward.
 func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName string, call mcpCall, start time.Time, body *countingReader) bool {
+	rec := auditRecordFrom(r)
+	if rec != nil {
+		rec.policyRevision = h.policy.Revision()
+	}
 	refuse := func(err error) bool {
+		if rec != nil {
+			rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
+		}
 		writeError(w, http.StatusBadRequest, err)
-		h.observe(routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
+		h.finish(r, routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
 		return false
 	}
 	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339)}
@@ -594,6 +623,9 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 	if decision.Reason != "" {
 		message += ": " + decision.Reason
 	}
+	if rec != nil {
+		rec.decision, rec.reason = auditv1.DecisionDeny, decision.Reason
+	}
 	id := call.body.id
 	if len(id) == 0 {
 		id = json.RawMessage("null")
@@ -604,7 +636,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 		"id":      id,
 		"error":   map[string]any{"code": policyDeniedCode, "message": message},
 	})
-	h.observe(routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
+	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
 	return false
 }
 

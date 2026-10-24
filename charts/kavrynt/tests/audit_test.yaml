@@ -1,0 +1,37 @@
+suite: audit events
+templates:
+  - charts/gateway/templates/deployment.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0013-R01.
+  - it: writes no audit events by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --audit
+
+  # Verifies SPEC-0013-R01 and SPEC-0013-R08.
+  - it: passes the audit settings to the Gateway
+    set:
+      gateway.audit.enabled: true
+      gateway.audit.queueSize: 500
+      gateway.audit.onOverflow: drop
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-queue-size=500
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-on-overflow=drop
+
+  # Verifies SPEC-0013-R08.
+  - it: rejects an unknown overflow mode
+    set:
+      gateway.audit.onOverflow: block
+    asserts:
+      - failedTemplate: {}
