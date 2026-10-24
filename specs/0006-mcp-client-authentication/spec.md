@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Accepted |
 | Owners | @Ravi041 |
 | Created | 2026-10-23 |
 | Issue | [#38](https://github.com/kavrynt/kavrynt/issues/38) |
@@ -108,8 +108,8 @@ verified caller identity. See issue #38.
   (RFC 8414, then OpenID Connect discovery). It MUST cache keys, refresh
   them periodically, and fetch again (at most once a minute per issuer)
   when a token names an unknown `kid`.
-- **SPEC-0006-R11** Metadata and JWKS fetches MUST use HTTPS, MUST be
-  bounded in time and size, and MUST follow the Gateway's egress policy
+- **SPEC-0006-R11** Metadata and JWKS fetches MUST use HTTPS (except as
+  R20 allows), MUST be bounded in time and size, and MUST follow the Gateway's egress policy
   (`internal/egress`): no cloud metadata, link-local, or loopback addresses.
 - **SPEC-0006-R12** When an issuer's keys cannot be loaded, requests with
   that issuer's tokens MUST fail closed with `503`; other issuers MUST keep
@@ -135,6 +135,22 @@ verified caller identity. See issue #38.
 - **SPEC-0006-R17** When it is enabled, the console notice
   (SPEC-0005-R16) MUST say that MCP routes require tokens instead of saying
   they are unauthenticated.
+
+### Route listing
+
+- **SPEC-0006-R18** `GET /v1/routes` MUST NOT include the userinfo, query
+  string, or fragment of any endpoint, whether or not authentication is
+  enabled.
+- **SPEC-0006-R19** When authentication is enabled, `GET /v1/routes` MUST
+  list route names, versions, and transports only, without endpoints: an
+  unauthenticated caller must not learn internal service addresses.
+
+### Issuer transport
+
+- **SPEC-0006-R20** An issuer whose metadata or JWKS URL is `http` MUST be
+  refused at start-up and by the chart, unless that issuer sets
+  `allowHTTP: true`; the Gateway MUST log a warning naming the issuer (not
+  any key or token) when it is set.
 
 ## Acceptance criteria
 
@@ -176,7 +192,7 @@ admin session never authorizes `/mcp/` calls.
 
 Opt-in: no behavior changes until `gateway.auth.enabled=true`. New Helm
 values under `gateway.auth` (`enabled`, `resourceURL`, `issuers` with
-`issuer` and optional `jwksURI`, `requiredScopes`) with schema validation,
+`issuer`, optional `jwksURI` and `allowHTTP`, `requiredScopes`) with schema validation,
 and matching Gateway flags. New outcomes appear in metrics and the console.
 New Go dependency for JWS and JWKS handling (proposed:
 `github.com/go-jose/go-jose/v4`), which must pass govulncheck and Trivy. No
@@ -192,14 +208,16 @@ endpoints, flags, outcomes), chart README values and security notes,
 README security posture, SECURITY.md, and a guide for configuring a common
 authorization server. CLAUDE.md "What works today" changes once this ships.
 
-## Open questions
+## Decisions
 
-- In-cluster authorization servers are often plain HTTP
-  (`http://keycloak.auth.svc`). Should an explicit per-issuer setting allow
-  HTTP, or do we require HTTPS without exception (R11)?
-- Is `503` right for unavailable keys (R12), or should the Gateway answer
-  `401` so clients retry through the authorization server?
-- Should required scopes be configurable per `MCPServer` now (a CRD field),
-  or wait for the policy spec?
-- Should the traffic record carry the token's `client_id` (not the user) so
-  the console can show which agent called, before the audit spec?
+- HTTP issuers: HTTPS is required; an issuer may opt in to `http` with
+  `allowHTTP: true` for in-cluster authorization servers (R20).
+- Unavailable keys answer `503` with `Retry-After` (R12): the token may be
+  valid, so `401` would send clients to the authorization server for
+  nothing.
+- Required scopes stay installation-wide. Per-server and per-tool rules
+  belong to the policy spec (SPEC-0012); no CRD change here.
+- The traffic record carries no caller identity. Identity is recorded by
+  audit events (SPEC-0013).
+- `/v1/routes` no longer exposes endpoints once authentication is on, and
+  never exposes credentials in an endpoint (R18, R19).
