@@ -93,6 +93,10 @@ type Handler struct {
 
 	// policy decides every MCP request when set (SPEC-0012).
 	policy *policy.Engine
+	// filterToolsList removes the tools the policy denies from tools/list
+	// answers (SPEC-0016).
+	filterToolsList bool
+	filteredTools   *prometheus.CounterVec
 	// audit records every MCP request when set (SPEC-0013).
 	audit *audit.Writer
 }
@@ -202,7 +206,18 @@ func (h *Handler) EnableUpstreamCredentials(store upstreamcred.Store) {
 // and exports its metrics (SPEC-0012).
 func (h *Handler) EnablePolicy(engine *policy.Engine) {
 	h.policy = engine
+	h.filteredTools = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "kavrynt_gateway_policy_filtered_tools_total",
+		Help: "Tools removed from tools/list answers because the policy denies calling them.",
+	}, []string{"route"})
 	h.registry.MustRegister(engine.Collectors()...)
+	h.registry.MustRegister(h.filteredTools)
+}
+
+// EnableToolsListFilter makes tools/list answers list only the tools the
+// policy lets the caller call (SPEC-0016). It needs EnablePolicy.
+func (h *Handler) EnableToolsListFilter() {
+	h.filterToolsList = true
 }
 
 // EnableAudit writes one audit event per MCP request (SPEC-0013).
@@ -493,6 +508,10 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	if h.policy != nil && !h.authorize(w, r, route.Name, call, start, upstreamBody) {
 		return
 	}
+	var filter *toolsFilter
+	if h.policy != nil && h.filterToolsList && r.Method == http.MethodPost && call.body.classified && call.body.method == "tools/list" {
+		filter = &toolsFilter{decide: h.policy.Decide, input: policyInput(r, route.Name), id: call.body.id}
+	}
 
 	target, err := buildTargetURL(route.Endpoint, suffix, r.URL.RawQuery)
 	if err != nil {
@@ -522,6 +541,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if copyHeaders(req.Header, r.Header, h.stripRequest) {
 		h.strippedRequests.Add(1)
+	}
+	if filter != nil {
+		// The transport then asks for gzip and decodes it, so the filter
+		// reads the answer uncompressed.
+		req.Header.Del("Accept-Encoding")
 	}
 	if route.Credential != nil {
 		// The stored credential replaces any header of that name the client
@@ -569,6 +593,21 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	// upstream cannot run code as the Gateway origin.
 	w.Header().Set("Content-Security-Policy", "sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if filter != nil {
+		written, removed, copyErr := h.serveFilteredToolsList(w, r, route.Name, filter, resp)
+		if rec := auditRecordFrom(r); rec != nil {
+			rec.filteredTools = removed
+		}
+		outcome := classifyResponse(resp.StatusCode, nil)
+		if copyErr != nil {
+			outcome = outcomeIncomplete
+		}
+		h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
+		if copyErr == nil {
+			h.proxied.Add(1)
+		}
+		return
+	}
 	w.WriteHeader(resp.StatusCode)
 
 	// JSON responses are also captured (bounded) to detect JSON-RPC and tool
@@ -612,11 +651,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 		h.finish(r, routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
 		return false
 	}
-	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339)}
-	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
-	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
-		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
-	}
+	input := policyInput(r, routeName)
 	if r.Method == http.MethodPost {
 		// The policy decides on the body's JSON-RPC message, so a body it
 		// cannot read is refused (SPEC-0012-R09), and headers that name
@@ -661,6 +696,17 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 	})
 	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
 	return false
+}
+
+// policyInput is the policy input of a request without its MCP method and
+// tool: the verified caller, the route, the HTTP method, and the time.
+func policyInput(r *http.Request, routeName string) policy.Input {
+	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339)}
+	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
+	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
+		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
+	}
+	return input
 }
 
 // policyDeniedCode is the JSON-RPC error code of a policy denial, in the

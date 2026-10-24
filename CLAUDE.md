@@ -105,7 +105,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   Secret RBAC.
 - Opt-in tool authorization policy (`gateway.policy`, SPEC-0012): OPA embedded
   in the Gateway evaluates `data.kavrynt.authz.decision` from a mounted
-  ConfigMap before forwarding; anything but `{"allow": true}` denies.
+  ConfigMap before forwarding; anything but `{"allow": true}` denies. With
+  `gateway.policy.filterToolsList` (SPEC-0016), `tools/list` answers list
+  only the tools the policy lets that caller call, failing closed to an
+  empty list.
 - Opt-in audit events (`gateway.audit`, SPEC-0013): one JSON line per `/mcp/`
   request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
   chained per instance, verified by `kavryctl audit verify`; never arguments,
@@ -278,8 +281,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     image), calls without a token get `401` pointing at the route's metadata,
     a valid token works and never reaches the MCP server, and wrong
     audiences, missing scopes, and query tokens are refused. A policy from a
-    ConfigMap allows one client's tool call and denies another's, and a
-    broken policy update leaves those decisions in force. Audit events record
+    ConfigMap allows one client's tool call and denies another's, each
+    client's `tools/list` shows only the tools it may call, and a broken
+    policy update leaves those decisions in force. Audit events record
     the allowed, denied, and unauthenticated calls without arguments, and
     `kavryctl audit verify` accepts every Gateway's chain.
 12. An install with default values is refused until it names an

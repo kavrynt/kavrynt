@@ -3,6 +3,9 @@
 {{- if and $policy.enabled (not $policy.configMap) }}
 {{- fail "policy.configMap is required when policy.enabled is true: the ConfigMap with the .rego files" }}
 {{- end }}
+{{- if and $policy.filterToolsList (not $policy.enabled) }}
+{{- fail "policy.filterToolsList needs policy.enabled: the tools are filtered by the policy" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -86,6 +89,9 @@ spec:
             {{- end }}
             {{- if $policy.enabled }}
             - --policy-dir=/etc/kavrynt/policy
+            {{- if $policy.filterToolsList }}
+            - --policy-filter-tools-list
+            {{- end }}
             {{- end }}
             {{- with .Values.audit }}
             {{- if .enabled }}

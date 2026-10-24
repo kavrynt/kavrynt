@@ -271,7 +271,9 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 ```
 
 Anything the policy does not allow is denied. Use it with MCP client
-authentication so decisions can name the caller. Details:
+authentication so decisions can name the caller. Add
+`--set gateway.policy.filterToolsList=true` so each caller's `tools/list`
+shows only the tools it may call. Details:
 [Gateway: Tool authorization policy](../../docs/components/gateway/README.md#tool-authorization-policy).
 
 ## Authenticating MCP clients
