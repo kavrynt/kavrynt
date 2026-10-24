@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Accepted |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -72,6 +72,14 @@ New value `gateway.policy.filterToolsList`, new metric and audit field
 
 Gateway component doc (policy), chart README.
 
-## Open questions
+## Decisions
 
-- Should filtered tools be cached per caller and policy revision?
+- No cache: each `tools/list` answer is filtered with fresh evaluations, so
+  a policy update applies to the next list at once. Evaluating a prepared
+  Rego query per tool takes microseconds; R04 bounds the worst case.
+- The audit event gains an optional `filtered_tools` count, set only on
+  filtered answers; the event type stays `kavrynt.audit.v1`. `kavryctl
+  audit verify` from earlier releases reports such events as breaks, so
+  verify with the `kavryctl` of the same release.
+- The Gateway asks the MCP server for an uncompressed answer when it
+  filters, so a compressed body never forces the fail-closed path.
