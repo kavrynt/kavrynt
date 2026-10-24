@@ -73,6 +73,16 @@ auth:
   # Scopes every token must carry, for example [mcp:tools].
   requiredScopes: []
 
+# Tool authorization policy (SPEC-0012): every MCP request is allowed or
+# denied by Rego policy evaluated in the Gateway (Open Policy Agent). The
+# ConfigMap holds .rego files defining data.kavrynt.authz.decision; anything
+# but {"allow": true} denies. A policy that does not compile stops the
+# Gateway at start; a bad update keeps the last good policy. Restrict who can
+# edit the ConfigMap: it controls authorization. Examples: examples/policy.
+policy:
+  enabled: false
+  configMap: ""
+
 # Read-only web console at /ui/: MCP servers and their tools, a playground that
 # calls tools through the Gateway, and recent traffic. It needs no extra RBAC.
 console:

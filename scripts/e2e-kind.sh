@@ -850,7 +850,7 @@ wait_for_url "${ISSUER_LOCAL}/healthz"
 mint() {
   curl --fail --silent --show-error --get "${ISSUER_LOCAL}/mint" \
     --data-urlencode "aud=$1" --data-urlencode "scope=$2" \
-    --data-urlencode "sub=e2e-user" --data-urlencode "client_id=e2e-agent"
+    --data-urlencode "sub=e2e-user" --data-urlencode "client_id=${3:-e2e-agent}"
 }
 mcp_status() {
   curl --silent --output "${TEMP_DIR}/mcp-body" --dump-header "${TEMP_DIR}/mcp-headers" --write-out '%{http_code}' \
@@ -908,12 +908,82 @@ if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 
   fail "the Gateway logged an access token"
 fi
 
-log "turning MCP client authentication off again"
+# Verifies SPEC-0012-R12: a per-client tool allow-list from a ConfigMap
+# decides calls of authenticated clients, and a broken update leaves the
+# decisions in force.
+log "enabling the tool authorization policy"
+write_policy() {
+  kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" create configmap kavrynt-policy \
+    --from-file=authz.rego=/dev/stdin --dry-run=client -o yaml |
+    kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" apply -f - >/dev/null
+}
+write_policy <<'REGO'
+package kavrynt.authz
+
+default decision := {"allow": false, "reason": "tool not allowed for client"}
+
+decision := {"allow": true} if {
+	input.issuer != ""
+	input.mcp_method != "tools/call"
+}
+
+decision := {"allow": true} if {
+	input.client_id == "e2e-agent"
+	input.tool == "echo"
+}
+REGO
+helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
+  --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" \
+  --reuse-values \
+  --set gateway.policy.enabled=true \
+  --set gateway.policy.configMap=kavrynt-policy \
+  --wait --timeout 180s >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
+stop_gateway_port_forwards
+start_gateway_port_forward
+start_port_forward "${E2E_NAMESPACE}" e2e-issuer 8080 ISSUER_LOCAL
+wait_for_url "${GATEWAY_URL}/readyz"
+echo_call() {
+  curl --silent --output "${TEMP_DIR}/policy-body" --write-out '%{http_code}' --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" \
+    --header 'Content-Type: application/json' --header "Authorization: Bearer $1" \
+    --data '{"jsonrpc":"2.0","id":9,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hi"}}}'
+}
+ALLOWED_TOKEN="$(mint "${ROUTE_RESOURCE}" "mcp:tools" e2e-agent)"
+DENIED_TOKEN="$(mint "${ROUTE_RESOURCE}" "mcp:tools" other-agent)"
+verify_policy_decisions() {
+  local status
+  status="$(echo_call "${ALLOWED_TOKEN}")"
+  [ "${status}" = "200" ] || fail "the policy refused an allowed client: HTTP ${status} $(cat "${TEMP_DIR}/policy-body")"
+  status="$(echo_call "${DENIED_TOKEN}")"
+  [ "${status}" = "403" ] || fail "the policy let another client call echo: HTTP ${status}"
+  jq --exit-status '.id == 9 and (.error.message | startswith("denied by policy"))' "${TEMP_DIR}/policy-body" >/dev/null ||
+    fail "a denial is not a JSON-RPC error: $(cat "${TEMP_DIR}/policy-body")"
+}
+verify_policy_decisions
+
+log "verifying a broken policy update keeps the last good policy"
+write_policy <<'REGO'
+package kavrynt.authz
+
+decision := {
+REGO
+for ((i = 1; i <= 180; i++)); do
+  if curl --fail --silent "${GATEWAY_URL}/metrics" | grep --quiet '^kavrynt_gateway_policy_load_failures_total [1-9]'; then
+    break
+  fi
+  [ "${i}" -lt 180 ] || fail "the Gateway never reported the broken policy update"
+  sleep 1
+done
+verify_policy_decisions
+
+log "turning MCP client authentication and policy off again"
 helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
   --reuse-values \
   --set gateway.auth.enabled=false \
+  --set gateway.policy.enabled=false \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
 stop_gateway_port_forwards

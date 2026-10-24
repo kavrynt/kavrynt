@@ -57,7 +57,10 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     route's Protected Resource Metadata, that a valid token is accepted and
     not forwarded, that tokens for another route, without the required scope,
     or in the query string are refused, that refusals are recorded, and that
-    no token appears in metrics or logs; then turns it off again.
+    no token appears in metrics or logs. Tool authorization policy: a
+    per-client allow-list from a ConfigMap allows one client's `echo` call
+    and denies another's with a JSON-RPC error; a broken update is counted
+    and changes no decision. Then turns both off again.
     Then deletes the `MCPServer` and confirms the route disappears.
 11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
     resources; the previous release (`UPGRADE_FROM_VERSION`, chart from

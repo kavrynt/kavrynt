@@ -36,8 +36,9 @@ and `operator` repositories are archived and must not receive new changes.
   replaces the in-cluster Registry (removed in `0.0.2-beta.1`).
 - [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
   design. Implemented: no token passthrough, MCP client authentication
-  (SPEC-0006, opt-in), and static upstream credentials (SPEC-0011). Not yet:
-  token exchange, policy, audit.
+  (SPEC-0006, opt-in), static upstream credentials (SPEC-0011), and tool
+  authorization policy (SPEC-0012, opt-in). Not yet: token exchange, audit,
+  approvals.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -98,7 +99,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   (`global.upstreamCredentials.secretName`, keys `<ns>.<name>` and
   `<ns>.<name>.origin`), only to the pinned endpoint origin; neither has
   Secret RBAC.
-- Not implemented: token exchange, policy and tool authorization, audit.
+- Opt-in tool authorization policy (`gateway.policy`, SPEC-0012): OPA embedded
+  in the Gateway evaluates `data.kavrynt.authz.decision` from a mounted
+  ConfigMap before forwarding; anything but `{"allow": true}` denies.
+- Not implemented: token exchange, audit, approvals.
   Never claim them in code comments, docs, or release notes until they are
   implemented and tested.
 
@@ -264,7 +268,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     With MCP client authentication on (test authorization server in the e2e
     image), calls without a token get `401` pointing at the route's metadata,
     a valid token works and never reaches the MCP server, and wrong
-    audiences, missing scopes, and query tokens are refused.
+    audiences, missing scopes, and query tokens are refused. A policy from a
+    ConfigMap allows one client's tool call and denies another's, and a
+    broken policy update leaves those decisions in force.
 12. `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
     the previous published release fails cleanly until the CRD is adopted,
     then keeps servers `Ready` and routed; `helm rollback` keeps them too.
