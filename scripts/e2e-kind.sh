@@ -1120,7 +1120,7 @@ wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 # - UPGRADE_FROM_VERSION, the previous release: kavryctl upgrade to the build
 #   under test and kavryctl rollback to it.
 LEGACY_FROM_VERSION="${LEGACY_FROM_VERSION:-0.0.5-beta.1}"
-UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.1}"
+UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.2}"
 UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
 LOCAL_IMAGE_ARGS=(
   --kube-context "${KUBE_CONTEXT}"
