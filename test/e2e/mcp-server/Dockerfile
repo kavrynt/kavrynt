@@ -7,7 +7,7 @@ ARG TARGETARCH
 
 WORKDIR /src
 COPY go.mod ./
-COPY main.go ./
+COPY *.go ./
 RUN CGO_ENABLED=0 GOOS=${TARGETOS} GOARCH=${TARGETARCH} \
     go build -trimpath -ldflags="-s -w" -o /out/mcp-server .
 

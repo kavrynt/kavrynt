@@ -130,3 +130,21 @@ against the assistant's summary of them.
 | [0003](0003-helm-chart-validation/spec.md) | Helm chart values validation and unit tests | Implemented |
 | [0004](0004-reported-server-version/spec.md) | Reported MCP server version | Implemented |
 | [0005](0005-console-admin-login/spec.md) | Console admin login | Implemented |
+| [0006](0006-mcp-client-authentication/spec.md) | MCP client authentication | Implemented |
+| [0007](0007-gateway-bypass-protection/spec.md) | Gateway bypass protection | Implemented |
+| [0008](0008-high-availability/spec.md) | High availability | Implemented |
+| [0009](0009-crd-lifecycle-and-upgrades/spec.md) | CRD lifecycle and upgrades | Implemented |
+| [0010](0010-alerts-and-runbooks/spec.md) | Alerts and runbooks | Implemented |
+| [0011](0011-upstream-credentials/spec.md) | Upstream credentials | Implemented |
+| [0012](0012-tool-authorization-policy/spec.md) | Tool authorization policy | Implemented |
+| [0013](0013-audit-events/spec.md) | Audit events | Implemented |
+| [0014](0014-client-auth-by-default/spec.md) | MCP client authentication on by default | Implemented |
+| [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Implemented |
+| [0016](0016-policy-filtered-tools-list/spec.md) | Policy-filtered tools/list | Implemented |
+| [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Draft |
+| [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Implemented |
+| [0019](0019-kavryctl-upgrade-rollback/spec.md) | kavryctl upgrade and rollback | Implemented |
+| [0020](0020-console-alerts/spec.md) | Alerts in the console | Draft |
+| [0021](0021-tool-and-discovery-alerts/spec.md) | Tool error and discovery alerts | Draft |
+| [0022](0022-alert-notifications/spec.md) | Alert notifications | Draft |
+| [0023](0023-custom-dashboards/spec.md) | Custom dashboards | Draft |

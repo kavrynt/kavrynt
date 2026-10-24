@@ -1,3 +1,15 @@
+{{- $credentials := (((.Values.global | default dict).upstreamCredentials | default dict).secretName) }}
+{{- $policy := .Values.policy | default dict }}
+{{- $exchange := "" }}
+{{- if include "gateway.clientAuthEnabled" . }}
+{{- $exchange = .Values.auth.tokenExchangeSecret | default "" }}
+{{- end }}
+{{- if and $policy.enabled (not $policy.configMap) }}
+{{- fail "policy.configMap is required when policy.enabled is true: the ConfigMap with the .rego files" }}
+{{- end }}
+{{- if and $policy.filterToolsList (not $policy.enabled) }}
+{{- fail "policy.filterToolsList needs policy.enabled: the tools are filtered by the policy" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -5,11 +17,19 @@ metadata:
   labels:
     {{- include "gateway.labels" . | nindent 4 }}
 spec:
+  {{- if not .Values.autoscaling.enabled }}
   replicas: {{ .Values.replicaCount }}
+  {{- end }}
+  # Start a new pod before stopping an old one, so capacity never drops
+  # during an upgrade (SPEC-0008-R03).
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxUnavailable: 0
+      maxSurge: 1
   selector:
     matchLabels:
-      app.kubernetes.io/name: {{ include "gateway.name" . }}
-      app.kubernetes.io/instance: {{ .Release.Name }}
+      {{- include "gateway.selectorLabels" . | nindent 6 }}
   template:
     metadata:
       labels:
@@ -22,6 +42,7 @@ spec:
       {{- end }}
     spec:
       serviceAccountName: {{ include "gateway.serviceAccountName" . }}
+      terminationGracePeriodSeconds: {{ include "gateway.terminationGracePeriodSeconds" . }}
       # The Gateway watches MCPServer resources through the Kubernetes API.
       automountServiceAccountToken: true
       {{- with .Values.imagePullSecrets }}
@@ -47,9 +68,44 @@ spec:
             {{- end }}
             - --request-timeout
             - {{ .Values.config.requestTimeout | quote }}
+            - --shutdown-delay
+            - {{ .Values.config.shutdownDelay | default "5s" | quote }}
+            - --shutdown-timeout
+            - {{ .Values.config.shutdownTimeout | default "10s" | quote }}
+            - --strict-protocol={{ ne (toString .Values.config.strictProtocol) "false" }}
             {{- with .Values.config.allowedOrigins }}
             - --allowed-origins
             - {{ join "," . | quote }}
+            {{- end }}
+            {{- if include "gateway.clientAuthEnabled" . }}
+            - --auth
+            - --auth-resource-url
+            - {{ .Values.auth.resourceURL | trimSuffix "/" | quote }}
+            - --auth-issuers
+            - {{ toJson .Values.auth.issuers | quote }}
+            {{- with .Values.auth.requiredScopes }}
+            - --auth-required-scopes
+            - {{ join "," . | quote }}
+            {{- end }}
+            {{- if $exchange }}
+            - --token-exchange-secret-dir=/etc/kavrynt/token-exchange
+            {{- end }}
+            {{- end }}
+            {{- if $credentials }}
+            - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
+            {{- end }}
+            {{- if $policy.enabled }}
+            - --policy-dir=/etc/kavrynt/policy
+            {{- if $policy.filterToolsList }}
+            - --policy-filter-tools-list
+            {{- end }}
+            {{- end }}
+            {{- with .Values.audit }}
+            {{- if .enabled }}
+            - --audit
+            - --audit-queue-size={{ .queueSize | default 10000 }}
+            - --audit-on-overflow={{ .onOverflow | default "reject" }}
+            {{- end }}
             {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
@@ -59,6 +115,12 @@ spec:
             {{- else }}
             - --console-auth=false
             {{- end }}
+          env:
+            # Names this replica in /v1/traffic (SPEC-0008-R06).
+            - name: KAVRYNT_INSTANCE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.name
           ports:
             - name: http
               containerPort: {{ .Values.service.port }}
@@ -74,20 +136,65 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if include "gateway.consoleAuthEnabled" . }}
-          # The kubelet mounts the admin Secret; the Gateway's service account
-          # has no RBAC on Secrets.
+          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
+          # The kubelet mounts these Secrets; the Gateway's service account has
+          # no RBAC on Secrets.
           volumeMounts:
+            {{- if include "gateway.consoleAuthEnabled" . }}
             - name: console-auth
               mountPath: /etc/kavrynt/console-auth
               readOnly: true
+            {{- end }}
+            {{- if $credentials }}
+            - name: upstream-credentials
+              mountPath: /etc/kavrynt/upstream-credentials
+              readOnly: true
+            {{- end }}
+            {{- if $policy.enabled }}
+            - name: policy
+              mountPath: /etc/kavrynt/policy
+              readOnly: true
+            {{- end }}
+            {{- if $exchange }}
+            - name: token-exchange
+              mountPath: /etc/kavrynt/token-exchange
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if include "gateway.consoleAuthEnabled" . }}
+      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
       volumes:
+        {{- if include "gateway.consoleAuthEnabled" . }}
         - name: console-auth
           secret:
             secretName: {{ include "gateway.consoleAuthSecret" . }}
             defaultMode: 0444
+        {{- end }}
+        {{- if $credentials }}
+        # Upstream credentials of MCP servers that declare spec.credential
+        # (SPEC-0011).
+        - name: upstream-credentials
+          secret:
+            secretName: {{ $credentials | quote }}
+            defaultMode: 0444
+            # Pods start before the Secret exists; until then credentialed
+            # servers answer 503 and their discovery reports the key missing.
+            optional: true
+        {{- end }}
+        {{- if $policy.enabled }}
+        # Tool authorization policy (SPEC-0012). Not optional: without it the
+        # Gateway must not start.
+        - name: policy
+          configMap:
+            name: {{ $policy.configMap | quote }}
+        {{- end }}
+        {{- if $exchange }}
+        # The Gateway's client secrets for token exchange (SPEC-0015). Not
+        # optional: the issuers that name a key need it.
+        - name: token-exchange
+          secret:
+            secretName: {{ $exchange | quote }}
+            defaultMode: 0444
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
@@ -100,4 +207,19 @@ spec:
       {{- with .Values.tolerations }}
       tolerations:
         {{- toYaml . | nindent 8 }}
+      {{- end }}
+      {{- if .Values.topologySpreadConstraints }}
+      topologySpreadConstraints:
+        {{- toYaml .Values.topologySpreadConstraints | nindent 8 }}
+      {{- else if include "gateway.multiReplica" . }}
+      # Prefer different nodes and zones; never block scheduling (SPEC-0008-R04).
+      topologySpreadConstraints:
+        {{- range list "kubernetes.io/hostname" "topology.kubernetes.io/zone" }}
+        - maxSkew: 1
+          topologyKey: {{ . }}
+          whenUnsatisfiable: ScheduleAnyway
+          labelSelector:
+            matchLabels:
+              {{- include "gateway.selectorLabels" $ | nindent 14 }}
+        {{- end }}
       {{- end }}

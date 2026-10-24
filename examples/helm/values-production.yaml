@@ -1,0 +1,59 @@
+# Production profile for the Kavrynt chart (SPEC-0008): Gateway replicas that
+# survive node drains, upgrades, and pod loss without failing MCP calls, and a
+# standby Operator that takes over through leader election. make e2e-kind
+# installs with this file.
+#
+#   helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
+#     --version <version> --namespace kavrynt-system --create-namespace \
+#     --values values-production.yaml
+#
+# MCP client authentication is on by default (SPEC-0014): set
+# gateway.auth.resourceURL and gateway.auth.issuers below for your
+# authorization server.
+#
+# Size resources for your traffic; these are starting points.
+
+gateway:
+  replicaCount: 3
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  config:
+    shutdownDelay: 5s
+    shutdownTimeout: 30s
+  # Your authorization server; the install fails until both are set.
+  # auth:
+  #   resourceURL: https://mcp.example.com
+  #   issuers:
+  #     - issuer: https://login.example.com/realms/agents
+  # One audit event per MCP request on standard output; collect it with your
+  # log pipeline and check it with kavryctl audit verify.
+  audit:
+    enabled: true
+  resources:
+    requests:
+      cpu: 100m
+      memory: 128Mi
+    limits:
+      cpu: "1"
+      memory: 512Mi
+  # Or let an autoscaler own the replica count (needs metrics-server):
+  # autoscaling:
+  #   enabled: true
+  #   minReplicas: 3
+  #   maxReplicas: 10
+
+operator:
+  replicaCount: 2
+  config:
+    leaderElect: true
+  podDisruptionBudget:
+    enabled: true
+    maxUnavailable: 1
+  resources:
+    requests:
+      cpu: 50m
+      memory: 128Mi
+    limits:
+      cpu: 500m
+      memory: 512Mi

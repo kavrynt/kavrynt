@@ -11,10 +11,10 @@
   const { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
   const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
   const {
-    SCOPE_NOTE, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
+    scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
   } = Kavrynt.stats;
-  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage } = Kavrynt.state;
+  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
@@ -27,6 +27,8 @@
     serversLoaded: false,
     serversError: null,
     traffic: [],
+    // Pod name of the Gateway replica whose recent traffic is shown.
+    trafficInstance: "",
     seenTrafficId: 0,
     freshIds: new Set(),
     trafficPaused: false,
@@ -36,7 +38,7 @@
     routes: null,
     // Console admin login (SPEC-0005). checked is false until GET
     // /v1/session answers; nothing is drawn or fetched before that.
-    auth: { checked: false, enabled: false, signedIn: false, username: "", expiresAt: "" },
+    auth: { checked: false, enabled: false, signedIn: false, username: "", expiresAt: "", mcpAuth: false },
   };
 
   const main = () => document.getElementById("main");
@@ -80,6 +82,7 @@
     try {
       const data = await getJSON("/v1/traffic");
       const records = data.requests || [];
+      state.trafficInstance = typeof data.instance === "string" ? data.instance : "";
       state.freshIds = new Set(records.filter((r) => r.id > state.seenTrafficId && state.seenTrafficId > 0).map((r) => r.id));
       if (records.length) state.seenTrafficId = Math.max(state.seenTrafficId, records[0].id);
       state.traffic = records;
@@ -393,7 +396,7 @@
         panel("Needs attention", attentionBody, items.length ? badge(String(items.length), "warn") : badge("none", "ok")),
         h("section", { class: "panel" },
           h("header", {}, h("h2", { text: "Failing tools" }), h("a", { href: formatHash("traffic", [], { outcome: "errors" }), text: "All errors →" })),
-          scopeNote(SCOPE_NOTE),
+          scopeNote(trafficScope(state.trafficInstance)),
           h("div", { class: "body flush" }, failing.length ?
             table(["Tool", "Route", { label: "Failed", num: true }, "Error rate", { label: "p95", num: true }], failingRows) :
             h("p", { class: "body muted", text: state.traffic.length ? "No tool call failed in the recent requests." : "No traffic yet." }))));
@@ -532,7 +535,7 @@
       if (tab === "tools") put(body, toolsPanel(server));
       else if (tab === "traffic") {
         const records = state.traffic.filter((r) => r.route === server.route);
-        put(body, scopeNote(SCOPE_NOTE),
+        put(body, scopeNote(trafficScope(state.trafficInstance)),
           records.length ? toolSummaryPanel(records, false) : null,
           trafficTable(records, { showRoute: false, limit, onMore: (n) => { limit = n; draw(); }, empty: "No requests to this route in the recent traffic." }),
           records.length ? h("p", {}, h("a", { href: formatHash("traffic", [], { route: server.route }), text: "Filter in the Traffic view →" })) : null);
@@ -680,14 +683,14 @@
     const summary = h("div");
     const tableBox = h("div");
     const filterNote = h("div");
+    const scope = h("div");
 
     put(root,
       h("div", { class: "page-head" },
         h("div", {}, h("h1", { text: "Traffic" }),
           h("p", { text: "MCP calls proxied by the Gateway, newest first. Metadata only: arguments and results are never recorded." })),
         h("div", { class: "toolbar" }, pause, clearBtn)),
-      scopeNote(SCOPE_NOTE),
-      toolbar, filterNote, outcomeHelp(), summary, tableBox);
+      scope, toolbar, filterNote, outcomeHelp(), summary, tableBox);
 
     function setFilter(key, value) {
       filters[key] = value;
@@ -697,6 +700,7 @@
     }
 
     function draw() {
+      put(clear(scope), scopeNote(trafficScope(state.trafficInstance)));
       pause.textContent = state.trafficPaused ? "▶ Resume" : "❚❚ Pause";
       pause.setAttribute("aria-pressed", String(state.trafficPaused));
       const visible = state.traffic.filter((r) => r.id > state.trafficHideBefore);
@@ -769,13 +773,8 @@
       el.hidden = true;
       return;
     }
-    if (state.auth.enabled) {
-      put(clear(el), h("strong", { text: "MCP routes are not authenticated. " }),
-        "This login protects the console only. Anyone who can reach this Gateway can call every routed tool. Keep the Gateway Service internal until client authentication is available.");
-    } else {
-      put(clear(el), h("strong", { text: "No login. " }),
-        "Anyone who can reach this Gateway can use this console and call every routed tool. Keep the Gateway Service internal until client authentication is available.");
-    }
+    const { title, text } = notice(state.auth);
+    put(clear(el), h("strong", { text: title + " " }), text);
     el.hidden = false;
   }
 

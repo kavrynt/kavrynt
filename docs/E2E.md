@@ -3,6 +3,13 @@
 All tests create a disposable Kind cluster, never touch your current
 Kubernetes context, and delete the cluster afterwards (`KEEP_CLUSTER=1` keeps
 it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
+`make e2e-kind` creates its cluster from `test/e2e/kind-config.yaml`, whose
+kubelet syncs every 10 seconds, so updated ConfigMap and Secret mounts reach
+pods in seconds.
+
+In CI the Kind e2e runs for every pull request that changes more than
+Markdown, `specs/`, or `docs/`, at the same time as Go QA. Locally, run it
+once on the top of a stack of branches rather than on each one.
 
 | Target | What it proves | Images |
 | --- | --- | --- |
@@ -12,7 +19,17 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 ## `make e2e-kind`
 
 1. Builds `kavryctl`, the Gateway and Operator images, and a sample MCP server.
-2. Installs `charts/kavrynt` into `kavrynt-system`.
+2. Confirms an install with default values is refused with a message naming
+   `gateway.auth.issuers` and `gateway.auth.enabled=false` and leaves no
+   release (SPEC-0014). Installs `charts/kavrynt` into `kavrynt-system` with
+   the explicit opt-out (the Gateway logs that MCP routes are open) and the
+   production profile
+   (`examples/helm/values-production.yaml`: three Gateway and two Operator
+   replicas) and both NetworkPolicies on (the sample server's pods carry
+   `kavrynt.io/gateway-only: "true"`; only `kavrynt-e2e` may call the
+   Gateway), and confirms the chart
+   installed the `MCPServer` CRD of `config/crd/bases`, owned by Helm with
+   the keep policy.
 3. Applies `test/e2e/manifests/mcp-server.yaml` and waits for `Ready`.
 4. Confirms the CRD rejects an endpoint with embedded credentials.
 5. Confirms Gateway RBAC: `get/list/watch` on `MCPServer` only; no writes, no
@@ -33,7 +50,49 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
    `DiscoveryFailed` in the Operator).
 9. Registers, inspects, routes to, and unregisters a second server with
    `kavryctl`.
-10. Deletes the `MCPServer` and confirms the route disappears.
+10. Bypass protection: a pod calling the sample MCP server directly, even
+    from its own namespace, and a pod in `default` calling the Gateway are
+    both blocked, while a pod in `kavrynt-e2e` reaches the server through
+    the Gateway. High availability: `/v1/traffic` names the answering Gateway pod; a
+    client pod calls `tools/list` through the Gateway Service throughout a
+    rolling restart of every Gateway replica and no call may fail; deleting
+    the Operator leader lets the standby reconcile a new server to `Ready`.
+    Upstream credentials: a server that requires its own bearer token is
+    discovered and routed with the stored credential from the pre-created
+    Secret (the caller's token is replaced), a server whose credential is not
+    stored answers `503` with `CredentialUnavailable` discovery, neither
+    component can read Secrets, and the value appears in no response,
+    status, metric, or log. The CRD rejects a `Cookie` credential header.
+    MCP client authentication: deploys the e2e image's test authorization
+    server, turns `gateway.auth` on, and checks the `401` challenge and the
+    route's Protected Resource Metadata, that a valid token is accepted and
+    not forwarded, that tokens for another route, without the required scope,
+    or in the query string are refused, that refusals are recorded, and that
+    no token appears in metrics or logs. Token exchange: a server with its
+    own audience is `Ready` with `CallerTokenRequired` discovery, answers
+    `tools/list`, and receives a token with its audience, the caller's
+    subject, and the calling agent as `act`, never the caller's token; no
+    token or client secret appears in logs or metrics. Tool authorization policy: a
+    per-client allow-list from a ConfigMap allows one client's `echo` call
+    and denies another's with a JSON-RPC error, and with
+    `filterToolsList` the first client lists `echo` while the other lists
+    no tools; a broken update is counted
+    and changes no decision. Audit (on in the production profile): the
+    allowed, denied, and unauthenticated calls each have an event, no tool
+    argument appears in the Gateway output, and `kavryctl audit verify`
+    accepts the collected logs. Then turns authentication and policy off.
+    Then deletes the `MCPServer` and confirms the route disappears.
+11. Upgrade and rollback: `helm uninstall` keeps the CRD and `MCPServer`
+    resources; the previous release (`UPGRADE_FROM_VERSION`, chart from
+    `UPGRADE_FROM_CHART`, images from Docker Hub) is installed on the clean
+    cluster with a server; `helm upgrade` to the local build without
+    `gateway.auth` values is refused before any change (SPEC-0014); with the
+    opt-out it fails before touching workloads until the CRD is adopted,
+    then succeeds with the
+    server `Ready` and routed; `kavryctl rollback` (SPEC-0019) keeps the CRD,
+    the server, and its route; `kavryctl upgrade --dry-run` changes nothing,
+    and `kavryctl upgrade` back to the build under test reports the server
+    routed. Needs network access to the registries.
 
 Expected final line: `==> end-to-end workflow passed`.
 

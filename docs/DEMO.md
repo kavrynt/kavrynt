@@ -38,6 +38,12 @@ make demo-down          # delete the cluster
   changed. To run your own commands against it:
   `export KUBECONFIG=$PWD/.kavrynt/demo/kubeconfig PATH=$PWD/.kavrynt/demo/bin:$PATH`.
 - `make demo-down` deletes only a cluster that `make demo-up` created.
+- MCP client authentication is on by default, but the demo has no
+  authorization server, so `make demo-up` installs with the explicit
+  opt-out, `--set gateway.auth.enabled=false`, and the Gateway logs that MCP
+  routes are unauthenticated. An install with your own authorization server
+  sets `gateway.auth.resourceURL` and `gateway.auth.issuers` instead; see the
+  [chart README](../charts/kavrynt/README.md#authenticating-mcp-clients).
 - Images are built from your checkout and loaded into Kind. Nothing is pulled
   from a registry at demo time.
 - The walkthrough serves the Gateway on `http://127.0.0.1:18080` for as long
@@ -59,7 +65,7 @@ make demo-down          # delete the cluster
       with the password step 1 prints.
 - [ ] Decide whether to connect a real agent (see below), and test it on the
       same network.
-- [ ] Confirm `0.0.5-beta.1` is published (`gh release view v0.0.5-beta.1`)
+- [ ] Confirm `1.0.0-beta.1` is published (`gh release view v1.0.0-beta.1`)
       and its `make e2e-release` run passed. See
       [Questions to prepare for](#questions-to-prepare-for).
 
@@ -84,10 +90,12 @@ make demo-down          # delete the cluster
 
 Show this list as a slide as well. Do not soften it.
 
-- No client authentication or token exchange: anyone who can reach the Gateway
-  can call every routed tool. The console has an admin login, but it does
-  not protect MCP routes.
-- No policy, no tool-level authorization, and no audit log.
+- MCP client authentication is on by default, but this demo opts out (and
+  token exchange needs it): without authentication, anyone who can reach
+  the Gateway can call every routed tool. The console has an admin login,
+  but it does not protect MCP routes.
+- Tool authorization policy and audit events exist but are off by default;
+  there are no approvals.
 - HTTP MCP servers only. `stdio` manifests validate but are not proxied.
 - Kavrynt does not deploy MCP servers; it registers and routes to existing
   endpoints.
@@ -124,8 +132,10 @@ do not offer. The Gateway records that request as `http_get` with outcome
   ([ADR-0002](ADR-0002-Remove-In-Cluster-Registry.md)), so namespaces, RBAC,
   GitOps, and admission apply without a separate registry service.
 - **Authentication and authorization.** Designed in
-  [ADR-0003](ADR-0003-Runtime-Authorization.md), not implemented. Until then,
-  the Gateway never forwards caller credentials upstream.
+  [ADR-0003](ADR-0003-Runtime-Authorization.md). Client authentication (OAuth
+  2.1 bearer tokens, per-route audience) is implemented and opt-in; policy
+  and audit are opt-in; approvals are not built. The Gateway never forwards caller credentials
+  upstream.
 - **Multi-tenancy.** Routes are namespace-qualified, and
   `global.watchNamespaces` limits the Gateway to listed namespaces with
   per-namespace Roles. There is no per-tenant policy yet.

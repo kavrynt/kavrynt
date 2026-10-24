@@ -1,12 +1,15 @@
 SHELL := /bin/bash
 
-LOCAL_VERSION ?= 0.0.5-beta.1-local
+LOCAL_VERSION ?= 1.0.0-beta.1-local
 IMAGES := gateway operator
 CHART := charts/kavrynt
+# The chart refuses to render without MCP client authentication settings or
+# the explicit opt-out (SPEC-0014); lint and template use the opt-out.
+HELM_CHECK_VALUES := --set gateway.auth.enabled=false
 GO_DIRS := api cmd examples internal test
 
-STATICCHECK_VERSION ?= v0.8.0
-GOSEC_VERSION ?= v2.28.0
+STATICCHECK_VERSION ?= v0.8.2
+GOSEC_VERSION ?= v2.30.0
 GOVULNCHECK_VERSION ?= v1.7.0
 HELM_UNITTEST_VERSION ?= v1.1.2
 
@@ -27,6 +30,7 @@ help:
 	@printf "  make helm-template  Render the Helm chart\n"
 	@printf "  make helm-unittest  Run the chart unit tests (helm-unittest)\n"
 	@printf "  make helm-plugins   Install the pinned helm-unittest plugin\n"
+	@printf "  make alerts-test    Test the alert rules with promtool and check their runbooks (needs Docker)\n"
 	@printf "  make build          Build kavryctl, gateway, and operator binaries\n"
 	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
@@ -37,7 +41,7 @@ help:
 	@printf "  make demo-down      Delete the Kind demo cluster\n"
 
 .PHONY: qa
-qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck helm-lint helm-template helm-unittest
+qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck helm-lint helm-template helm-unittest alerts-test
 
 .PHONY: release-contract
 release-contract:
@@ -46,6 +50,12 @@ release-contract:
 .PHONY: spec-check
 spec-check:
 	bash ./scripts/verify-specs.sh
+
+# Alert rules: runbook coverage and promtool tests (SPEC-0010). promtool runs
+# from the pinned Prometheus image.
+.PHONY: alerts-test
+alerts-test:
+	bash ./scripts/test-alerts.sh
 
 .PHONY: spec-new
 spec-new:
@@ -85,11 +95,11 @@ vulncheck:
 
 .PHONY: helm-lint
 helm-lint:
-	helm lint $(CHART)
+	helm lint $(CHART) $(HELM_CHECK_VALUES)
 
 .PHONY: helm-template
 helm-template:
-	helm template kavrynt $(CHART) --namespace kavrynt-system >/dev/null
+	helm template kavrynt $(CHART) --namespace kavrynt-system $(HELM_CHECK_VALUES) >/dev/null
 
 .PHONY: helm-unittest
 helm-unittest:

@@ -3,12 +3,14 @@ package controller
 import (
 	"context"
 	"fmt"
+	"net/http"
 	"slices"
 	"sync"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -36,7 +38,7 @@ const (
 
 // ToolDiscoverer lists an MCP server's tools.
 type ToolDiscoverer interface {
-	ListTools(ctx context.Context, endpoint string) (discovery.Result, error)
+	ListTools(ctx context.Context, endpoint string, header http.Header) (discovery.Result, error)
 }
 
 // MCPServerReconciler validates MCPServer resources and reports whether the
@@ -57,6 +59,10 @@ type MCPServerReconciler struct {
 	// ToolRefreshInterval is how often tools are listed again. Zero means
 	// DefaultToolRefreshInterval.
 	ToolRefreshInterval time.Duration
+
+	// Credentials holds the stored credentials of servers that declare
+	// spec.credential; discovery sends them like the Gateway (SPEC-0011-R08).
+	Credentials upstreamcred.Store
 
 	// now is the clock; tests replace it.
 	now func() time.Time
@@ -93,6 +99,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 	}
 
 	status := r.desiredStatus(&server)
+	recordReady(req.NamespacedName, apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady))
 	var result ctrl.Result
 	if r.Discoverer != nil {
 		result.RequeueAfter = r.applyTools(ctx, req.NamespacedName, &server, &status)
@@ -174,8 +181,37 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 		refresh = DefaultToolRefreshInterval
 	}
 	attempt := &discoveryAttempt{generation: server.Generation, endpoint: server.Spec.Endpoint}
+	if server.Spec.TokenExchange != nil {
+		// Its tools are listed with a caller's exchanged token, and the
+		// Operator has no caller (SPEC-0015-R10).
+		attempt.next = now.Add(refresh)
+		attempt.condition = metav1.Condition{
+			Type:    kavryntv1alpha1.ConditionToolsDiscovered,
+			Status:  metav1.ConditionFalse,
+			Reason:  kavryntv1alpha1.ReasonCallerTokenRequired,
+			Message: "the server gets per-caller tokens by token exchange; the Operator has no caller token to list its tools with",
+		}
+		return attempt
+	}
 
-	result, err := r.Discoverer.ListTools(ctx, server.Spec.Endpoint)
+	var header http.Header
+	reason := kavryntv1alpha1.ReasonDiscoveryFailed
+	var result discovery.Result
+	var err error
+	if credential := server.Spec.Credential; credential != nil {
+		var value string
+		value, err = r.Credentials.Lookup(server.RouteName(), server.Spec.Endpoint)
+		if err != nil {
+			// The message names the Secret key, never the value.
+			reason = kavryntv1alpha1.ReasonCredentialUnavailable
+		} else {
+			header = http.Header{}
+			header.Set(credential.HeaderName(), credential.HeaderValue(value))
+		}
+	}
+	if err == nil {
+		result, err = r.Discoverer.ListTools(ctx, server.Spec.Endpoint, header)
+	}
 	if err == nil {
 		attempt.next = now.Add(refresh)
 		attempt.tools = result.Tools
@@ -205,7 +241,7 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 	attempt.condition = metav1.Condition{
 		Type:    kavryntv1alpha1.ConditionToolsDiscovered,
 		Status:  metav1.ConditionFalse,
-		Reason:  kavryntv1alpha1.ReasonDiscoveryFailed,
+		Reason:  reason,
 		Message: err.Error(),
 	}
 	return attempt
@@ -215,6 +251,7 @@ func (r *MCPServerReconciler) forget(key types.NamespacedName) {
 	r.mu.Lock()
 	delete(r.attempts, key)
 	r.mu.Unlock()
+	forgetReady(key)
 }
 
 func (r *MCPServerReconciler) clock() time.Time {

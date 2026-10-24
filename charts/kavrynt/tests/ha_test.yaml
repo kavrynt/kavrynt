@@ -1,0 +1,198 @@
+suite: high availability
+templates:
+  - charts/gateway/templates/deployment.yaml
+  - charts/gateway/templates/pdb.yaml
+  - charts/gateway/templates/hpa.yaml
+  - charts/operator/templates/deployment.yaml
+  - charts/operator/templates/pdb.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
+tests:
+  # Verifies SPEC-0008-R02.
+  - it: gives the Gateway enough time to drain before it is killed
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.config.shutdownDelay: 7s
+      gateway.config.shutdownTimeout: 20s
+    asserts:
+      - equal:
+          path: spec.template.spec.terminationGracePeriodSeconds
+          value: 32
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --shutdown-delay
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: 7s
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: 20s
+
+  # Verifies SPEC-0008-R02.
+  - it: rejects shutdown durations that are not whole seconds
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.config.shutdownDelay: 1m
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0008-R03.
+  - it: never removes a Gateway pod before its replacement is ready
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - equal:
+          path: spec.strategy.rollingUpdate.maxUnavailable
+          value: 0
+      - equal:
+          path: spec.strategy.rollingUpdate.maxSurge
+          value: 1
+
+  # Verifies SPEC-0008-R06.
+  - it: names each Gateway replica after its pod
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].env
+          content:
+            name: KAVRYNT_INSTANCE
+            valueFrom:
+              fieldRef:
+                fieldPath: metadata.name
+
+  # Verifies SPEC-0008-R04.
+  - it: keeps a single-replica Gateway without disruption budget or spread
+    asserts:
+      - notExists:
+          path: spec.template.spec.topologySpreadConstraints
+        template: charts/gateway/templates/deployment.yaml
+      - hasDocuments:
+          count: 0
+        template: charts/gateway/templates/pdb.yaml
+      - hasDocuments:
+          count: 0
+        template: charts/gateway/templates/hpa.yaml
+
+  # Verifies SPEC-0008-R04.
+  - it: protects and spreads several Gateway replicas
+    set:
+      gateway.replicaCount: 3
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+        template: charts/gateway/templates/pdb.yaml
+      - equal:
+          path: spec.maxUnavailable
+          value: 1
+        template: charts/gateway/templates/pdb.yaml
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: gateway
+            app.kubernetes.io/instance: kavrynt
+        template: charts/gateway/templates/pdb.yaml
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].topologyKey
+          value: kubernetes.io/hostname
+        template: charts/gateway/templates/deployment.yaml
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[1].topologyKey
+          value: topology.kubernetes.io/zone
+        template: charts/gateway/templates/deployment.yaml
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable
+          value: ScheduleAnyway
+        template: charts/gateway/templates/deployment.yaml
+
+  # Verifies SPEC-0008-R04.
+  - it: uses configured spread constraints instead of the default
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.replicaCount: 3
+      gateway.topologySpreadConstraints:
+        - maxSkew: 2
+          topologyKey: kubernetes.io/hostname
+          whenUnsatisfiable: DoNotSchedule
+    asserts:
+      - lengthEqual:
+          path: spec.template.spec.topologySpreadConstraints
+          count: 1
+      - equal:
+          path: spec.template.spec.topologySpreadConstraints[0].whenUnsatisfiable
+          value: DoNotSchedule
+
+  # Verifies SPEC-0008-R05.
+  - it: hands the Gateway replica count to an autoscaler
+    set:
+      gateway.autoscaling.enabled: true
+      gateway.autoscaling.minReplicas: 3
+      gateway.autoscaling.maxReplicas: 9
+    asserts:
+      - notExists:
+          path: spec.replicas
+        template: charts/gateway/templates/deployment.yaml
+      - isKind:
+          of: HorizontalPodAutoscaler
+        template: charts/gateway/templates/hpa.yaml
+      - equal:
+          path: spec.minReplicas
+          value: 3
+        template: charts/gateway/templates/hpa.yaml
+      - equal:
+          path: spec.maxReplicas
+          value: 9
+        template: charts/gateway/templates/hpa.yaml
+      - equal:
+          path: spec.metrics[0].resource.target.averageUtilization
+          value: 70
+        template: charts/gateway/templates/hpa.yaml
+      - isKind:
+          of: PodDisruptionBudget
+        template: charts/gateway/templates/pdb.yaml
+
+  # Verifies SPEC-0008-R05.
+  - it: refuses an autoscaler below two replicas
+    template: charts/gateway/templates/hpa.yaml
+    set:
+      gateway.autoscaling.enabled: true
+      gateway.autoscaling.minReplicas: 1
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0008-R09.
+  - it: refuses several Operator replicas without leader election
+    template: charts/operator/templates/deployment.yaml
+    set:
+      operator.replicaCount: 2
+      operator.config.leaderElect: false
+    asserts:
+      - failedTemplate:
+          errorMessage: "replicaCount above 1 requires config.leaderElect: true, or every replica would reconcile"
+
+  # Verifies SPEC-0008-R09.
+  - it: protects several Operator replicas with a disruption budget
+    set:
+      operator.replicaCount: 2
+    asserts:
+      - isKind:
+          of: PodDisruptionBudget
+        template: charts/operator/templates/pdb.yaml
+      - equal:
+          path: spec.selector.matchLabels
+          value:
+            app.kubernetes.io/name: operator
+            app.kubernetes.io/instance: kavrynt
+        template: charts/operator/templates/pdb.yaml
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --leader-elect
+        template: charts/operator/templates/deployment.yaml
+
+  # Verifies SPEC-0008-R09.
+  - it: renders no Operator disruption budget for one replica
+    template: charts/operator/templates/pdb.yaml
+    asserts:
+      - hasDocuments:
+          count: 0

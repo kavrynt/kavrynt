@@ -41,6 +41,14 @@ spec:
                   message: "spec.command is required when spec.transport is stdio"
                 - rule: "!has(self.endpoint) || self.endpoint.matches('^https?://[^/?#@\\\\s]+([/?].*)?$')"
                   message: "spec.endpoint must be an absolute http or https URL without credentials"
+                - rule: "!has(self.credential) || self.transport == 'http'"
+                  message: "spec.credential is only supported with spec.transport http"
+                - rule: "!has(self.credential) || !has(self.credential.header) || !(self.credential.header.lowerAscii() in ['host', 'content-length', 'content-type', 'transfer-encoding', 'connection', 'keep-alive', 'te', 'trailer', 'upgrade', 'proxy-connection', 'cookie', 'x-kavrynt-route', 'x-forwarded-host'] || self.credential.header.lowerAscii().startsWith('mcp-'))"
+                  message: "spec.credential.header must not frame or route the request, be a cookie, or be an MCP protocol header"
+                - rule: "!has(self.tokenExchange) || self.transport == 'http'"
+                  message: "spec.tokenExchange is only supported with spec.transport http"
+                - rule: "!(has(self.tokenExchange) && has(self.credential))"
+                  message: "spec.tokenExchange and spec.credential are mutually exclusive"
               properties:
                 version:
                   type: string
@@ -63,6 +71,36 @@ spec:
                   type: object
                   additionalProperties:
                     type: string
+                credential:
+                  type: object
+                  description: The endpoint needs a credential, stored by the platform team in the Kavrynt upstream credentials Secret.
+                  properties:
+                    header:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+                    scheme:
+                      type: string
+                      maxLength: 128
+                      pattern: "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+                tokenExchange:
+                  type: object
+                  description: The Gateway exchanges each caller's access token for one with this audience (RFC 8693) and sends only that token.
+                  required:
+                    - audience
+                  properties:
+                    audience:
+                      type: string
+                      minLength: 1
+                      maxLength: 2048
+                      pattern: "^[A-Za-z][A-Za-z0-9+.-]*:[^#\\s]+$"
+                    scopes:
+                      type: array
+                      maxItems: 20
+                      items:
+                        type: string
+                        maxLength: 256
+                        pattern: "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"
             status:
               type: object
               properties:

@@ -1,8 +1,14 @@
 replicaCount: 1
 
+# PodDisruptionBudget, rendered when replicaCount is above 1. Standby
+# replicas take over through leader election.
+podDisruptionBudget:
+  enabled: true
+  maxUnavailable: 1
+
 image:
   repository: kavrynt/operator
-  tag: 0.0.5-beta.1
+  tag: 1.0.0-beta.1
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -10,6 +16,14 @@ imagePullSecrets: []
 serviceAccount:
   create: true
   name: ""
+
+# The MCPServer CustomResourceDefinition. Helm installs and upgrades it with
+# the chart. Set install to false when CRDs are managed outside this release
+# (apply charts/k8s-operator/files/kavrynt.io_mcpservers.yaml yourself).
+crds:
+  install: true
+  # Keep the CRD, and with it every MCPServer, on helm uninstall and rollback.
+  keep: true
 
 config:
   metricsBindAddress: ":8080"
@@ -21,6 +35,18 @@ config:
   toolDiscovery:
     enabled: true
     refreshInterval: 5m
+
+# Operator metrics (controller-runtime, kavrynt_operator_mcpserver_ready, and
+# the Cloud connector) on the metrics port. The Service lets the Prometheus
+# Operator scrape them; only the leader exports MCPServer readiness.
+metrics:
+  service:
+    enabled: true
+  # ServiceMonitor for the Prometheus Operator (requires its CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
 
 # Kavrynt Cloud connector: sends every MCPServer and its discovered tools to
 # Kavrynt Cloud. Off by default. Create the Secret first, for example:

@@ -13,12 +13,17 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | --- | --- | --- |
 | `Accepted` | spec is valid | `InvalidSpec` |
 | `Ready` | accepted, `transport: http`, and in a namespace the Gateway watches (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched` |
-| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable` |
+| `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable`, `CredentialUnavailable` (the server declares `spec.credential` and its stored credential is missing or not pinned to the endpoint), `CallerTokenRequired` (the server declares `spec.tokenExchange`: its tools are listed with a caller's token, which the Operator does not have) |
 
 - Lists the tools of each `Ready` server into `status.tools` (see
   [Tool discovery](#tool-discovery)).
 - Optionally sends the inventory to Kavrynt Cloud (see
   [Kavrynt Cloud sync](#kavrynt-cloud-sync)).
+- Exports `kavrynt_operator_mcpserver_ready{namespace,name}` (1 when `Ready`
+  is `True`, else 0; removed when the `MCPServer` is deleted) on the metrics
+  port, which the chart exposes through the Service
+  `<release>-operator-metrics` (`operator.metrics.service.enabled`, on by
+  default) and optionally a ServiceMonitor. Only the leader exports it.
 - Does not deploy MCP server workloads, manage secrets, or proxy MCP traffic.
 
 ## Tool discovery
@@ -101,7 +106,8 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
 | --- | --- | --- |
 | `--metrics-bind-address` | `:8080` | controller-runtime metrics |
 | `--health-probe-bind-address` | `:8081` | `/healthz`, `/readyz` |
-| `--leader-elect` | `false` (chart: `true`) | Leader election through a Lease |
+| `--leader-elect` | `false` (chart: `true`) | Leader election through the Lease `kavrynt-k8s-operator`. Only the leader reconciles, discovers tools, and syncs to Kavrynt Cloud; a stopping leader releases the Lease so a standby takes over at once. The chart refuses more than one replica without it and adds a PodDisruptionBudget for several |
+| `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret; discovery sends a server's stored credential like the Gateway ([Upstream credentials](../gateway/README.md#upstream-credentials)) |
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |
@@ -114,8 +120,10 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
 ## Manifests
 
 - CRD: `config/crd/bases/kavrynt.io_mcpservers.yaml`, copied to
-  `charts/kavrynt/charts/k8s-operator/crds/`. Keep both identical; the release
-  contract check enforces it.
+  `charts/kavrynt/charts/k8s-operator/files/`. Keep both identical; the release
+  contract check enforces it. The chart renders the copy as a template, so
+  `helm upgrade` updates the CRD, and keeps it on uninstall and rollback
+  (`operator.crds.install`, `operator.crds.keep`).
 - Raw kustomize manifests: `config/`. Sample: `config/samples/`.
 
 ## Run locally

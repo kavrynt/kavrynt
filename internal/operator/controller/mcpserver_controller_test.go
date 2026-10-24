@@ -2,12 +2,18 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"net/http"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -128,9 +134,11 @@ type fakeDiscoverer struct {
 	serverInfo *kavryntv1alpha1.MCPServerInfo
 	err        error
 	calls      int
+	header     http.Header
 }
 
-func (f *fakeDiscoverer) ListTools(context.Context, string) (discovery.Result, error) {
+func (f *fakeDiscoverer) ListTools(_ context.Context, _ string, header http.Header) (discovery.Result, error) {
+	f.header = header
 	f.calls++
 	if f.err != nil {
 		return discovery.Result{}, f.err
@@ -423,5 +431,80 @@ func TestReconcileRecordsKeepsAndClearsServerInfo(t *testing.T) {
 	reconcileWith(t, restarted)
 	if info := get(t, k8sClient).Status.ServerInfo; info != nil {
 		t.Fatalf("serverInfo of a server that is not Ready = %+v, want none", info)
+	}
+}
+
+// Verifies SPEC-0011-R08 and SPEC-0011-R09: discovery sends the stored
+// credential; without it ToolsDiscovered is False with
+// CredentialUnavailable, Ready stays True, and the value is never in status.
+func TestDiscoveryUsesTheStoredCredential(t *testing.T) {
+	spec := validSpec()
+	spec.Credential = &kavryntv1alpha1.MCPServerCredential{Scheme: "Bearer"}
+	k8sClient := newClient(t, newServer(spec))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	clock := &testClock{now: time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+	dir := t.TempDir()
+	reconciler.Credentials = upstreamcred.Store{Dir: dir}
+
+	reconcileWith(t, reconciler)
+	server := get(t, k8sClient)
+	discovered := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discovered == nil || discovered.Status != metav1.ConditionFalse || discovered.Reason != kavryntv1alpha1.ReasonCredentialUnavailable {
+		t.Fatalf("ToolsDiscovered = %+v, want False/CredentialUnavailable", discovered)
+	}
+	if !strings.Contains(discovered.Message, "default.demo-mcp") {
+		t.Fatalf("message %q does not name the missing key", discovered.Message)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("a missing credential changed Ready")
+	}
+	if discoverer.calls != 0 {
+		t.Fatal("discovery ran without the credential")
+	}
+
+	for name, content := range map[string]string{"default.demo-mcp": "stored-secret", "default.demo-mcp.origin": "http://demo.default.svc:8080"} {
+		if err := os.WriteFile(filepath.Join(dir, name), []byte(content), 0o600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	reconcileWith(t, reconciler)
+	if got := discoverer.header.Get("Authorization"); got != "Bearer stored-secret" {
+		t.Fatalf("discovery Authorization = %q", got)
+	}
+	server = get(t, k8sClient)
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) {
+		t.Fatalf("conditions = %+v", server.Status.Conditions)
+	}
+	raw, _ := json.Marshal(server)
+	if strings.Contains(string(raw), "stored-secret") {
+		t.Fatal("the credential reached the MCPServer")
+	}
+}
+
+// Verifies SPEC-0015-R10: a server that gets per-caller tokens is not
+// discovered; ToolsDiscovered says why and Ready is unaffected.
+func TestDiscoverySkipsTokenExchangeServers(t *testing.T) {
+	spec := validSpec()
+	spec.TokenExchange = &kavryntv1alpha1.MCPServerTokenExchange{Audience: "https://tickets.example.com"}
+	k8sClient := newClient(t, newServer(spec))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	clock := &testClock{now: time.Date(2026, 10, 24, 9, 0, 0, 0, time.UTC)}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+
+	reconcileWith(t, reconciler)
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	reconcileWith(t, reconciler)
+	server := get(t, k8sClient)
+	discovered := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discovered == nil || discovered.Status != metav1.ConditionFalse || discovered.Reason != kavryntv1alpha1.ReasonCallerTokenRequired {
+		t.Fatalf("ToolsDiscovered = %+v, want False/CallerTokenRequired", discovered)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("token exchange changed Ready")
+	}
+	if discoverer.calls != 0 {
+		t.Fatalf("discovery ran %d times for a server that needs a caller's token", discoverer.calls)
 	}
 }

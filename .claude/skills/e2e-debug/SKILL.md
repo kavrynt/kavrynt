@@ -34,12 +34,14 @@ For a CI failure instead: `gh run view <run-id> --log-failed -R kavrynt/kavrynt`
 | --- | --- | --- |
 | 1 | Gateway and Operator ready | `kubectl get pods -n kavrynt-system`, events, image load (Apple Silicon: images must be built locally and `kind load`ed) |
 | 2 | `MCPServer` reaches `Ready` | operator logs, `kubectl describe mcpserver -n kavrynt-e2e` |
-| 3 | CRD rejects unsafe endpoints | CRD validation in both copies of `kavrynt.io_mcpservers.yaml` (`config/crd/bases/` and the chart's `k8s-operator/crds/`) |
+| 3 | CRD rejects unsafe endpoints | CRD validation in both copies of `kavrynt.io_mcpservers.yaml` (`config/crd/bases/` and the chart's `k8s-operator/files/`) |
 | 4 | Gateway RBAC read-only, no Secrets | `charts/kavrynt/charts/gateway/templates/` RBAC, `kubectl auth can-i --as=system:serviceaccount:kavrynt-system:kavrynt-gateway` |
 | 5 | Route visible in Gateway and `kavryctl list` | `/v1/routes`, gateway logs (watch and cache sync) |
 | 6 | `tools/list` through Gateway | `test/e2e/mcp-server`, `internal/gateway/routing`, proxy headers |
 | 7 | `kavryctl register/inspect/unregister` | `internal/kavryctl/cli`, kubeconfig/context flags |
 | 8 | Deleting `MCPServer` removes the route | gateway watch handling of delete events |
+| 9 | Rolling restart under load and Operator failover (SPEC-0008) | `FAIL` lines of pod `gateway-load` in `kavrynt-e2e` (connection errors point at the drain in `cmd/gateway`, `503`s at readiness), Lease `kavrynt-k8s-operator` holder |
+| 10 | Upgrade from the previous release and rollback (SPEC-0009) | `UPGRADE_FROM_VERSION` in `scripts/e2e-kind.sh` (published?), registry access for the Kind node, `charts/kavrynt/charts/k8s-operator/templates/crd.yaml`, Helm's ownership error in the output |
 
 With `KEEP_CLUSTER=1`:
 

@@ -4,17 +4,76 @@ global:
   # Operator reports servers in other namespaces as not Ready
   # (NamespaceNotWatched).
   watchNamespaces: []
+  # Secret in the release namespace holding the credentials of MCP servers
+  # that declare spec.credential: key <namespace>.<name> with the value and
+  # <namespace>.<name>.origin with the endpoint origin it may be sent to
+  # (scheme://host:port). The kubelet mounts it into the Gateway and the
+  # Operator; neither gets RBAC on Secrets. Empty: no credentials.
+  upstreamCredentials:
+    secretName: ""
 
 gateway:
   fullnameOverride: kavrynt-gateway
   image:
     repository: kavrynt/gateway
-    tag: 0.0.5-beta.1
+    tag: 1.0.0-beta.1
     pullPolicy: IfNotPresent
 
 operator:
   fullnameOverride: kavrynt-operator
   image:
     repository: kavrynt/operator
-    tag: 0.0.5-beta.1
+    tag: 1.0.0-beta.1
     pullPolicy: IfNotPresent
+
+# NetworkPolicies that keep MCP traffic on the Gateway path, so clients
+# cannot skip it by calling an MCP server directly. They need a CNI that
+# enforces NetworkPolicy; elsewhere they have no effect. Off by default.
+networkPolicy:
+  mcpServers:
+    # Pods labelled kavrynt.io/gateway-only: "true" in these namespaces accept
+    # traffic only from the Gateway and the Operator (tool discovery). Label
+    # the MCP server pods first, then enable. The namespaces must exist.
+    enabled: false
+    namespaces: []
+  gateway:
+    # The Gateway accepts traffic only from its own namespace, namespaces
+    # matching one of allowedNamespaceLabels, and allowedCIDRs. Include the
+    # namespaces of your agents, Ingress controller, and Prometheus.
+    enabled: false
+    # For example: [{kubernetes.io/metadata.name: agents}]
+    allowedNamespaceLabels: []
+    allowedCIDRs: []
+
+metrics:
+  # Prometheus alerting rules for the Gateway, the Operator, and registered
+  # MCP servers, each linked to a runbook in docs/runbooks. Requires the
+  # Prometheus Operator CRDs. Scrape both components first (for example
+  # gateway.metrics.serviceMonitor.enabled and
+  # operator.metrics.serviceMonitor.enabled).
+  prometheusRule:
+    enabled: false
+    # Labels on the PrometheusRule, for Prometheus' ruleSelector.
+    labels: {}
+    # Labels added to every alert, for Alertmanager routing.
+    alertLabels: {}
+    # Prometheus job labels of the targets. Empty uses the Service names,
+    # which the chart's ServiceMonitors produce; set them when Prometheus
+    # discovers targets another way.
+    jobs:
+      gateway: ""
+      operator: ""
+    # KavryntMCPUpstreamErrorsHigh: share of calls to a route that end in
+    # upstream_error, upstream_unreachable, or timeout over 10 minutes, for
+    # routes with at least minRequestsPerSecond.
+    errorRatio: 0.05
+    minRequestsPerSecond: 0.05
+    # KavryntMCPLatencyHigh: p95 latency of a route over 10 minutes.
+    latencyP95Seconds: 5
+    # KavryntMCPServerNotReady: how long an MCPServer may stay not Ready.
+    notReadyFor: 10m
+    # KavryntCloudSyncStale (only with operator.cloud.enabled).
+    cloudSyncStaleSeconds: 600
+    # Where runbook_url points; empty uses this repository at the chart's
+    # release tag.
+    runbookBaseURL: ""

@@ -83,6 +83,10 @@ helm show chart oci://registry-1.docker.io/kavrynt/kavrynt --version "$VERSION"
 Only after verification: merge the prepared `product-docs` and `website`
 branches that describe the new version.
 
+Then, on `develop`, set the default `UPGRADE_FROM_VERSION` in
+`scripts/e2e-kind.sh` to the version just released, so every later change is
+tested as an upgrade from it and a rollback to it.
+
 ## If The Workflow Fails
 
 - Before any publish step: fix on `develop`, promote again, delete and recreate

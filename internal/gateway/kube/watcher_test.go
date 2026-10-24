@@ -38,3 +38,41 @@ func server(namespace, name, transport, endpoint string, ready metav1.ConditionS
 	}
 	return s
 }
+
+// Verifies SPEC-0011-R05 and SPEC-0011-R07: a declared credential reaches the
+// route and marks the server as needing one.
+func TestRoutesCarryTheDeclaredCredential(t *testing.T) {
+	item := server("team-a", "search", "http", "http://search.team-a.svc:8080", metav1.ConditionTrue)
+	item.Spec.Credential = &kavryntv1alpha1.MCPServerCredential{Header: "X-API-Key"}
+	routes := Routes([]kavryntv1alpha1.MCPServer{item})
+	if len(routes) != 1 || routes[0].Credential == nil || routes[0].Credential.HeaderName() != "X-API-Key" {
+		t.Fatalf("routes = %+v", routes)
+	}
+	servers := Servers([]kavryntv1alpha1.MCPServer{item})
+	if servers[0].Credential == nil || !servers[0].Credential.Required {
+		t.Fatalf("server credential = %+v", servers[0].Credential)
+	}
+	item.Spec.Credential = nil
+	if Routes([]kavryntv1alpha1.MCPServer{item})[0].Credential != nil || Servers([]kavryntv1alpha1.MCPServer{item})[0].Credential != nil {
+		t.Fatal("a server without spec.credential needs a credential")
+	}
+}
+
+// Verifies SPEC-0015-R03: a declared token exchange reaches the route, and
+// the console view names only its audience.
+func TestRoutesCarryTheTokenExchange(t *testing.T) {
+	item := server("team-a", "tickets", "http", "http://tickets.team-a.svc:8080", metav1.ConditionTrue)
+	item.Spec.TokenExchange = &kavryntv1alpha1.MCPServerTokenExchange{Audience: "https://tickets.example.com", Scopes: []string{"tickets:read"}}
+	routes := Routes([]kavryntv1alpha1.MCPServer{item})
+	if len(routes) != 1 || routes[0].TokenExchange == nil || routes[0].TokenExchange.Audience != "https://tickets.example.com" || routes[0].TokenExchange.Scopes[0] != "tickets:read" {
+		t.Fatalf("routes = %+v", routes)
+	}
+	item.Spec.TokenExchange.Scopes[0] = "changed"
+	if routes[0].TokenExchange.Scopes[0] != "tickets:read" {
+		t.Fatal("the route shares the MCPServer's scopes")
+	}
+	servers := Servers([]kavryntv1alpha1.MCPServer{item})
+	if servers[0].TokenExchange == nil || servers[0].TokenExchange.Audience != "https://tickets.example.com" {
+		t.Fatalf("server token exchange = %+v", servers[0].TokenExchange)
+	}
+}

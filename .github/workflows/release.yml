@@ -9,8 +9,8 @@ permissions:
   contents: read
 
 env:
-  STATICCHECK_VERSION: v0.8.0
-  GOSEC_VERSION: v2.28.0
+  STATICCHECK_VERSION: v0.8.2
+  GOSEC_VERSION: v2.30.0
   GOVULNCHECK_VERSION: v1.7.0
 
 jobs:
@@ -316,8 +316,8 @@ jobs:
 
       - name: Package chart
         run: |
-          helm lint charts/kavrynt
-          helm template kavrynt charts/kavrynt --namespace kavrynt-system >/dev/null
+          helm lint charts/kavrynt --set gateway.auth.enabled=false
+          helm template kavrynt charts/kavrynt --namespace kavrynt-system --set gateway.auth.enabled=false >/dev/null
           mkdir -p dist/charts
           helm package charts/kavrynt \
             --version "$VERSION" \

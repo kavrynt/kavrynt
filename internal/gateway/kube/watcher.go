@@ -128,12 +128,18 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 		if server.Spec.Transport != "http" || server.Validate() != nil {
 			continue
 		}
-		routes = append(routes, model.Route{
+		route := model.Route{
 			Name:      server.RouteName(),
 			Version:   server.Spec.Version,
 			Transport: server.Spec.Transport,
 			Endpoint:  server.Spec.Endpoint,
-		})
+		}
+		if server.Spec.Credential != nil {
+			credential := *server.Spec.Credential
+			route.Credential = &credential
+		}
+		route.TokenExchange = server.Spec.TokenExchange.Copy()
+		routes = append(routes, route)
 	}
 	return routes
 }
@@ -163,6 +169,12 @@ func Servers(items []kavryntv1alpha1.MCPServer) []model.Server {
 		}
 		if info := item.Status.ServerInfo; info != nil {
 			server.ServerInfo = &model.ServerInfo{Name: info.Name, Version: info.Version}
+		}
+		if item.Spec.Credential != nil {
+			server.Credential = &model.ServerCredential{Required: true}
+		}
+		if exchange := item.Spec.TokenExchange; exchange != nil {
+			server.TokenExchange = &model.ServerTokenExchange{Audience: exchange.Audience}
 		}
 		for _, condition := range item.Status.Conditions {
 			server.Conditions = append(server.Conditions, model.Condition{

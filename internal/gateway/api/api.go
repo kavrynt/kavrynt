@@ -1,22 +1,32 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
+	"github.com/kavrynt/kavrynt/internal/gateway/audit"
+	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
+	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 )
 
 type Metadata struct {
@@ -52,11 +62,26 @@ type Handler struct {
 	// allowedOrigins holds browser origins accepted besides loopback ones.
 	allowedOrigins map[string]struct{}
 	requestTimeout time.Duration
+	// strictProtocol refuses requests that fail the MCP Streamable HTTP
+	// checks; false only logs them (SPEC-0018).
+	strictProtocol bool
 	// console serves the web console under /ui/; nil disables it.
 	console http.Handler
 	// auth is the console admin login; nil leaves /v1/servers and
 	// /v1/traffic open (SPEC-0005-R03).
 	auth ConsoleAuth
+	// clientAuth authenticates MCP clients; nil leaves /mcp/ routes open
+	// (SPEC-0006-R01).
+	clientAuth *clientauth.Authenticator
+	// credentials holds the upstream credentials of servers that need one;
+	// the zero value has none (SPEC-0011).
+	credentials upstreamcred.Store
+
+	// instance names this replica (its pod name) in /v1/traffic.
+	instance string
+	// draining is set on shutdown so /readyz fails while requests are still
+	// served (SPEC-0008-R01).
+	draining atomic.Bool
 
 	requests         atomic.Uint64
 	proxied          atomic.Uint64
@@ -64,7 +89,20 @@ type Handler struct {
 
 	traffic        *trafficMetrics
 	recent         *recentTraffic
+	registry       *prometheus.Registry
 	metricsHandler http.Handler
+
+	// policy decides every MCP request when set (SPEC-0012).
+	policy *policy.Engine
+	// filterToolsList removes the tools the policy denies from tools/list
+	// answers (SPEC-0016).
+	filterToolsList bool
+	filteredTools   *prometheus.CounterVec
+	// audit records every MCP request when set (SPEC-0013).
+	audit *audit.Writer
+	// exchangeWithoutAuth remembers routes logged as needing token exchange
+	// without client authentication (SPEC-0015-R07).
+	exchangeWithoutAuth sync.Map
 }
 
 type errorResponse struct {
@@ -86,10 +124,12 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		stripRequest:   map[string]struct{}{},
 		allowedOrigins: map[string]struct{}{},
 		requestTimeout: DefaultRequestTimeout,
+		strictProtocol: true,
 		recent:         newRecentTraffic(recentTrafficSize),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
 	registry := h.newRegistry()
+	h.registry = registry
 	h.traffic = newTrafficMetrics(registry)
 	h.metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return h
@@ -110,6 +150,13 @@ func (h *Handler) SetRequestTimeout(timeout time.Duration) {
 	h.requestTimeout = timeout
 }
 
+// SetStrictProtocol sets whether requests that are not well-formed MCP
+// Streamable HTTP requests are refused (true, the default) or forwarded
+// with a debug log entry, for clients that are being migrated (SPEC-0018).
+func (h *Handler) SetStrictProtocol(strict bool) {
+	h.strictProtocol = strict
+}
+
 // AllowOrigins adds browser origins (scheme://host[:port]) whose requests are
 // accepted. Loopback origins are always accepted.
 func (h *Handler) AllowOrigins(origins ...string) {
@@ -118,6 +165,19 @@ func (h *Handler) AllowOrigins(origins ...string) {
 			h.allowedOrigins[strings.ToLower(origin)] = struct{}{}
 		}
 	}
+}
+
+// SetInstance names this replica in /v1/traffic, whose recent traffic is per
+// replica (SPEC-0008-R06).
+func (h *Handler) SetInstance(name string) {
+	h.instance = name
+}
+
+// SetDraining makes /readyz answer 503 so the Service stops sending new
+// requests, while every other request is still served, each closing its
+// connection (SPEC-0008-R01).
+func (h *Handler) SetDraining() {
+	h.draining.Store(true)
 }
 
 // ConsoleAuth is the console admin login (internal/gateway/auth).
@@ -133,6 +193,43 @@ func (h *Handler) EnableConsoleAuth(auth ConsoleAuth) {
 	h.auth = auth
 }
 
+// EnableClientAuth requires a valid bearer token for the route on every
+// /mcp/ request and serves Protected Resource Metadata (SPEC-0006).
+func (h *Handler) EnableClientAuth(a *clientauth.Authenticator) {
+	h.clientAuth = a
+}
+
+// EnableUpstreamCredentials sends each server's stored credential, from the
+// mounted upstream credentials Secret, to servers that declare one
+// (SPEC-0011).
+func (h *Handler) EnableUpstreamCredentials(store upstreamcred.Store) {
+	h.credentials = store
+}
+
+// EnablePolicy has engine decide every MCP request before it is forwarded,
+// and exports its metrics (SPEC-0012).
+func (h *Handler) EnablePolicy(engine *policy.Engine) {
+	h.policy = engine
+	h.filteredTools = prometheus.NewCounterVec(prometheus.CounterOpts{
+		Name: "kavrynt_gateway_policy_filtered_tools_total",
+		Help: "Tools removed from tools/list answers because the policy denies calling them.",
+	}, []string{"route"})
+	h.registry.MustRegister(engine.Collectors()...)
+	h.registry.MustRegister(h.filteredTools)
+}
+
+// EnableToolsListFilter makes tools/list answers list only the tools the
+// policy lets the caller call (SPEC-0016). It needs EnablePolicy.
+func (h *Handler) EnableToolsListFilter() {
+	h.filterToolsList = true
+}
+
+// EnableAudit writes one audit event per MCP request (SPEC-0013).
+func (h *Handler) EnableAudit(w *audit.Writer) {
+	h.audit = w
+	h.registry.MustRegister(w.Collectors()...)
+}
+
 // EnableConsole serves console under /ui/ and redirects / to it. The console
 // receives paths without the /ui prefix.
 func (h *Handler) EnableConsole(console http.Handler) {
@@ -141,6 +238,12 @@ func (h *Handler) EnableConsole(console http.Handler) {
 
 func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	h.requests.Add(1)
+	if h.draining.Load() {
+		// Close each connection after its response, so clients move their
+		// next request to a replica that stays. Closing idle connections
+		// instead would race with requests already being sent on them.
+		w.Header().Set("Connection", "close")
+	}
 
 	// Browsers send Origin on cross-origin and state-changing requests. The
 	// Gateway does not authenticate callers yet, so a web page must not be
@@ -172,8 +275,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case r.URL.Path == "/v1/session":
 		h.session(w, r)
+	case h.clientAuth != nil && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, metadataPrefix):
+		h.protectedResource(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):
-		h.proxy(w, r)
+		h.serveMCP(w, r)
 	case h.console != nil && r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/ui"):
 		http.Redirect(w, r, "/ui/", http.StatusFound)
 	case h.console != nil && strings.HasPrefix(r.URL.Path, "/ui/"):
@@ -189,6 +294,10 @@ func (h *Handler) health(w http.ResponseWriter, _ *http.Request) {
 
 func (h *Handler) ready(w http.ResponseWriter, _ *http.Request) {
 	ready, lastSync, lastError, routes := h.table.Status()
+	if h.draining.Load() {
+		writeJSON(w, http.StatusServiceUnavailable, map[string]any{"status": "draining", "routes": routes})
+		return
+	}
 	if !ready {
 		status := map[string]any{
 			"status":    "not ready",
@@ -213,14 +322,64 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	h.metricsHandler.ServeHTTP(w, r)
 }
 
+// routeView is a route in /v1/routes. Endpoints never include credentials,
+// a query, or a fragment (SPEC-0006-R18), and are left out when MCP client
+// authentication is on, so unauthenticated callers do not learn internal
+// addresses (SPEC-0006-R19).
+type routeView struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Transport string `json:"transport"`
+	Endpoint  string `json:"endpoint,omitempty"`
+}
+
 func (h *Handler) listRoutes(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]model.Route{"routes": h.table.List()})
+	routes := []routeView{}
+	for _, route := range h.table.List() {
+		view := routeView{Name: route.Name, Version: route.Version, Transport: route.Transport}
+		if h.clientAuth == nil {
+			view.Endpoint = redactEndpoint(route.Endpoint)
+		}
+		routes = append(routes, view)
+	}
+	writeJSON(w, http.StatusOK, map[string][]routeView{"routes": routes})
+}
+
+// redactEndpoint drops userinfo, query, and fragment from an endpoint.
+func redactEndpoint(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+	return u.String()
+}
+
+const metadataPrefix = "/.well-known/oauth-protected-resource/mcp/"
+
+// protectedResource serves the RFC 9728 metadata of a routed server, without
+// authentication (SPEC-0006-R07).
+func (h *Handler) protectedResource(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, metadataPrefix)
+	if _, exists := h.table.Get(name); !exists || strings.Contains(name, "/") {
+		writeError(w, http.StatusNotFound, errors.New("not found"))
+		return
+	}
+	writeJSON(w, http.StatusOK, h.clientAuth.Metadata(name))
 }
 
 func (h *Handler) listServers(w http.ResponseWriter, _ *http.Request) {
-	servers := h.table.Servers()
-	if servers == nil {
-		servers = []model.Server{}
+	// A copy: the table's slice is shared with other requests.
+	servers := append([]model.Server{}, h.table.Servers()...)
+	// Availability depends on the mounted Secret, which changes on its own,
+	// so it is checked per request; the value is never read into the view.
+	for i := range servers {
+		if servers[i].Credential != nil {
+			servers[i].Credential = &model.ServerCredential{
+				Required:  true,
+				Available: h.credentials.Available(servers[i].Route, servers[i].Endpoint),
+			}
+		}
 	}
 	writeJSON(w, http.StatusOK, map[string][]model.Server{"servers": servers})
 }
@@ -247,11 +406,14 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("console login is disabled"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false})
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false, "mcpAuth": h.clientAuth != nil})
 }
 
 func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]TrafficRecord{"requests": h.recent.list()})
+	writeJSON(w, http.StatusOK, struct {
+		Instance string          `json:"instance"`
+		Requests []TrafficRecord `json:"requests"`
+	}{h.instance, h.recent.list()})
 }
 
 // originAllowed accepts requests without an Origin header, loopback origins
@@ -289,23 +451,54 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	route, exists := h.table.Get(name)
+	if h.clientAuth != nil {
+		// Authentication runs before the route is looked up, so callers
+		// without a valid token cannot tell registered routes from others.
+		identity, refusal := h.authenticate(r, name)
+		if refusal != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = refusalDecision(refusal.Outcome, refusal.Status), refusal.Message
+			}
+			writeRefusal(w, refusal)
+			if exists {
+				call, _, _ := inspectRequest(r)
+				h.finish(r, route.Name, call, refusalOutcome(refusal.Outcome), refusal.Status, time.Since(start), 0, 0)
+			}
+			return
+		}
+		r = r.WithContext(clientauth.WithIdentity(r.Context(), identity))
+		if rec := auditRecordFrom(r); rec != nil {
+			rec.identity = identity
+		}
+	}
 	if !exists {
 		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
 		return
 	}
 
-	start := time.Now()
 	call, body, err := inspectRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("read request body"))
-		h.observe(route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
+		h.finish(r, route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
 		return
 	}
 	upstreamBody := &countingReader{r: body}
 	gatewayError := func(status int, err error) {
 		writeError(w, status, err)
-		h.observe(route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
+		h.finish(r, route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
+	}
+	if err := checkProtocol(r, call.body); err != nil {
+		if h.strictProtocol {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
+			}
+			writeError(w, http.StatusBadRequest, err)
+			h.finish(r, route.Name, call, outcomeProtocolError, http.StatusBadRequest, time.Since(start), 0, 0)
+			return
+		}
+		slog.Debug("forwarding a request that fails the MCP protocol checks", "route", route.Name, "error", err)
 	}
 
 	if r.Header.Get(routeHeader) != "" {
@@ -315,6 +508,13 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	if route.Transport != "http" {
 		gatewayError(http.StatusBadGateway, fmt.Errorf("transport %q is not supported by gateway MVP", route.Transport))
 		return
+	}
+	if h.policy != nil && !h.authorize(w, r, route.Name, call, start, upstreamBody) {
+		return
+	}
+	var filter *toolsFilter
+	if h.policy != nil && h.filterToolsList && r.Method == http.MethodPost && call.body.classified && call.body.method == "tools/list" {
+		filter = &toolsFilter{decide: h.policy.Decide, input: policyInput(r, route.Name), id: call.body.id}
 	}
 
 	target, err := buildTargetURL(route.Endpoint, suffix, r.URL.RawQuery)
@@ -346,11 +546,47 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	if copyHeaders(req.Header, r.Header, h.stripRequest) {
 		h.strippedRequests.Add(1)
 	}
+	if filter != nil {
+		// The transport then asks for gzip and decodes it, so the filter
+		// reads the answer uncompressed.
+		req.Header.Del("Accept-Encoding")
+	}
+	if route.Credential != nil {
+		// The stored credential replaces any header of that name the client
+		// sent; without it the request is not forwarded (SPEC-0011-R05, R06).
+		value, err := h.credentials.Lookup(route.Name, route.Endpoint)
+		if err != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionUnavailable, "upstream credential unavailable"
+			}
+			writeError(w, http.StatusServiceUnavailable, errors.New("upstream credential unavailable"))
+			h.finish(r, route.Name, call, outcomeCredentialUnavailable, http.StatusServiceUnavailable, time.Since(start), upstreamBody.n, 0)
+			return
+		}
+		req.Header.Set(route.Credential.HeaderName(), route.Credential.HeaderValue(value))
+	}
+	if route.TokenExchange != nil {
+		// Only the exchanged token reaches the server; the caller's was
+		// stripped with the other credential headers (SPEC-0015-R03).
+		token, status, err := h.exchangeToken(r, route)
+		if err != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionUnavailable, err.Error()
+			}
+			writeError(w, status, err)
+			h.finish(r, route.Name, call, outcomeExchangeFailed, status, time.Since(start), upstreamBody.n, 0)
+			return
+		}
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
 	req.Host = req.URL.Host
 	req.Header.Set(routeHeader, route.Name)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
 	// #nosec G704 -- buildTargetURL restricts MCPServer-provided targets to validated HTTP(S) URLs.
+	if rec := auditRecordFrom(r); rec != nil {
+		rec.decision = auditv1.DecisionAllow
+	}
 	resp, err := h.client.Do(req)
 	if err != nil {
 		// The error names the upstream URL; callers get a fixed message.
@@ -359,7 +595,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			outcome, status, message = outcomeTimeout, http.StatusGatewayTimeout, errRequestTimeout.Error()
 		}
 		writeError(w, status, errors.New(message))
-		h.observe(route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
+		h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
 		return
 	}
 	defer resp.Body.Close()
@@ -375,6 +611,21 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	// upstream cannot run code as the Gateway origin.
 	w.Header().Set("Content-Security-Policy", "sandbox")
 	w.Header().Set("X-Content-Type-Options", "nosniff")
+	if filter != nil {
+		written, removed, copyErr := h.serveFilteredToolsList(w, r, route.Name, filter, resp)
+		if rec := auditRecordFrom(r); rec != nil {
+			rec.filteredTools = removed
+		}
+		outcome := classifyResponse(resp.StatusCode, nil)
+		if copyErr != nil {
+			outcome = outcomeIncomplete
+		}
+		h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
+		if copyErr == nil {
+			h.proxied.Add(1)
+		}
+		return
+	}
 	w.WriteHeader(resp.StatusCode)
 
 	// JSON responses are also captured (bounded) to detect JSON-RPC and tool
@@ -397,10 +648,160 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			outcome = outcomeTimeout
 		}
 	}
-	h.observe(route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
+	h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
 	if copyErr == nil {
 		h.proxied.Add(1)
 	}
+}
+
+// authorize asks the policy whether the request may reach the MCP server,
+// and answers it when not (SPEC-0012). It reports whether to forward.
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName string, call mcpCall, start time.Time, body *countingReader) bool {
+	rec := auditRecordFrom(r)
+	if rec != nil {
+		rec.policyRevision = h.policy.Revision()
+	}
+	refuse := func(err error) bool {
+		if rec != nil {
+			rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
+		}
+		writeError(w, http.StatusBadRequest, err)
+		h.finish(r, routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
+		return false
+	}
+	input := policyInput(r, routeName)
+	if r.Method == http.MethodPost {
+		// The policy decides on the body's JSON-RPC message, so a body it
+		// cannot read is refused (SPEC-0012-R09), and headers that name
+		// another method or tool are refused (SPEC-0012-R10).
+		b := call.body
+		switch {
+		case !b.read || !b.classified:
+			return refuse(errors.New("the request is not a single JSON-RPC message the Gateway can read (at most 1 MiB); the policy cannot decide on it"))
+		case b.method == "tools/call" && !b.toolOK:
+			return refuse(errors.New("tools/call needs a string params.name"))
+		case r.Header.Get("Mcp-Method") != "" && r.Header.Get("Mcp-Method") != b.method:
+			return refuse(errors.New("the Mcp-Method header does not match the request body"))
+		case r.Header.Get("Mcp-Name") != "" && b.method == "tools/call" && r.Header.Get("Mcp-Name") != b.tool:
+			return refuse(errors.New("the Mcp-Name header does not match the request body"))
+		}
+		input.MCPMethod = b.method
+		if b.method == "tools/call" {
+			input.Tool = b.tool
+		}
+	}
+
+	decision := h.policy.Decide(r.Context(), input)
+	if decision.Allow {
+		return true
+	}
+	message := "denied by policy"
+	if decision.Reason != "" {
+		message += ": " + decision.Reason
+	}
+	if rec != nil {
+		rec.decision, rec.reason = auditv1.DecisionDeny, decision.Reason
+	}
+	id := call.body.id
+	if len(id) == 0 {
+		id = json.RawMessage("null")
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": policyDeniedCode, "message": message},
+	})
+	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
+	return false
+}
+
+// exchangeToken returns the token for route in exchange for the caller's,
+// or the status and fixed message to answer with (SPEC-0015-R06, R07).
+func (h *Handler) exchangeToken(r *http.Request, route model.Route) (string, int, error) {
+	if h.clientAuth == nil {
+		if _, logged := h.exchangeWithoutAuth.LoadOrStore(route.Name, true); !logged {
+			slog.Error("MCP server needs token exchange, which needs MCP client authentication; its calls are refused", "route", route.Name)
+		}
+		return "", http.StatusServiceUnavailable, errors.New("token exchange needs MCP client authentication")
+	}
+	identity, _ := clientauth.IdentityFrom(r.Context())
+	token, err := h.clientAuth.Exchange(r, identity, route.TokenExchange.Audience, route.TokenExchange.Scopes)
+	switch {
+	case errors.Is(err, clientauth.ErrExchangeUnreachable):
+		return "", http.StatusServiceUnavailable, errors.New("token exchange unavailable")
+	case err != nil:
+		return "", http.StatusBadGateway, errors.New("token exchange failed")
+	}
+	return token, 0, nil
+}
+
+// policyInput is the policy input of a request without its MCP method and
+// tool: the verified caller, the route, the HTTP method, and the time.
+func policyInput(r *http.Request, routeName string) policy.Input {
+	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339)}
+	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
+	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
+		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
+	}
+	return input
+}
+
+// policyDeniedCode is the JSON-RPC error code of a policy denial, in the
+// range JSON-RPC reserves for server errors.
+const policyDeniedCode = -32001
+
+// authenticate refuses tokens sent outside the Authorization header
+// (SPEC-0006-R04), then verifies the bearer token for the route.
+func (h *Handler) authenticate(r *http.Request, route string) (clientauth.Identity, *clientauth.Refusal) {
+	if tokenOutsideHeader(r) {
+		return clientauth.Identity{}, h.clientAuth.InvalidRequest(route)
+	}
+	return h.clientAuth.Authenticate(r, route)
+}
+
+// tokenOutsideHeader reports an access_token query parameter or form field.
+// A form body is read (bounded) and put back for the request.
+func tokenOutsideHeader(r *http.Request) bool {
+	if r.URL.Query().Has("access_token") {
+		return true
+	}
+	if r.Body == nil || r.Body == http.NoBody {
+		return false
+	}
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType != "application/x-www-form-urlencoded" {
+		return false
+	}
+	prefix, err := io.ReadAll(io.LimitReader(r.Body, maxInspectBytes))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
+	if err != nil {
+		return false
+	}
+	form, err := url.ParseQuery(string(prefix))
+	return err == nil && form.Has("access_token")
+}
+
+// refusalOutcome keeps metric labels to the known outcomes.
+func refusalOutcome(outcome string) string {
+	switch outcome {
+	case outcomeUnauthenticated, outcomeForbidden, outcomeAuthUnavailable:
+		return outcome
+	default:
+		return outcomeGatewayError
+	}
+}
+
+func writeRefusal(w http.ResponseWriter, refusal *clientauth.Refusal) {
+	w.Header().Set("WWW-Authenticate", refusal.WWWAuthenticate)
+	w.Header().Set("Cache-Control", "no-store")
+	if refusal.RetryAfter != "" {
+		w.Header().Set("Retry-After", refusal.RetryAfter)
+	}
+	writeError(w, refusal.Status, errors.New(refusal.Message))
 }
 
 // observe records a proxied request in the metrics and the recent traffic.

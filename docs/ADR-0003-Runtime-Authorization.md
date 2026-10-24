@@ -3,7 +3,16 @@
 ## Status
 
 Accepted (2026-10-02). Implemented so far: no token passthrough (header
-stripping) for `0.0.2-beta.1`. Everything else in this ADR is design only.
+stripping) for `0.0.2-beta.1`; the Gateway as an OAuth 2.1 resource server
+(SPEC-0006; on by default in the chart from SPEC-0014), static upstream
+credentials from a kubelet-mounted
+Secret (SPEC-0011), the policy decision point with OPA and policy from a
+ConfigMap (SPEC-0012; signed bundles from Kavrynt Cloud and approvals are
+not built), audit events on standard output with a per-instance hash chain
+(SPEC-0013; delivery to Kavrynt Cloud is not built), the Gateway-bypass
+NetworkPolicy (SPEC-0007), and token exchange for servers that need a
+token on behalf of the caller (SPEC-0015; `client_secret_basic` only).
+Everything else in this ADR is design only.
 
 Plane 4 of `kavrynt-cloud/docs/ADR-0006-Identity-Planes.md`. Threats are
 tracked in `kavrynt-cloud/docs/THREAT-0001-System-Threat-Model.md`.

@@ -7,7 +7,7 @@
 (() => {
   const { h, put, clear, toast, copy, badge, codeBlock, emptyState } = Kavrynt.dom;
   const { pretty, fmtMs } = Kavrynt.format;
-  const { formatHash } = Kavrynt.state;
+  const { formatHash, authFailureMessage } = Kavrynt.state;
 
   const PROTOCOL_VERSION = "2025-06-18";
   const MAX_RAW_BYTES = 2 << 20;
@@ -23,14 +23,27 @@
     history: [],
   };
 
+  // accessToken is the MCP access token pasted into the Playground. It lives
+  // in this variable only, never in browser storage, and is sent only in the
+  // Authorization header of the Playground's own /mcp/ requests
+  // (SPEC-0006-R16).
+  let accessToken = "";
+
   function closePlayground() {
     if (pg.session) pg.session.close();
   }
 
-  // resetPlayground forgets the session, calls, and results, for sign-out.
+  // resetPlayground forgets the session, calls, results, and access token,
+  // for sign-out.
   function resetPlayground() {
     closePlayground();
+    accessToken = "";
     Object.assign(pg, { route: "", session: null, tools: [], selected: null, mode: "form", last: null, history: [] });
+  }
+
+  function authHeaders(headers) {
+    if (accessToken) headers.Authorization = "Bearer " + accessToken;
+    return headers;
   }
 
   function gatewayURL(route) {
@@ -55,7 +68,7 @@
       if (method === "tools/call" && params && /^[\x21-\x7e]{1,128}$/.test(params.name || "")) headers["Mcp-Name"] = params.name;
       if (this.id) headers["Mcp-Session-Id"] = this.id;
       if (this.protocolVersion) headers["MCP-Protocol-Version"] = this.protocolVersion;
-      return headers;
+      return authHeaders(headers);
     }
 
     async request(method, params) {
@@ -72,7 +85,11 @@
         raw = (await res.text()).slice(0, MAX_RAW_BYTES);
         try { message = JSON.parse(raw); } catch { message = null; }
       }
-      return { method, request: body, status: res.status, ms: performance.now() - started, message, raw, sessionId: res.headers.get("Mcp-Session-Id"), at: new Date() };
+      return {
+        method, request: body, status: res.status, ms: performance.now() - started, message, raw, sessionId: res.headers.get("Mcp-Session-Id"), at: new Date(),
+        // The Gateway, not the MCP server, refused the call (SPEC-0006-R16).
+        refusedByAuth: /^Bearer\b/i.test(res.headers.get("WWW-Authenticate") || ""),
+      };
     }
 
     async notify(method) {
@@ -103,7 +120,7 @@
 
     close() {
       if (!this.id) return;
-      fetch("/mcp/" + this.route, { method: "DELETE", headers: { "Mcp-Session-Id": this.id }, keepalive: true }).catch(() => {});
+      fetch("/mcp/" + this.route, { method: "DELETE", headers: authHeaders({ "Mcp-Session-Id": this.id }), keepalive: true }).catch(() => {});
       this.id = null;
     }
   }
@@ -156,6 +173,8 @@
   function describeFailure(result) {
     const error = rpcError(result.message);
     if (error) return "JSON-RPC error " + error.code + ": " + (error.message || "");
+    const refused = result.refusedByAuth ? authFailureMessage(result.status) : null;
+    if (refused) return "HTTP " + result.status + ": " + refused;
     if (result.status < 200 || result.status >= 300) {
       const detail = result.message && typeof result.message.error === "string" ? ": " + result.message.error : "";
       return (result.status ? "HTTP " + result.status : "Network error") + detail;
@@ -182,6 +201,7 @@
     serverSelect.value = pg.route;
 
     const sessionBox = h("div", { class: "session-info", role: "status" });
+    const tokenBox = h("div");
     const toolsBox = h("div");
     const formBox = h("div");
     const resultBox = h("div");
@@ -194,7 +214,7 @@
           h("p", { text: "Call MCP tools through the Gateway, exactly as your agent would. Every call shows up under Traffic." })),
         h("div", { class: "toolbar" }, serverSelect,
           h("button", { type: "button", class: "btn", disabled: !pg.route, onclick: () => connect(true) }, "Reconnect"))),
-      h("section", { class: "panel" }, h("div", { class: "body" }, sessionBox)),
+      h("section", { class: "panel" }, h("div", { class: "body" }, tokenBox, sessionBox)),
       h("div", { class: "pg" },
         h("div", {},
           h("section", { class: "panel" }, h("header", {}, h("h2", { text: "Tools" }),
@@ -202,6 +222,29 @@
           h("div", { class: "body flush pg-tools" }, toolsBox)),
           h("section", { class: "panel" }, h("header", {}, h("h2", { text: "History" })), h("div", { class: "body flush" }, historyBox))),
         workBox));
+
+    // drawToken offers a field for the MCP access token when the Gateway
+    // requires one (SPEC-0006-R16). The value goes to accessToken only.
+    function drawToken() {
+      clear(tokenBox);
+      if (!state.auth.mcpAuth) return;
+      const input = h("input", {
+        type: "password", autocomplete: "off", spellcheck: "false", "aria-label": "MCP access token",
+        placeholder: accessToken ? "Token in use; paste another to replace it" : "Paste an access token for this route",
+      });
+      const use = () => {
+        accessToken = input.value.trim();
+        input.value = "";
+        drawToken();
+        connect(true);
+      };
+      input.addEventListener("keydown", (e) => { if (e.key === "Enter") use(); });
+      put(tokenBox, h("div", { class: "token-row" },
+        h("span", { class: "muted", text: "MCP routes on this Gateway require an access token." }),
+        input,
+        h("button", { type: "button", class: "btn small", onclick: use }, "Use token"),
+        accessToken ? h("button", { type: "button", class: "btn small", onclick: () => { accessToken = ""; drawToken(); connect(true); } }, "Forget token") : null));
+    }
 
     function drawSession() {
       clear(sessionBox);
@@ -443,6 +486,7 @@
       ctx.refreshTraffic();
     }
 
+    drawToken();
     drawHistory();
     connect(false);
     return (what) => {

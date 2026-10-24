@@ -1,9 +1,16 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
+	"net"
+	"net/http"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/kavrynt/kavrynt/internal/gateway/api"
+	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 )
 
 // Verifies SPEC-0005-R11.
@@ -20,6 +27,90 @@ func TestConsoleLoginNeedsCredentialsDirectory(t *testing.T) {
 	for _, c := range []struct{ console, auth bool }{{false, true}, {true, false}, {false, false}} {
 		if a, err := newConsoleAuth(c.console, c.auth, "", time.Hour); err != nil || a != nil {
 			t.Fatalf("console=%v auth=%v: got %v, %v; want no login and no error", c.console, c.auth, a, err)
+		}
+	}
+}
+
+// Verifies SPEC-0008-R01.
+func TestShutdownDrainsBeforeClosing(t *testing.T) {
+	handler := api.NewHandler(routing.NewTable(), nil, api.Metadata{})
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	if err != nil {
+		t.Fatal(err)
+	}
+	server := &http.Server{Handler: handler, ReadHeaderTimeout: time.Second}
+	go func() { _ = server.Serve(listener) }()
+	base := "http://" + listener.Addr().String()
+
+	status := func(path string) int {
+		res, err := http.Get(base + path)
+		if err != nil {
+			return 0
+		}
+		_ = res.Body.Close()
+		return res.StatusCode
+	}
+
+	var slept time.Duration
+	err = shutdown(handler, server, 5*time.Second, time.Second, func(d time.Duration) {
+		slept = d
+		// During the delay readiness fails and the server still answers.
+		if got := status("/readyz"); got != http.StatusServiceUnavailable {
+			t.Errorf("readyz during the delay = %d, want 503", got)
+		}
+		res, err := http.Get(base + "/healthz")
+		if err != nil {
+			t.Errorf("healthz during the delay: %v", err)
+			return
+		}
+		_ = res.Body.Close()
+		if res.StatusCode != http.StatusOK || !res.Close {
+			t.Errorf("healthz during the delay = %d (close=%v), want 200 closing the connection", res.StatusCode, res.Close)
+		}
+	})
+	if err != nil {
+		t.Fatalf("shutdown: %v", err)
+	}
+	if slept != 5*time.Second {
+		t.Fatalf("slept %s, want the 5s delay", slept)
+	}
+	if got := status("/healthz"); got != 0 {
+		t.Fatalf("server still answers after shutdown: %d", got)
+	}
+}
+
+// Verifies SPEC-0006-R01 and SPEC-0006-R02.
+func TestClientAuthConfiguration(t *testing.T) {
+	if a, err := newClientAuth(false, "", "", "", ""); a != nil || err != nil {
+		t.Fatalf("auth off: %v, %v; want nothing", a, err)
+	}
+	issuers := `[{"issuer":"https://as.example.com"}]`
+	for name, c := range map[string]struct{ url, issuers string }{
+		"no resource URL":      {"", issuers},
+		"no issuer":            {"https://mcp.example.com", ""},
+		"empty issuer list":    {"https://mcp.example.com", "[]"},
+		"issuers not JSON":     {"https://mcp.example.com", "https://as.example.com"},
+		"unknown issuer field": {"https://mcp.example.com", `[{"issuer":"https://as.example.com","jwks":"x"}]`},
+		"http issuer":          {"https://mcp.example.com", `[{"issuer":"http://as.example.com"}]`},
+		"http resource URL":    {"http://mcp.example.com", issuers},
+	} {
+		if _, err := newClientAuth(true, c.url, c.issuers, "", ""); err == nil {
+			t.Errorf("%s: authentication configured, want a refusal to start", name)
+		}
+	}
+	if a, err := newClientAuth(true, "https://mcp.example.com", issuers, "mcp:tools", ""); err != nil || a == nil {
+		t.Fatalf("valid configuration: %v, %v", a, err)
+	}
+}
+
+// Verifies SPEC-0014-R03.
+func TestWarnsWhenMCPRoutesAreUnauthenticated(t *testing.T) {
+	for _, authenticated := range []bool{false, true} {
+		var logs bytes.Buffer
+		warnUnauthenticated(slog.New(slog.NewTextHandler(&logs, nil)), authenticated)
+		warned := strings.Contains(logs.String(), "level=WARN") && strings.Contains(logs.String(), "unauthenticated")
+		if warned == authenticated {
+			t.Errorf("authenticated=%v: logged %q", authenticated, logs.String())
 		}
 	}
 }

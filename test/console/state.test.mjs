@@ -102,10 +102,10 @@ test("a poller started in a hidden page waits until it is visible", () => {
 
 test("session responses map to login off, signed in, or login required, and fail closed", () => {
   const { sessionState } = state;
-  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "" });
+  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth: false });
   assert.deepEqual(sessionState(200, { enabled: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z" }),
-    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z" });
-  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "" });
+    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z", mcpAuth: false });
+  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth: false });
   // Anything unexpected is not a session; the console then shows the login form.
   for (const [status, body] of [[200, {}], [200, null], [500, null], [403, { error: "origin not allowed" }]]) {
     assert.equal(sessionState(status, body), null, status + " " + JSON.stringify(body));
@@ -121,4 +121,48 @@ test("login failures are explained without revealing which field was wrong", () 
   assert.match(loginMessage(503), /not configured/);
   assert.match(loginMessage(0), /did not answer/);
   assert.equal(loginMessage(500), "Login failed (HTTP 500).");
+});
+
+// Verifies SPEC-0006-R15: the console learns from /v1/session whether MCP
+// routes need tokens, with or without the console login.
+test("the session state carries MCP client authentication", () => {
+  const { sessionState } = state;
+  assert.equal(sessionState(200, { enabled: false, mcpAuth: true }).mcpAuth, true);
+  assert.equal(sessionState(200, { enabled: true, username: "admin", mcpAuth: true }).mcpAuth, true);
+  assert.equal(sessionState(401, { enabled: true, mcpAuth: true }).mcpAuth, true);
+  assert.equal(sessionState(200, { enabled: false }).mcpAuth, false);
+  assert.equal(sessionState(200, { enabled: false, mcpAuth: "yes" }).mcpAuth, false);
+});
+
+// Verifies SPEC-0006-R16: refused Playground calls are explained.
+test("calls refused by MCP client authentication are explained", () => {
+  const { authFailureMessage } = state;
+  assert.match(authFailureMessage(401), /valid access token/);
+  assert.match(authFailureMessage(403), /scope/);
+  assert.match(authFailureMessage(503), /signing keys/);
+  assert.equal(authFailureMessage(500), null);
+});
+
+// Verifies SPEC-0006-R17: with MCP client authentication on, the notice says
+// MCP routes require tokens instead of calling them unauthenticated.
+test("the notice tells whether MCP routes require tokens", () => {
+  const { notice } = state;
+  const withTokens = notice({ enabled: true, mcpAuth: true });
+  assert.equal(withTokens.title, "MCP routes require access tokens.");
+  assert.match(withTokens.text, /login protects the console only/);
+  assert.doesNotMatch(withTokens.title + withTokens.text, /not authenticated/);
+  assert.equal(notice({ enabled: false, mcpAuth: true }).title, "MCP routes require access tokens.");
+  assert.equal(notice({ enabled: true, mcpAuth: false }).title, "MCP routes are not authenticated.");
+  assert.equal(notice({ enabled: false, mcpAuth: false }).title, "No login.");
+});
+
+// Verifies SPEC-0014-R03: with MCP client authentication turned off, the
+// notice says every routed tool can be called without authentication.
+test("the notice says MCP routes are open when authentication is off", () => {
+  const { notice } = state;
+  for (const enabled of [true, false]) {
+    const { title, text } = notice({ enabled, mcpAuth: false });
+    assert.match(title + " " + text, /call every routed tool/);
+    assert.match(title + " " + text, /turn on MCP client authentication/);
+  }
 });

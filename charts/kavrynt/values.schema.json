@@ -18,10 +18,97 @@
             "maxLength": 63,
             "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
           }
+        },
+        "upstreamCredentials": {
+          "type": "object",
+          "description": "Secret in the release namespace with the credentials of MCP servers that declare spec.credential (SPEC-0011).",
+          "additionalProperties": false,
+          "properties": {
+            "secretName": {
+              "type": "string",
+              "maxLength": 253,
+              "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+            }
+          }
         }
       }
     },
     "gateway": { "type": "object" },
-    "operator": { "type": "object" }
+    "operator": { "type": "object" },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "prometheusRule": {
+          "type": "object",
+          "description": "Alerting rules (SPEC-0010).",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "labels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "alertLabels": { "type": "object", "additionalProperties": { "type": "string" } },
+            "jobs": {
+              "type": "object",
+              "additionalProperties": false,
+              "properties": {
+                "gateway": { "type": "string" },
+                "operator": { "type": "string" }
+              }
+            },
+            "errorRatio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "minRequestsPerSecond": { "type": "number", "minimum": 0 },
+            "latencyP95Seconds": { "type": "number", "exclusiveMinimum": 0 },
+            "notReadyFor": { "type": "string", "pattern": "^[0-9]+[smh]$" },
+            "cloudSyncStaleSeconds": { "type": "integer", "minimum": 60 },
+            "runbookBaseURL": { "type": "string", "pattern": "^(https://\\S+)?$" }
+          }
+        }
+      }
+    },
+    "networkPolicy": {
+      "type": "object",
+      "description": "NetworkPolicies that keep MCP traffic on the Gateway path (SPEC-0007).",
+      "additionalProperties": false,
+      "properties": {
+        "mcpServers": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "namespaces": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "maxLength": 63,
+                "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$"
+              }
+            }
+          }
+        },
+        "gateway": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "allowedNamespaceLabels": {
+              "type": "array",
+              "items": {
+                "type": "object",
+                "minProperties": 1,
+                "additionalProperties": { "type": "string" }
+              }
+            },
+            "allowedCIDRs": {
+              "type": "array",
+              "items": {
+                "type": "string",
+                "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])|[0-9a-fA-F:]+:[0-9a-fA-F:]*/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))$"
+              }
+            }
+          }
+        }
+      }
+    }
   }
 }

@@ -27,17 +27,24 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 
 > [!IMPORTANT]
 > Kavrynt is currently an early MVP. The core registration and HTTP routing
-> loop works, but authentication, policy enforcement, and high availability are
-> not implemented yet. Run this version only
-> in trusted development or evaluation clusters.
+> loop works. MCP client authentication is on by default: an install names
+> your authorization server or opts out explicitly. Tool authorization policy
+> and audit events are available but off by default (the production profile
+> turns audit on). Servers that need the user get the caller's token
+> exchanged for their own audience. Approvals are not implemented yet. Run
+> this version only in trusted development or evaluation clusters.
 
 ## TL;DR
 
+A trial without an authorization server, with MCP routes open to anyone who
+can reach the Gateway:
+
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 0.0.5-beta.1 \
+  --version 1.0.0-beta.1 \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.enabled=false
 
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 # console: http://localhost:18080/ui/  user: admin  password:
@@ -142,13 +149,22 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=0.0.5-beta.1
+export KAVRYNT_VERSION=1.0.0-beta.1
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.resourceURL=https://mcp.example.com \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]'
 ```
+
+MCP client authentication is on by default: every `/mcp/` call needs an
+access token from a trusted authorization server, and the install fails
+until `gateway.auth.resourceURL` (the Gateway's external https origin) and
+`gateway.auth.issuers` are set. For a trial without an authorization server,
+replace both with `--set gateway.auth.enabled=false`; MCP routes then accept
+unauthenticated calls, and the Gateway and the console say so.
 
 The command pulls the versioned OCI Helm chart and installs the matching
 Gateway and Operator images. Authenticate Helm to GHCR first when
@@ -172,7 +188,8 @@ vendored, so no dependency build is needed):
 ```bash
 helm upgrade --install kavrynt charts/kavrynt \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.enabled=false
 ```
 
 ### Verify the installation
@@ -278,7 +295,8 @@ failing, and the tools that fail most. **Servers** and **Tools** list every
 the Gateway exactly as an agent would; **Traffic** shows recent calls with
 per-tool error rate and latency. Point your own agent at
 `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls arrive.
-The login protects the console only: MCP routes are not authenticated yet.
+The login protects the console only: MCP routes stay open unless MCP client
+authentication (`gateway.auth`) is on.
 Details: [Gateway console](docs/components/gateway/README.md#console).
 
 ### 6. Clean up the example
@@ -297,9 +315,11 @@ step, including what Kavrynt does not do yet. See [docs/DEMO.md](docs/DEMO.md).
 
 ## Use kavryctl
 
-kavryctl manages `MCPServer` resources through your kubeconfig. It does not
-install or upgrade the control plane; Helm owns that release path. Install it
-from source when developing locally:
+kavryctl manages `MCPServer` resources through your kubeconfig. Helm
+installs the control plane; `kavryctl upgrade` and `kavryctl rollback` run
+Helm's upgrade and rollback with checks before and after (every routed
+server must be routed again). Install it from source when developing
+locally:
 
 ```bash
 go install ./cmd/kavryctl
@@ -373,6 +393,14 @@ kubectl logs --namespace kavrynt-system deployment/kavrynt-operator
 kubectl logs --namespace kavrynt-system deployment/kavrynt-gateway
 ```
 
+### Upgrade
+
+`helm upgrade` with a newer `--version` upgrades the Gateway, the Operator,
+and the `MCPServer` CRD together; `helm rollback` keeps the CRD and every
+`MCPServer`. Upgrading from `0.0.5-beta.1` or earlier needs a one-time
+command first, so Helm can take over the CRD; see
+[Upgrading](charts/kavrynt/README.md#upgrading) in the chart README.
+
 ### Uninstall
 
 ```bash
@@ -393,23 +421,36 @@ The MVP uses defensive container defaults: non-root users, dropped Linux
 capabilities, read-only root filesystems, and limited Kubernetes RBAC. However,
 the current release is not production-security complete:
 
-- Gateway does not authenticate clients.
+- Gateway authenticates MCP clients with OAuth 2.1 bearer tokens from your
+  authorization server (on by default; `gateway.auth.enabled=false` opts
+  out and leaves MCP routes open): each route accepts only tokens issued
+  for it.
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
-  to MCP servers, and drops upstream `Set-Cookie`. It does not yet exchange
-  tokens for upstream servers (ADR-0003).
-- Gateway does not yet enforce actor, tool, or policy authorization.
+  to MCP servers, and drops upstream `Set-Cookie`. MCP servers that need
+  their own credential get it from a Secret the platform team manages,
+  pinned to the server's endpoint. Servers that need the user instead get
+  the caller's token exchanged for one with their own audience (RFC 8693);
+  the caller's token itself never reaches them.
+- Gateway can decide every MCP call with a Rego tool authorization policy
+  (`gateway.policy`, off by default), denying anything it does not allow.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
   else.
 - Gateway and Operator never connect to cloud metadata, link-local, or
   loopback addresses, and the Gateway does not follow upstream redirects.
 - Gateway rejects browser requests from origins other than loopback and
   `gateway.config.allowedOrigins`.
+- Optional NetworkPolicies keep labelled MCP server pods reachable only from
+  the Gateway and the Operator, and limit who can call the Gateway
+  (`networkPolicy` values; needs a CNI that enforces NetworkPolicy).
 - The console has a single `admin` login with a generated password. It
   protects the console and the endpoints it reads, not MCP routes: anyone
   who can reach the Gateway can still call every routed tool.
-- Gateway is single-replica by default.
-- Audit, policy, approval, and usage services are not part of the current
-  runtime beta.
+- Gateway and Operator are single-replica by default; the tested
+  high-availability profile is `examples/helm/values-production.yaml`.
+- The Gateway can write one audit event per MCP request (`gateway.audit`):
+  caller, tool, decision, and outcome, hash-chained per instance and checked
+  with `kavryctl audit verify`. Approvals and usage services are not part of
+  the current runtime beta.
 
 Keep Gateway as an internal `ClusterIP` service, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
@@ -437,14 +478,12 @@ The release process is documented in [docs/RELEASE.md](docs/RELEASE.md).
 The full roadmap is in [ROADMAP.md](ROADMAP.md). The next product milestones
 are:
 
-1. Gateway authentication and no token passthrough
+1. approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
-2. MCP Streamable HTTP and protocol-aware routing;
-3. policy decisions and tool-level authorization;
-4. audit and usage events;
-5. upgrade and rollback commands in kavryctl;
-6. upgrade, rollback, backup, and recovery workflows;
-7. tested high-availability deployment profiles.
+2. the console signed in through the authorization server;
+3. audit delivery to Kavrynt Cloud and usage events;
+4. protocol-aware routing beyond the request checks;
+5. recovery workflows (restoring into a new cluster).
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this

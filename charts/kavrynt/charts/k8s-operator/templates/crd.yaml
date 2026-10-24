@@ -1,0 +1,22 @@
+{{- if .Values.crds.install }}
+{{- /*
+The MCPServer CRD is a regular template, so helm upgrade updates it
+(SPEC-0009). Its spec is copied verbatim from files/, which the release
+contract keeps identical to config/crd/bases; only metadata is added here.
+*/}}
+{{- $file := .Files.Get "files/kavrynt.io_mcpservers.yaml" }}
+{{- $crd := $file | fromYaml }}
+apiVersion: {{ $crd.apiVersion }}
+kind: {{ $crd.kind }}
+metadata:
+  name: {{ $crd.metadata.name }}
+  labels:
+    {{- include "k8s-operator.labels" . | nindent 4 }}
+  {{- if .Values.crds.keep }}
+  annotations:
+    # Uninstalling or rolling back never deletes the CRD, which would delete
+    # every MCPServer with it.
+    helm.sh/resource-policy: keep
+  {{- end }}
+{{ regexFind "(?ms)^spec:.*" $file | trim }}
+{{- end }}

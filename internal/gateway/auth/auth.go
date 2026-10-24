@@ -61,6 +61,9 @@ type Authenticator struct {
 	ttl    time.Duration
 	now    func() time.Time
 	logger *slog.Logger
+	// mcpAuth is reported by GET /v1/session so the console can say whether
+	// MCP routes need tokens (SPEC-0006-R15).
+	mcpAuth bool
 
 	mu       sync.Mutex
 	failures map[string]*failures
@@ -179,6 +182,12 @@ func (a *Authenticator) Authorized(r *http.Request) bool {
 	return ok
 }
 
+// ReportMCPAuth sets whether GET /v1/session reports MCP client
+// authentication as enabled (SPEC-0006-R15).
+func (a *Authenticator) ReportMCPAuth(enabled bool) {
+	a.mcpAuth = enabled
+}
+
 // ServeHTTP serves /v1/session: GET reports the session, POST signs in, and
 // DELETE signs out.
 func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -187,13 +196,14 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s, ok := a.current(r)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true})
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
 			"enabled":   true,
 			"username":  s.Subject,
 			"expiresAt": time.Unix(s.Expires, 0).UTC().Format(time.RFC3339),
+			"mcpAuth":   a.mcpAuth,
 		})
 	case http.MethodPost:
 		a.login(w, r)

@@ -1,4 +1,5 @@
 {{- $cloud := .Values.cloud | default dict }}
+{{- $credentials := (((.Values.global | default dict).upstreamCredentials | default dict).secretName) }}
 {{- if $cloud.enabled }}
 {{- if not (hasPrefix "https://" ($cloud.url | default "")) }}
 {{- fail "cloud.url must be an https URL when cloud.enabled is true" }}
@@ -6,6 +7,9 @@
 {{- if not ($cloud.tokenSecret | default dict).name }}
 {{- fail "cloud.tokenSecret.name is required when cloud.enabled is true" }}
 {{- end }}
+{{- end }}
+{{- if and (gt (int .Values.replicaCount) 1) (not .Values.config.leaderElect) }}
+{{- fail "replicaCount above 1 requires config.leaderElect: true, or every replica would reconcile" }}
 {{- end }}
 apiVersion: apps/v1
 kind: Deployment
@@ -60,6 +64,9 @@ spec:
             - --gateway-watch-namespaces
             - {{ . | quote }}
             {{- end }}
+            {{- if $credentials }}
+            - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
+            {{- end }}
           ports:
             - name: metrics
               containerPort: 8080
@@ -77,20 +84,40 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if $cloud.enabled }}
+          {{- if or $cloud.enabled $credentials }}
           volumeMounts:
+            {{- if $cloud.enabled }}
             - name: cloud-token
               mountPath: /var/run/secrets/kavrynt/cloud
               readOnly: true
+            {{- end }}
+            {{- if $credentials }}
+            # Upstream credentials for tool discovery (SPEC-0011); mounted by the
+            # kubelet, the Operator has no RBAC on Secrets.
+            - name: upstream-credentials
+              mountPath: /etc/kavrynt/upstream-credentials
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if $cloud.enabled }}
+      {{- if or $cloud.enabled $credentials }}
       volumes:
+        {{- if $cloud.enabled }}
         - name: cloud-token
           secret:
             secretName: {{ $cloud.tokenSecret.name | quote }}
             items:
               - key: {{ $cloud.tokenSecret.key | default "token" | quote }}
                 path: token
+        {{- end }}
+        {{- if $credentials }}
+        - name: upstream-credentials
+          secret:
+            secretName: {{ $credentials | quote }}
+            defaultMode: 0444
+            # Pods start before the Secret exists; until then credentialed
+            # servers answer 503 and their discovery reports the key missing.
+            optional: true
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

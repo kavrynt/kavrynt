@@ -83,9 +83,13 @@ bash -n \
   "${ROOT_DIR}/scripts/install.sh" \
   "${ROOT_DIR}/scripts/verify-release-contract.sh"
 
+# The chart renders the CRD from files/ (SPEC-0009-R04); Helm would also
+# install a crds/ copy once and never upgrade it.
 cmp --silent "${ROOT_DIR}/config/crd/bases/kavrynt.io_mcpservers.yaml" \
-  "${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml" ||
+  "${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/files/kavrynt.io_mcpservers.yaml" ||
   fail "CRD copies in config/crd/bases and the operator chart differ"
+[ ! -e "${ROOT_DIR}/charts/kavrynt/charts/k8s-operator/crds" ] ||
+  fail "charts/kavrynt/charts/k8s-operator/crds must not exist: the CRD is a template rendered from files/"
 
 for archive in "${ROOT_DIR}"/charts/kavrynt/charts/*.tgz; do
   [ -e "${archive}" ] || continue

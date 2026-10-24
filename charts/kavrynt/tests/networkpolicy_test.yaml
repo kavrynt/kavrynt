@@ -1,0 +1,150 @@
+suite: network policies
+templates:
+  - templates/networkpolicy.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0007-R08.
+  - it: renders no NetworkPolicy by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Verifies SPEC-0007-R01 and SPEC-0007-R05.
+  - it: isolates labelled MCP server pods in each listed namespace
+    set:
+      networkPolicy.mcpServers.enabled: true
+      networkPolicy.mcpServers.namespaces: [team-a, team-b]
+    asserts:
+      - hasDocuments:
+          count: 2
+      - isKind:
+          of: NetworkPolicy
+      - equal:
+          path: metadata.namespace
+          value: team-a
+        documentIndex: 0
+      - equal:
+          path: metadata.namespace
+          value: team-b
+        documentIndex: 1
+      - equal:
+          path: spec.podSelector
+          value:
+            matchLabels:
+              kavrynt.io/gateway-only: "true"
+      - equal:
+          path: spec.policyTypes
+          value: [Ingress]
+
+  # Verifies SPEC-0007-R02.
+  - it: admits only the Gateway and the Operator of this release
+    set:
+      networkPolicy.mcpServers.enabled: true
+      networkPolicy.mcpServers.namespaces: [team-a]
+    asserts:
+      - lengthEqual:
+          path: spec.ingress
+          count: 1
+      - notExists:
+          path: spec.ingress[0].ports
+      - equal:
+          path: spec.ingress[0].from
+          value:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: kavrynt-system
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: gateway
+                  app.kubernetes.io/instance: kavrynt
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: kavrynt-system
+              podSelector:
+                matchLabels:
+                  app.kubernetes.io/name: operator
+                  app.kubernetes.io/instance: kavrynt
+
+  # Verifies SPEC-0007-R03.
+  - it: requires the namespaces to isolate
+    set:
+      networkPolicy.mcpServers.enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: networkPolicy.mcpServers.namespaces must list the namespaces of the MCP servers to isolate
+
+  # Verifies SPEC-0007-R04.
+  - it: refuses a namespace the Gateway does not watch
+    set:
+      global.watchNamespaces: [team-a]
+      networkPolicy.mcpServers.enabled: true
+      networkPolicy.mcpServers.namespaces: [team-a, team-b]
+    asserts:
+      - failedTemplate:
+          errorMessage: "networkPolicy.mcpServers.namespaces: team-b is not in global.watchNamespaces"
+
+  # Verifies SPEC-0007-R04.
+  - it: accepts watched namespaces
+    set:
+      global.watchNamespaces: [team-a, team-b]
+      networkPolicy.mcpServers.enabled: true
+      networkPolicy.mcpServers.namespaces: [team-b]
+    asserts:
+      - hasDocuments:
+          count: 1
+
+  # Verifies SPEC-0007-R06 and SPEC-0007-R07.
+  - it: limits Gateway ingress to allowed namespaces and CIDRs
+    set:
+      networkPolicy.gateway.enabled: true
+      networkPolicy.gateway.allowedNamespaceLabels:
+        - kubernetes.io/metadata.name: agents
+      networkPolicy.gateway.allowedCIDRs: [10.0.0.0/8]
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: kavrynt-system
+      - equal:
+          path: spec.podSelector.matchLabels
+          value:
+            app.kubernetes.io/name: gateway
+            app.kubernetes.io/instance: kavrynt
+      - equal:
+          path: spec.policyTypes
+          value: [Ingress]
+      - notExists:
+          path: spec.egress
+      - equal:
+          path: spec.ingress[0].ports
+          value:
+            - protocol: TCP
+              port: 8080
+      - equal:
+          path: spec.ingress[0].from
+          value:
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: kavrynt-system
+            - namespaceSelector:
+                matchLabels:
+                  kubernetes.io/metadata.name: agents
+            - ipBlock:
+                cidr: 10.0.0.0/8
+
+  # Verifies SPEC-0007-R08.
+  - it: rejects a malformed CIDR
+    set:
+      networkPolicy.gateway.enabled: true
+      networkPolicy.gateway.allowedCIDRs: [10.0.0.0]
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0007-R08.
+  - it: rejects an unknown networkPolicy key
+    set:
+      networkPolicy.mcpServer.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'mcpServer' not allowed"

@@ -49,16 +49,58 @@ const (
 	outcomeTimeout             = "timeout"
 	outcomeIncomplete          = "incomplete"
 	outcomeGatewayError        = "gateway_error"
+
+	// Requests refused by MCP client authentication (SPEC-0006-R14); the
+	// values are clientauth's Outcome* constants.
+	outcomeUnauthenticated = "unauthenticated"
+	outcomeForbidden       = "forbidden"
+	outcomeAuthUnavailable = "auth_unavailable"
+
+	// The server needs a stored credential the Gateway does not have for its
+	// endpoint (SPEC-0011-R06).
+	outcomeCredentialUnavailable = "credential_unavailable" // #nosec G101 -- an outcome label, not a credential.
+
+	// The tool authorization policy denied the request (SPEC-0012-R08).
+	outcomeDenied = "denied"
+
+	// The request is not a well-formed MCP Streamable HTTP request
+	// (SPEC-0018-R06).
+	outcomeProtocolError = "protocol_error"
+
+	// The caller's token could not be exchanged for one for the server
+	// (SPEC-0015-R06).
+	outcomeExchangeFailed = "exchange_failed"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.
 type mcpCall struct {
 	method string
 	tool   string
+	// body describes a POST body, for the policy step (SPEC-0012).
+	body bodyInfo
+}
+
+// bodyInfo is what the Gateway read from a POST body.
+type bodyInfo struct {
+	// read: a POST body was inspected.
+	read bool
+	// batch: the body is a JSON array, a JSON-RPC batch.
+	batch bool
+	// classified: the body is a single JSON object within the inspection
+	// limit, so its JSON-RPC method (and tool) are known.
+	classified bool
+	// method is the JSON-RPC method; empty for a JSON-RPC response.
+	method string
+	// tool is params.name of tools/call; toolOK reports it was a string.
+	tool   string
+	toolOK bool
+	// id is the JSON-RPC id, for an error answer.
+	id json.RawMessage
 }
 
 // inspectRequest classifies a request from the MCP headers or, for POST, from
 // the JSON-RPC body. It returns a body that replays everything it read.
+// Metric labels prefer the headers; call.body always describes the body.
 func inspectRequest(r *http.Request) (mcpCall, io.Reader, error) {
 	call := mcpCall{method: r.Header.Get("Mcp-Method"), tool: r.Header.Get("Mcp-Name")}
 
@@ -80,31 +122,47 @@ func inspectRequest(r *http.Request) (mcpCall, io.Reader, error) {
 		return call, nil, err
 	}
 	body := io.MultiReader(bytes.NewReader(prefix), r.Body)
+	call.body = inspectBody(prefix)
 	if call.method != "" {
 		return call, body, nil
 	}
-
 	call.method = labelUnknown
-	if len(prefix) > maxInspectBytes {
-		return call, body, nil
-	}
-	var message struct {
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}
-	if json.Unmarshal(prefix, &message) != nil || message.Method == "" {
-		return call, body, nil
-	}
-	call.method = message.Method
-	if message.Method == "tools/call" && call.tool == "" {
-		var params struct {
-			Name string `json:"name"`
-		}
-		if json.Unmarshal(message.Params, &params) == nil {
-			call.tool = params.Name
+	if call.body.classified && call.body.method != "" {
+		call.method = call.body.method
+		if call.body.method == "tools/call" && call.tool == "" {
+			call.tool = call.body.tool
 		}
 	}
 	return call, body, nil
+}
+
+// inspectBody reads the JSON-RPC message of a POST body prefix.
+func inspectBody(prefix []byte) bodyInfo {
+	info := bodyInfo{read: true}
+	trimmed := bytes.TrimLeft(prefix, " \t\r\n")
+	info.batch = len(trimmed) > 0 && trimmed[0] == '['
+	if len(prefix) > maxInspectBytes {
+		return info
+	}
+	var message struct {
+		ID     json.RawMessage `json:"id"`
+		Method string          `json:"method"`
+		Params json.RawMessage `json:"params"`
+	}
+	// A JSON-RPC batch is an array and does not decode into the struct.
+	if json.Unmarshal(prefix, &message) != nil {
+		return info
+	}
+	info.classified, info.method, info.id = true, message.Method, message.ID
+	if message.Method == "tools/call" {
+		var params struct {
+			Name *string `json:"name"`
+		}
+		if json.Unmarshal(message.Params, &params) == nil && params.Name != nil {
+			info.tool, info.toolOK = *params.Name, true
+		}
+	}
+	return info
 }
 
 // classifyResponse maps an upstream response to an outcome. body holds at

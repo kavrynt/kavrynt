@@ -41,6 +41,31 @@ global so the Operator reads the same list.
 {{- join "," ((.Values.global | default dict).watchNamespaces | default list) -}}
 {{- end -}}
 
+{{/*
+"true" when MCP client authentication is on. Fails rendering for settings the
+Gateway would refuse at start-up (SPEC-0006-R02, SPEC-0006-R20), and with
+one message naming both ways forward when it is on by default without
+settings (SPEC-0014-R02).
+*/}}
+{{- define "gateway.clientAuthEnabled" -}}
+{{- $auth := .Values.auth | default dict -}}
+{{- if $auth.enabled -}}
+{{- if or (not $auth.resourceURL) (not $auth.issuers) -}}
+{{- fail "gateway.auth: MCP client authentication is on by default. Set gateway.auth.resourceURL (the Gateway's external https origin) and gateway.auth.issuers to trust your authorization server, or set gateway.auth.enabled=false to run with unauthenticated MCP routes" -}}
+{{- end -}}
+{{- range $auth.issuers -}}
+{{- $tokenEndpoint := (.tokenExchange | default dict).tokenEndpoint | default "" -}}
+{{- if and (or (hasPrefix "http://" .issuer) (hasPrefix "http://" (.jwksURI | default "")) (hasPrefix "http://" $tokenEndpoint)) (not .allowHTTP) -}}
+{{- fail (printf "auth.issuers: %s uses http; set allowHTTP: true for an in-cluster authorization server" .issuer) -}}
+{{- end -}}
+{{- if and .tokenExchange (not $auth.tokenExchangeSecret) -}}
+{{- fail (printf "auth.issuers: %s has tokenExchange settings; set auth.tokenExchangeSecret to the Secret with its client secret" .issuer) -}}
+{{- end -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{/* "true" when the console admin login is on (SPEC-0005). */}}
 {{- define "gateway.consoleAuthEnabled" -}}
 {{- $console := .Values.console | default dict -}}
@@ -52,4 +77,25 @@ global so the Operator reads the same list.
 {{- define "gateway.consoleAuthSecret" -}}
 {{- $auth := (.Values.console | default dict).auth | default dict -}}
 {{- default (printf "%s-console-admin" (include "gateway.fullname" .)) $auth.existingSecret -}}
+{{- end -}}
+
+{{/* Pod selector labels. */}}
+{{- define "gateway.selectorLabels" -}}
+app.kubernetes.io/name: {{ include "gateway.name" . }}
+app.kubernetes.io/instance: {{ .Release.Name }}
+{{- end -}}
+
+{{/* "true" when more than one Gateway replica can run (SPEC-0008-R04). */}}
+{{- define "gateway.multiReplica" -}}
+{{- if or .Values.autoscaling.enabled (gt (int .Values.replicaCount) 1) -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+Seconds the kubelet waits after SIGTERM: the drain delay, the shutdown
+timeout, and 5 seconds of margin (SPEC-0008-R02).
+*/}}
+{{- define "gateway.terminationGracePeriodSeconds" -}}
+{{- $delay := .Values.config.shutdownDelay | default "5s" | trimSuffix "s" | int -}}
+{{- $timeout := .Values.config.shutdownTimeout | default "10s" | trimSuffix "s" | int -}}
+{{- add $delay $timeout 5 -}}
 {{- end -}}

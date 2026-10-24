@@ -119,7 +119,7 @@ func tool(name string) map[string]any {
 
 func listTools(t *testing.T, server *fakeServer) (Result, error) {
 	t.Helper()
-	return New("test", server).ListTools(context.Background(), endpoint)
+	return New("test", server).ListTools(context.Background(), endpoint, nil)
 }
 
 func TestListToolsOverJSON(t *testing.T) {
@@ -395,6 +395,26 @@ func TestListToolsRecordsBoundedServerInfo(t *testing.T) {
 		}
 		if (result.ServerInfo == nil) != (c.want == nil) || (c.want != nil && *result.ServerInfo != *c.want) {
 			t.Fatalf("%s: serverInfo = %+v, want %+v", c.name, result.ServerInfo, c.want)
+		}
+	}
+}
+
+// Verifies SPEC-0011-R08: the stored credential goes with every discovery
+// request, including the session close.
+func TestListToolsSendsTheCredentialHeader(t *testing.T) {
+	server := newFakeServer(tool("echo"))
+	server.sessionID = "session-1"
+	header := http.Header{}
+	header.Set("X-API-Key", "stored-secret")
+	if _, err := New("test", server).ListTools(context.Background(), endpoint, header); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.requests) < 3 {
+		t.Fatalf("only %d requests", len(server.requests))
+	}
+	for i, req := range server.requests {
+		if got := req.Header.Values("X-API-Key"); len(got) != 1 || got[0] != "stored-secret" {
+			t.Fatalf("request %d (%s) X-API-Key = %q", i, server.methods[i], got)
 		}
 	}
 }

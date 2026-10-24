@@ -15,6 +15,13 @@
   // SCOPE_NOTE qualifies every view that shows traffic (SPEC-0002-R09).
   const SCOPE_NOTE = "This Gateway replica only · last " + TRAFFIC_WINDOW + " requests · use /metrics for history";
 
+  // scopeNote names the replica that answered /v1/traffic, so readers of a
+  // multi-replica Gateway know whose traffic they see (SPEC-0008-R06).
+  function scopeNote(instance) {
+    if (typeof instance !== "string" || !instance) return SCOPE_NOTE;
+    return "Gateway replica " + instance + " only · last " + TRAFFIC_WINDOW + " requests · use /metrics for history";
+  }
+
   // OUTCOMES defines every outcome the Gateway records, in the words of the
   // Gateway component documentation. A Go test keeps the keys equal to the
   // Gateway's outcome constants.
@@ -54,6 +61,34 @@
     gateway_error: {
       cls: "bad",
       definition: "The Gateway did not proxy the request, for example because the endpoint points back at a Gateway.",
+    },
+    unauthenticated: {
+      cls: "warn",
+      definition: "MCP client authentication refused the call: no access token, an invalid or expired one, one for another route or issuer, or a token outside the Authorization header. The server was not called.",
+    },
+    forbidden: {
+      cls: "warn",
+      definition: "The access token is valid but lacks a scope the Gateway requires. The server was not called.",
+    },
+    denied: {
+      cls: "warn",
+      definition: "The tool authorization policy denied the call (403, with the policy's reason). The server was not called.",
+    },
+    credential_unavailable: {
+      cls: "bad",
+      definition: "The server needs a stored credential the Gateway does not have for its current endpoint: the key or its .origin pin is missing from the upstream credentials Secret, or the endpoint changed. The server was not called.",
+    },
+    protocol_error: {
+      cls: "warn",
+      definition: "The request is not a well-formed MCP Streamable HTTP request (400): an unsupported MCP-Protocol-Version, a JSON-RPC batch, or Mcp-Method or Mcp-Name headers that disagree with the body. The server was not called.",
+    },
+    exchange_failed: {
+      cls: "bad",
+      definition: "The server gets per-caller tokens by token exchange, and the caller's authorization server did not issue one (502), could not be reached (503), or MCP client authentication is off (503). The server was not called.",
+    },
+    auth_unavailable: {
+      cls: "bad",
+      definition: "The Gateway could not load the signing keys of the token's authorization server and refused the call (503). Check the issuer's metadata and key URLs.",
     },
   };
 
@@ -345,5 +380,5 @@
     return ms === null || ms === undefined ? "–" : String(Math.round(ms * 100) / 100);
   }
 
-  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
+  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, scopeNote, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).stats = {}));
