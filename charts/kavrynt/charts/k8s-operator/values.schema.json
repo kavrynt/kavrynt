@@ -56,6 +56,14 @@
         "properties": { "name": { "type": "string", "minLength": 1 } }
       }
     },
+    "crds": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "install": { "type": "boolean" },
+        "keep": { "type": "boolean" }
+      }
+    },
     "serviceAccount": {
       "type": "object",
       "additionalProperties": false,

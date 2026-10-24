@@ -118,6 +118,43 @@ start_gateway_port_forward() {
   fail "Gateway port-forward did not start: $(cat "${log_file}")"
 }
 
+stop_gateway_port_forwards() {
+  if [ "${#PORT_FORWARD_PIDS[@]}" -gt 0 ]; then
+    kill "${PORT_FORWARD_PIDS[@]}" >/dev/null 2>&1 || true
+    wait "${PORT_FORWARD_PIDS[@]}" >/dev/null 2>&1 || true
+  fi
+  PORT_FORWARD_PIDS=()
+}
+
+# verify_installed_crd checks that the CRD in the cluster is the chart's,
+# owned by Helm and kept on uninstall, with the versions of
+# config/crd/bases (the API server adds defaults only outside .spec.versions).
+verify_installed_crd() {
+  local installed expected
+  installed="$(kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io -o json)"
+  printf '%s' "${installed}" | jq --exit-status '
+    .metadata.labels["app.kubernetes.io/managed-by"] == "Helm" and
+    .metadata.annotations["helm.sh/resource-policy"] == "keep"' >/dev/null ||
+    fail "the MCPServer CRD is not managed by Helm with the keep policy"
+  expected="$(kubectl --context "${KUBE_CONTEXT}" create --dry-run=client -o json \
+    -f "${ROOT_DIR}/config/crd/bases/kavrynt.io_mcpservers.yaml" | jq --sort-keys '.spec.versions')"
+  [ "$(printf '%s' "${installed}" | jq --sort-keys '.spec.versions')" = "${expected}" ] ||
+    fail "the installed MCPServer CRD differs from config/crd/bases"
+}
+
+call_tools_list() {
+  curl --fail --silent --show-error \
+    --request POST "${GATEWAY_URL}/mcp/$1" \
+    --header 'Content-Type: application/json' \
+    --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}' |
+    jq --exit-status '.result.tools[0].name == "echo"' >/dev/null
+}
+
+deployment_generations() {
+  kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get deployment kavrynt-gateway kavrynt-operator \
+    -o jsonpath='{range .items[*]}{.metadata.name}={.metadata.generation} {end}'
+}
+
 for command in docker kind kubectl helm curl jq git grep sed; do
   require_command "${command}"
 done
@@ -190,6 +227,10 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   rollout status deployment/example-mcp-server --timeout=120s
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+
+# Verifies SPEC-0009-R01 and SPEC-0009-R04.
+log "verifying the chart installed the CRD from config/crd/bases"
+verify_installed_crd
 
 log "verifying CRD admission rejects unsafe endpoints"
 if kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply --dry-run=server -f - >/dev/null 2>&1 <<MANIFEST
@@ -418,5 +459,88 @@ log "verifying deletion cleanup"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/example-mcp-server --wait=true --timeout=120s
 wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
+
+# Upgrade and rollback against the previous published release (SPEC-0009).
+# The Kind node pulls that release's images from Docker Hub.
+UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-0.0.5-beta.1}"
+UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
+LOCAL_RELEASE_ARGS=(
+  --kube-context "${KUBE_CONTEXT}"
+  --namespace "${CONTROL_NAMESPACE}"
+  --set gateway.image.repository=kavrynt/gateway
+  --set-string gateway.image.tag="${LOCAL_VERSION}"
+  --set operator.image.repository=kavrynt/operator
+  --set-string operator.image.tag="${LOCAL_VERSION}"
+)
+
+# Verifies SPEC-0009-R05.
+log "verifying helm uninstall keeps the CRD and MCPServers"
+kubectl --context "${KUBE_CONTEXT}" apply -f "${TEMP_DIR}/mcp-server.yaml" >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+stop_gateway_port_forwards
+helm uninstall kavrynt --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --wait --timeout 120s
+kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
+  fail "helm uninstall deleted the MCPServer CRD"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/example-mcp-server >/dev/null ||
+  fail "helm uninstall deleted an MCPServer"
+
+log "installing the previous release ${UPGRADE_FROM_VERSION} on a cluster without Kavrynt"
+kubectl --context "${KUBE_CONTEXT}" delete crd mcpservers.kavrynt.io --wait=true --timeout=60s >/dev/null
+helm install kavrynt "${UPGRADE_FROM_CHART}" --version "${UPGRADE_FROM_VERSION}" \
+  --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" \
+  --wait \
+  --timeout 300s >/dev/null
+kubectl --context "${KUBE_CONTEXT}" apply -f "${TEMP_DIR}/mcp-server.yaml" >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+start_gateway_port_forward
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed on ${UPGRADE_FROM_VERSION}"
+
+# Verifies SPEC-0009-R07.
+log "verifying an upgrade without CRD adoption fails before changing workloads"
+GENERATIONS_BEFORE="$(deployment_generations)"
+if helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" "${LOCAL_RELEASE_ARGS[@]}" --timeout 120s \
+  >"${TEMP_DIR}/unadopted-upgrade.log" 2>&1; then
+  fail "helm upgrade succeeded although the CRD was not adopted"
+fi
+grep --fixed-strings --quiet "mcpservers.kavrynt.io" "${TEMP_DIR}/unadopted-upgrade.log" ||
+  fail "the failed upgrade does not name the CRD: $(cat "${TEMP_DIR}/unadopted-upgrade.log")"
+[ "$(deployment_generations)" = "${GENERATIONS_BEFORE}" ] ||
+  fail "the failed upgrade changed the Gateway or Operator Deployment"
+
+# Verifies SPEC-0009-R06 and SPEC-0009-R08: the adoption command from the
+# chart README, then a normal helm upgrade.
+log "adopting the CRD and upgrading to the build under test"
+kubectl --context "${KUBE_CONTEXT}" label crd mcpservers.kavrynt.io \
+  app.kubernetes.io/managed-by=Helm --overwrite >/dev/null
+kubectl --context "${KUBE_CONTEXT}" annotate crd mcpservers.kavrynt.io \
+  meta.helm.sh/release-name=kavrynt meta.helm.sh/release-namespace="${CONTROL_NAMESPACE}" --overwrite >/dev/null
+helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" "${LOCAL_RELEASE_ARGS[@]}" --wait --timeout 180s >/dev/null
+for deployment in kavrynt-gateway kavrynt-operator; do
+  kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
+    rollout status "deployment/${deployment}" --timeout=120s
+done
+verify_installed_crd
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed after the upgrade"
+
+# Verifies SPEC-0009-R05 and SPEC-0009-R09.
+log "rolling back to ${UPGRADE_FROM_VERSION}"
+helm rollback kavrynt 1 --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --wait --timeout 180s >/dev/null
+kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
+  fail "helm rollback deleted the MCPServer CRD"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed after the rollback"
 
 log "end-to-end workflow passed"

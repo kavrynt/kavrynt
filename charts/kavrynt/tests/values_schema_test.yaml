@@ -34,6 +34,14 @@ tests:
           errorPattern: "additional properties 'enable' not allowed"
 
   # Verifies SPEC-0003-R01.
+  - it: rejects a mistyped CRD key
+    set:
+      operator.crds.instal: false
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'instal' not allowed"
+
+  # Verifies SPEC-0003-R01.
   - it: accepts platform-injected globals
     set:
       global.cattle.clusterId: c-abc

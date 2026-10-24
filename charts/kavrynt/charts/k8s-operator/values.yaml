@@ -11,6 +11,14 @@ serviceAccount:
   create: true
   name: ""
 
+# The MCPServer CustomResourceDefinition. Helm installs and upgrades it with
+# the chart. Set install to false when CRDs are managed outside this release
+# (apply charts/k8s-operator/files/kavrynt.io_mcpservers.yaml yourself).
+crds:
+  install: true
+  # Keep the CRD, and with it every MCPServer, on helm uninstall and rollback.
+  keep: true
+
 config:
   metricsBindAddress: ":8080"
   healthProbeBindAddress: ":8081"

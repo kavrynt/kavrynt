@@ -193,7 +193,8 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
 - Shared Kubernetes API types live only in `api/v1alpha1`. The CRD schema is
   hand-written (no controller-gen) and exists twice, kept identical:
   `config/crd/bases/kavrynt.io_mcpservers.yaml` and
-  `charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml`. Change
+  `charts/kavrynt/charts/k8s-operator/files/kavrynt.io_mcpservers.yaml` (the
+  chart renders it as a template, so `helm upgrade` updates it). Change
   both with the Go types, and update RBAC in `config/rbac` and the chart
   together.
 - Prefer simple, dependency-light Go. New dependencies must pass govulncheck
@@ -234,6 +235,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     until a login with the generated admin password; the console,
     `/v1/servers`, and `/v1/traffic` work and never expose tool arguments;
     the console browser smoke test passes (always in CI).
+11. `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
+    the previous published release fails cleanly until the CRD is adopted,
+    then keeps servers `Ready` and routed; `helm rollback` keeps them too.
 
 Keep the Kind workflow disposable and isolated from the user's current
 Kubernetes context. On macOS and Apple Silicon, build images locally and load

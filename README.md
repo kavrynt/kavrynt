@@ -373,6 +373,14 @@ kubectl logs --namespace kavrynt-system deployment/kavrynt-operator
 kubectl logs --namespace kavrynt-system deployment/kavrynt-gateway
 ```
 
+### Upgrade
+
+`helm upgrade` with a newer `--version` upgrades the Gateway, the Operator,
+and the `MCPServer` CRD together; `helm rollback` keeps the CRD and every
+`MCPServer`. Upgrading from `0.0.5-beta.1` or earlier needs a one-time
+command first, so Helm can take over the CRD; see
+[Upgrading](charts/kavrynt/README.md#upgrading) in the chart README.
+
 ### Uninstall
 
 ```bash
@@ -443,7 +451,7 @@ are:
 3. policy decisions and tool-level authorization;
 4. audit and usage events;
 5. upgrade and rollback commands in kavryctl;
-6. upgrade, rollback, backup, and recovery workflows;
+6. recovery workflows (restoring into a new cluster);
 7. tested high-availability deployment profiles.
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,

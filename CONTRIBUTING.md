@@ -138,7 +138,7 @@ make spec-new NAME=console-tool-catalog   # creates specs/NNNN-console-tool-cata
 
 | You are changing | Also update |
 | --- | --- |
-| `MCPServer` Go types in `api/v1alpha1` | Both CRD copies, kept identical: `config/crd/bases/kavrynt.io_mcpservers.yaml` and `charts/kavrynt/charts/k8s-operator/crds/kavrynt.io_mcpservers.yaml` (hand-written, no controller-gen) |
+| `MCPServer` Go types in `api/v1alpha1` | Both CRD copies, kept identical: `config/crd/bases/kavrynt.io_mcpservers.yaml` and `charts/kavrynt/charts/k8s-operator/files/kavrynt.io_mcpservers.yaml` (hand-written, no controller-gen) |
 | RBAC | `config/rbac` and the chart templates together |
 | Helm values | The subchart `values.yaml` and its hand-written `values.schema.json` (unknown keys are rejected, so a new value without a schema entry fails lint), the umbrella `charts/kavrynt/values.yaml` if exposed there, the values tables in [charts/kavrynt/README.md](charts/kavrynt/README.md), and a test in `charts/kavrynt/tests/` |
 | Chart templates | A helm-unittest case in `charts/kavrynt/tests/` for the behavior you change |
