@@ -64,6 +64,9 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 
 - `MCPServer` registration through Kubernetes or `kavryctl`; the Operator sets
   `Accepted` and `Ready`.
+- `kavryctl upgrade` and `kavryctl rollback` (SPEC-0019) run the `helm`
+  binary with checks before (release, chart version, CRD ownership;
+  `--adopt-crd`) and after (every server routed before is routed again).
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
   into `status.tools` with a `ToolsDiscovered` condition that never affects
   `Ready`, and records the reported `serverInfo` name and version in
@@ -299,7 +302,8 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     `helm uninstall` keeps the CRD and `MCPServer` resources; an upgrade from
     the previous published release is refused without a `gateway.auth`
     choice, fails cleanly until the CRD is adopted, then keeps servers
-    `Ready` and routed; `helm rollback` keeps them too.
+    `Ready` and routed; `kavryctl rollback` keeps them too, and
+    `kavryctl upgrade` reports them routed again.
 
 Keep the Kind workflow disposable and isolated from the user's current
 Kubernetes context. On macOS and Apple Silicon, build images locally and load

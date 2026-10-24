@@ -116,6 +116,15 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 or keep MCP routes open, as they were, with
 `--set gateway.auth.enabled=false`.
 
+### With kavryctl
+
+`kavryctl upgrade --version <version>` runs the same upgrade with checks:
+it stops before changing anything when the release or the version is
+missing or the CRD needs adoption (`--adopt-crd` adopts it), reuses the
+release's values, and reports every server that was routed before and is
+not now. `kavryctl rollback [--revision N]` does the same for `helm
+rollback`. See [kavryctl: Upgrade and rollback](../../docs/components/kavryctl/README.md#upgrade-and-rollback).
+
 ### Rolling back
 
 `helm rollback` restores the previous Gateway and Operator. The CRD and every

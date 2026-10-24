@@ -82,8 +82,10 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     `gateway.auth` values is refused before any change (SPEC-0014); with the
     opt-out it fails before touching workloads until the CRD is adopted,
     then succeeds with the
-    server `Ready` and routed; `helm rollback` keeps the CRD, the server, and
-    its route. Needs network access to the registries.
+    server `Ready` and routed; `kavryctl rollback` (SPEC-0019) keeps the CRD,
+    the server, and its route; `kavryctl upgrade --dry-run` changes nothing,
+    and `kavryctl upgrade` back to the build under test reports the server
+    routed. Needs network access to the registries.
 
 Expected final line: `==> end-to-end workflow passed`.
 

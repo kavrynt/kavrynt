@@ -1199,9 +1199,11 @@ start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed after the upgrade"
 
-# Verifies SPEC-0009-R05 and SPEC-0009-R09.
-log "rolling back to ${UPGRADE_FROM_VERSION}"
-helm rollback kavrynt 1 --kube-context "${KUBE_CONTEXT}" --namespace "${CONTROL_NAMESPACE}" --wait --timeout 180s >/dev/null
+# Verifies SPEC-0009-R05, SPEC-0009-R09, and SPEC-0019-R04: kavryctl runs
+# helm rollback and confirms the server is routed again.
+log "rolling back to ${UPGRADE_FROM_VERSION} with kavryctl"
+"${TEMP_DIR}/kavryctl" rollback --context "${KUBE_CONTEXT}" --revision 1 --timeout 3m ||
+  fail "kavryctl rollback failed"
 kubectl --context "${KUBE_CONTEXT}" get crd mcpservers.kavrynt.io >/dev/null ||
   fail "helm rollback deleted the MCPServer CRD"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
@@ -1210,5 +1212,38 @@ stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
 call_tools_list "${SERVER_ID}" || fail "tools/list failed after the rollback"
+
+# Verifies SPEC-0019-R02 and SPEC-0019-R03: kavryctl upgrade checks the
+# release and the CRD, upgrades with the release's values plus a file, and
+# reports the server routed. --dry-run changes nothing.
+log "upgrading to the build under test with kavryctl"
+cat >"${TEMP_DIR}/local-release-values.yaml" <<VALUES
+gateway:
+  image:
+    repository: kavrynt/gateway
+    tag: "${LOCAL_VERSION}"
+  auth:
+    enabled: false
+operator:
+  image:
+    repository: kavrynt/operator
+    tag: "${LOCAL_VERSION}"
+VALUES
+GENERATIONS_BEFORE="$(deployment_generations)"
+"${TEMP_DIR}/kavryctl" upgrade --context "${KUBE_CONTEXT}" --chart "${ROOT_DIR}/charts/kavrynt" \
+  --values "${TEMP_DIR}/local-release-values.yaml" --dry-run >"${TEMP_DIR}/upgrade-dry-run.log" ||
+  fail "kavryctl upgrade --dry-run failed: $(cat "${TEMP_DIR}/upgrade-dry-run.log")"
+grep --fixed-strings --quiet "would run: helm upgrade kavrynt" "${TEMP_DIR}/upgrade-dry-run.log" ||
+  fail "kavryctl upgrade --dry-run did not print the helm command"
+[ "$(deployment_generations)" = "${GENERATIONS_BEFORE}" ] || fail "kavryctl upgrade --dry-run changed a Deployment"
+"${TEMP_DIR}/kavryctl" upgrade --context "${KUBE_CONTEXT}" --chart "${ROOT_DIR}/charts/kavrynt" \
+  --values "${TEMP_DIR}/local-release-values.yaml" --timeout 3m >"${TEMP_DIR}/kavryctl-upgrade.log" ||
+  fail "kavryctl upgrade failed: $(cat "${TEMP_DIR}/kavryctl-upgrade.log")"
+grep --fixed-strings --quiet "ok    ${E2E_NAMESPACE}/example-mcp-server is routed" "${TEMP_DIR}/kavryctl-upgrade.log" ||
+  fail "kavryctl upgrade did not report the server routed: $(cat "${TEMP_DIR}/kavryctl-upgrade.log")"
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SERVER_ID}\") != null"
+call_tools_list "${SERVER_ID}" || fail "tools/list failed after kavryctl upgrade"
 
 log "end-to-end workflow passed"
