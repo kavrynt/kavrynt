@@ -1,6 +1,8 @@
 package main
 
 import (
+	"bytes"
+	"log/slog"
 	"net"
 	"net/http"
 	"strings"
@@ -98,5 +100,17 @@ func TestClientAuthConfiguration(t *testing.T) {
 	}
 	if a, err := newClientAuth(true, "https://mcp.example.com", issuers, "mcp:tools"); err != nil || a == nil {
 		t.Fatalf("valid configuration: %v, %v", a, err)
+	}
+}
+
+// Verifies SPEC-0014-R03.
+func TestWarnsWhenMCPRoutesAreUnauthenticated(t *testing.T) {
+	for _, authenticated := range []bool{false, true} {
+		var logs bytes.Buffer
+		warnUnauthenticated(slog.New(slog.NewTextHandler(&logs, nil)), authenticated)
+		warned := strings.Contains(logs.String(), "level=WARN") && strings.Contains(logs.String(), "unauthenticated")
+		if warned == authenticated {
+			t.Errorf("authenticated=%v: logged %q", authenticated, logs.String())
+		}
 	}
 }

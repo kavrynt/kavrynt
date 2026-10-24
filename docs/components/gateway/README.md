@@ -54,8 +54,8 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   only from the Gateway and the Operator, so clients cannot skip the
   Gateway; `networkPolicy.gateway` limits who can call the Gateway. Both
   need a CNI that enforces NetworkPolicy.
-- MCP client authentication (opt-in, see below): every `/mcp/` request needs
-  a bearer token for its route.
+- MCP client authentication (on by default in the chart, see below): every
+  `/mcp/` request needs a bearer token for its route.
 - Tool authorization policy (opt-in, see below): every MCP request is
   allowed or denied by Rego policy before it is forwarded.
 - Audit events (opt-in, see below): one JSON line per MCP request.
@@ -193,8 +193,11 @@ per-client tool allow-list, read-only methods).
 
 ## MCP client authentication
 
-With `--auth` (chart: `gateway.auth.enabled`) the Gateway is an OAuth 2.1
-resource server (SPEC-0006). It never issues tokens: agents get them from
+With `--auth` (chart: `gateway.auth.enabled`, on by default; SPEC-0014) the
+Gateway is an OAuth 2.1 resource server (SPEC-0006). The chart refuses to
+render without `gateway.auth.resourceURL` and `gateway.auth.issuers` unless
+`gateway.auth.enabled=false` is set, in which case every route is open and
+the Gateway logs a warning at start. It never issues tokens: agents get them from
 your authorization server, which the Gateway trusts by configuration.
 
 A request to `/mcp/<namespace>.<name>` is forwarded only with
@@ -414,7 +417,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
-| `--auth` | `false` (chart: `auth.enabled`) | Require a bearer access token for the route on every `/mcp/` request |
+| `--auth` | `false` (chart: `auth.enabled`, default `true`) | Require a bearer access token for the route on every `/mcp/` request |
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |

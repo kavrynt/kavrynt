@@ -4,6 +4,8 @@ templates:
 release:
   name: kavrynt
   namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
 tests:
   # Verifies SPEC-0012-R01.
   - it: evaluates no policy by default

@@ -73,6 +73,7 @@ func main() {
 		slog.Error("configure MCP client authentication", "error", err)
 		os.Exit(1)
 	}
+	warnUnauthenticated(slog.Default(), clientAuth != nil)
 
 	var policyEngine *policy.Engine
 	if *policyDir != "" {
@@ -220,6 +221,14 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 		return nil, fmt.Errorf("--console-session-ttl must be positive, got %s", ttl)
 	}
 	return auth.New(dir, ttl), nil
+}
+
+// warnUnauthenticated says at start that MCP routes are open when client
+// authentication is off (SPEC-0014-R03).
+func warnUnauthenticated(logger *slog.Logger, authenticated bool) {
+	if !authenticated {
+		logger.Warn("MCP client authentication is off: every /mcp/ route accepts unauthenticated calls; configure --auth for production")
+	}
 }
 
 // newClientAuth returns the MCP client authenticator, or nil when --auth is

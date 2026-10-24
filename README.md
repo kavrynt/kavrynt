@@ -27,18 +27,23 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 
 > [!IMPORTANT]
 > Kavrynt is currently an early MVP. The core registration and HTTP routing
-> loop works; MCP client authentication, tool authorization policy, and audit
-> events are available but off by default (the production profile turns audit
-> on). Approvals and token exchange are not implemented yet. Run this version
-> only in trusted development or evaluation clusters.
+> loop works. MCP client authentication is on by default: an install names
+> your authorization server or opts out explicitly. Tool authorization policy
+> and audit events are available but off by default (the production profile
+> turns audit on). Approvals and token exchange are not implemented yet. Run
+> this version only in trusted development or evaluation clusters.
 
 ## TL;DR
+
+A trial without an authorization server, with MCP routes open to anyone who
+can reach the Gateway:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version 0.0.5-beta.1 \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.enabled=false
 
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 # console: http://localhost:18080/ui/  user: admin  password:
@@ -148,8 +153,17 @@ export KAVRYNT_VERSION=0.0.5-beta.1
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.resourceURL=https://mcp.example.com \
+  --set-json 'gateway.auth.issuers=[{"issuer":"https://login.example.com/realms/agents"}]'
 ```
+
+MCP client authentication is on by default: every `/mcp/` call needs an
+access token from a trusted authorization server, and the install fails
+until `gateway.auth.resourceURL` (the Gateway's external https origin) and
+`gateway.auth.issuers` are set. For a trial without an authorization server,
+replace both with `--set gateway.auth.enabled=false`; MCP routes then accept
+unauthenticated calls, and the Gateway and the console say so.
 
 The command pulls the versioned OCI Helm chart and installs the matching
 Gateway and Operator images. Authenticate Helm to GHCR first when
@@ -173,7 +187,8 @@ vendored, so no dependency build is needed):
 ```bash
 helm upgrade --install kavrynt charts/kavrynt \
   --namespace kavrynt-system \
-  --create-namespace
+  --create-namespace \
+  --set gateway.auth.enabled=false
 ```
 
 ### Verify the installation
@@ -404,8 +419,9 @@ capabilities, read-only root filesystems, and limited Kubernetes RBAC. However,
 the current release is not production-security complete:
 
 - Gateway authenticates MCP clients with OAuth 2.1 bearer tokens from your
-  authorization server when `gateway.auth.enabled` is set (off by default):
-  each route accepts only tokens issued for it.
+  authorization server (on by default; `gateway.auth.enabled=false` opts
+  out and leaves MCP routes open): each route accepts only tokens issued
+  for it.
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
   to MCP servers, and drops upstream `Set-Cookie`. MCP servers that need
   their own credential get it from a Secret the platform team manages,
@@ -460,7 +476,7 @@ are:
 
 1. token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
-2. MCP client authentication on by default (`1.0.0-beta.1`);
+2. the console signed in through the authorization server;
 3. audit delivery to Kavrynt Cloud and usage events;
 4. MCP Streamable HTTP and protocol-aware routing;
 5. upgrade and rollback commands in kavryctl;

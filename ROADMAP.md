@@ -25,15 +25,15 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   with `kavryctl audit verify`.
 - Opt-in tool authorization policy: Rego evaluated in the Gateway, deny by
   default, from a ConfigMap.
-- Opt-in MCP client authentication: the Gateway is an OAuth 2.1 resource
-  server with per-route token audiences and Protected Resource Metadata.
+- MCP client authentication, on by default with an explicit opt-out for
+  trials: the Gateway is an OAuth 2.1 resource server with per-route token
+  audiences and Protected Resource Metadata.
 
 ## Next
 
 1. Token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
-2. MCP client authentication on by default (`1.0.0-beta.1`), with the
-   console behind it.
+2. The console signed in through the authorization server.
 3. Audit delivery to Kavrynt Cloud and usage events.
 4. MCP Streamable HTTP and protocol-aware routing.
 5. Upgrade and rollback commands in `kavryctl`.

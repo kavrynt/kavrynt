@@ -1,0 +1,24 @@
+suite: install notes
+templates:
+  - templates/NOTES.txt
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0014-R03.
+  - it: warns that MCP routes are open with the opt-out
+    set:
+      gateway.auth.enabled: false
+    asserts:
+      - matchRegexRaw:
+          pattern: "WARNING: MCP client authentication is off"
+
+  # Verifies SPEC-0014-R03.
+  - it: does not warn with authentication on
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "WARNING"

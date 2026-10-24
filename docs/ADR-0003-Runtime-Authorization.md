@@ -4,7 +4,8 @@
 
 Accepted (2026-10-02). Implemented so far: no token passthrough (header
 stripping) for `0.0.2-beta.1`; the Gateway as an OAuth 2.1 resource server
-(SPEC-0006, opt-in), static upstream credentials from a kubelet-mounted
+(SPEC-0006; on by default in the chart from SPEC-0014), static upstream
+credentials from a kubelet-mounted
 Secret (SPEC-0011), the policy decision point with OPA and policy from a
 ConfigMap (SPEC-0012; signed bundles from Kavrynt Cloud and approvals are
 not built), audit events on standard output with a per-instance hash chain
