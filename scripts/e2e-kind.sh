@@ -233,7 +233,7 @@ BUILD_DATE="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 log "building kavryctl client"
 (
   cd "${ROOT_DIR}"
-  GOCACHE="${TEMP_DIR}/go-build" go build -o "${TEMP_DIR}/kavryctl" ./cmd/kavryctl
+  go build -o "${TEMP_DIR}/kavryctl" ./cmd/kavryctl
 )
 
 log "building runtime images"
@@ -251,7 +251,7 @@ done
 docker build --tag "${SAMPLE_IMAGE}" "${ROOT_DIR}/test/e2e/mcp-server"
 
 log "creating Kind cluster ${CLUSTER_NAME}"
-kind create cluster --name "${CLUSTER_NAME}" --wait 120s
+kind create cluster --name "${CLUSTER_NAME}" --config "${ROOT_DIR}/test/e2e/kind-config.yaml" --wait 120s
 CREATED_CLUSTER=1
 
 log "loading local images"

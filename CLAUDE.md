@@ -157,11 +157,14 @@ Merging, when the owner asks for it:
   (`gh pr merge <n> --merge --delete-branch`), only after every CI check on
   that pull request has passed. `develop` has no branch protection, so check
   `gh pr checks <n>` yourself.
-- Merge stacked pull requests from the bottom up. Before merging one,
-  retarget the pull request stacked on it to `develop`
-  (`gh pr edit <next> --base develop`): GitHub closes, not retargets, a pull
-  request whose base branch is deleted. Then wait for that pull request's CI
-  to pass before merging it.
+- Merge stacked pull requests from the bottom up. Every pull request in a
+  stack gets the full checks against its own base, so wait until all of
+  them pass, then merge them in order. Before merging one, retarget the pull
+  request stacked on it to `develop` (`gh pr edit <next> --base develop`):
+  GitHub closes, not retargets, a pull request whose base branch is
+  deleted. While nothing else lands on `develop` in between, its tested
+  head merges unchanged and needs no new run; otherwise rerun its checks
+  first (`gh pr close` then `gh pr reopen`).
 - After merging, delete the feature branch on the remote and locally
   (`git branch -d`), switch to `develop`, and pull. Never delete `develop`,
   `main`, or `release/*` branches.
@@ -192,10 +195,13 @@ the schema and cover template changes in `charts/kavrynt/tests/`.
 
 ## CI and Release
 
-- `.github/workflows/qa.yml` (pull requests and pushes to `develop`, `main`,
-  `feature/**`): Go QA and SAST, Trivy source scan, Helm and release contract,
-  multi-arch image build with Trivy (amd64 and arm64). Kind e2e runs on pull
-  requests and manual runs only.
+- `.github/workflows/qa.yml` (pull requests into `develop`, `main`, and
+  `feature/**`, so stacked pull requests are tested too; pushes to `develop`
+  and `main`; manual runs): Go QA and SAST, Trivy source scan, Helm and
+  release contract, image build with Trivy (amd64 on pull requests; amd64
+  and arm64 on `develop` and `main`). Kind e2e runs on pull requests and
+  manual runs, in parallel with Go QA. Pull requests that change only
+  Markdown, `specs/`, or `docs/` (not Go files) skip the images and the e2e.
 - `.github/workflows/release.yml` (tag `v*`): tag must match
   `X.Y.Z-(alpha|beta)[.N]`, be on `main`, and equal the chart version. Publishes
   to GHCR (canonical), mirrors to Docker Hub, Cosign-signs both, builds

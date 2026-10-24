@@ -3,6 +3,13 @@
 All tests create a disposable Kind cluster, never touch your current
 Kubernetes context, and delete the cluster afterwards (`KEEP_CLUSTER=1` keeps
 it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
+`make e2e-kind` creates its cluster from `test/e2e/kind-config.yaml`, whose
+kubelet syncs every 10 seconds, so updated ConfigMap and Secret mounts reach
+pods in seconds.
+
+In CI the Kind e2e runs for every pull request that changes more than
+Markdown, `specs/`, or `docs/`, at the same time as Go QA. Locally, run it
+once on the top of a stack of branches rather than on each one.
 
 | Target | What it proves | Images |
 | --- | --- | --- |

@@ -1,10 +1,13 @@
 name: Secure QA
 
+# Feature branches are tested through their pull request, including pull
+# requests stacked on another feature branch; pushes run only on the
+# long-lived branches.
 on:
   pull_request:
-    branches: [develop, main]
-  push:
     branches: [develop, main, "feature/**"]
+  push:
+    branches: [develop, main]
   workflow_dispatch:
 
 permissions:
@@ -20,6 +23,38 @@ env:
   GOVULNCHECK_VERSION: v1.7.0
 
 jobs:
+  # Pull requests that change only Markdown, specs, or docs skip the image
+  # builds and the Kind e2e. Go QA, Helm, and the source scan always run.
+  changes:
+    name: Changed files
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          fetch-depth: 2
+
+      - name: Classify changes
+        id: diff
+        env:
+          EVENT: ${{ github.event_name }}
+        run: |
+          code=true
+          if [ "${EVENT}" = "pull_request" ]; then
+            # The pull request's merge commit: its first parent is the base.
+            changed="$(git diff --name-only HEAD^1 HEAD)"
+            printf 'changed files:\n%s\n' "${changed}"
+            # Docs-only: Markdown, specs/, and docs/ except Go files.
+            code_files="$({ grep -Ev '\.md$|^specs/|^docs/' <<<"${changed}"; grep -E '^docs/.*\.go$' <<<"${changed}"; } || true)"
+            if [ -n "${changed}" ] && [ -z "${code_files}" ]; then
+              code=false
+            fi
+          fi
+          echo "code=${code}" >>"${GITHUB_OUTPUT}"
+          echo "code changes: ${code}"
+
   go:
     name: Go QA and SAST
     runs-on: ubuntu-latest
@@ -128,7 +163,8 @@ jobs:
   image:
     name: Image ${{ matrix.image }} and Trivy
     runs-on: ubuntu-latest
-    needs: [go, source-scan, helm]
+    needs: [changes, go, source-scan, helm]
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -149,7 +185,9 @@ jobs:
           context: .
           file: build/Dockerfile
           target: ${{ matrix.image }}
-          platforms: linux/amd64,linux/arm64
+          # Pull requests build amd64 only; develop and main build both, as
+          # releases do.
+          platforms: ${{ github.event_name == 'pull_request' && 'linux/amd64' || 'linux/amd64,linux/arm64' }}
           push: false
           outputs: type=oci,dest=${{ runner.temp }}/image.tar
           build-args: |
@@ -159,6 +197,8 @@ jobs:
           tags: kavrynt/${{ matrix.image }}:ci
           provenance: false
           sbom: false
+          cache-from: type=gha,scope=${{ matrix.image }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.image }}
 
       - name: Extract OCI layout
         run: |
@@ -178,6 +218,7 @@ jobs:
           exit-code: 1
 
       - name: Scan ARM64 image
+        if: github.event_name != 'pull_request'
         uses: aquasecurity/trivy-action@ed142fd0673e97e23eac54620cfb913e5ce36c25 # v0.36.0
         env:
           TRIVY_PLATFORM: linux/arm64
@@ -195,8 +236,9 @@ jobs:
     # install its browser on ubuntu-latest (26.04). Move back to
     # ubuntu-latest together with a Playwright release that supports it.
     runs-on: ubuntu-24.04
-    needs: [go, helm]
-    if: github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch'
+    # Runs next to Go QA, not after it: the e2e is the slowest job.
+    needs: [changes]
+    if: (github.event_name == 'pull_request' || github.event_name == 'workflow_dispatch') && needs.changes.outputs.code == 'true'
     timeout-minutes: 25
     steps:
       - name: Checkout
