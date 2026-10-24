@@ -195,6 +195,24 @@ Operator; it does not need to be restored.
 
 See [SECURITY.md](../../SECURITY.md) for known limitations.
 
+## Credentials for MCP servers
+
+MCP servers that need their own API key declare `spec.credential` in their
+`MCPServer`. Store the values in one Secret in the release namespace, two keys
+per server, and name it in the chart:
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-upstream-credentials \
+  --from-literal=team-a.search="$SEARCH_TOKEN" \
+  --from-literal=team-a.search.origin=http://search.team-a.svc.cluster.local:8080
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials
+```
+
+The `.origin` key pins the credential to the server's endpoint. Details:
+[Gateway: Upstream credentials](../../docs/components/gateway/README.md#upstream-credentials).
+
 ## Authenticating MCP clients
 
 The Gateway can require an OAuth 2.1 bearer token from your authorization
@@ -279,6 +297,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `global.watchNamespaces` | list | `[]` | Namespaces whose `MCPServer` resources the Gateway routes; empty means all. A list switches Gateway RBAC to per-namespace Roles, and the Operator reports servers elsewhere as not `Ready` (`NamespaceNotWatched`). |
+| `global.upstreamCredentials.secretName` | string | `""` | Secret in the release namespace with the credentials of MCP servers that declare `spec.credential`; mounted (optional) into the Gateway and the Operator, which get no Secret RBAC |
 
 ### Alerts
 

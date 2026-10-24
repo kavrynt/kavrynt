@@ -1,3 +1,4 @@
+{{- $credentials := (((.Values.global | default dict).upstreamCredentials | default dict).secretName) }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -75,6 +76,9 @@ spec:
             - {{ join "," . | quote }}
             {{- end }}
             {{- end }}
+            {{- if $credentials }}
+            - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
+            {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true
@@ -104,20 +108,40 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if include "gateway.consoleAuthEnabled" . }}
-          # The kubelet mounts the admin Secret; the Gateway's service account
-          # has no RBAC on Secrets.
+          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials }}
+          # The kubelet mounts these Secrets; the Gateway's service account has
+          # no RBAC on Secrets.
           volumeMounts:
+            {{- if include "gateway.consoleAuthEnabled" . }}
             - name: console-auth
               mountPath: /etc/kavrynt/console-auth
               readOnly: true
+            {{- end }}
+            {{- if $credentials }}
+            - name: upstream-credentials
+              mountPath: /etc/kavrynt/upstream-credentials
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if include "gateway.consoleAuthEnabled" . }}
+      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials }}
       volumes:
+        {{- if include "gateway.consoleAuthEnabled" . }}
         - name: console-auth
           secret:
             secretName: {{ include "gateway.consoleAuthSecret" . }}
             defaultMode: 0444
+        {{- end }}
+        {{- if $credentials }}
+        # Upstream credentials of MCP servers that declare spec.credential
+        # (SPEC-0011).
+        - name: upstream-credentials
+          secret:
+            secretName: {{ $credentials | quote }}
+            defaultMode: 0444
+            # Pods start before the Secret exists; until then credentialed
+            # servers answer 503 and their discovery reports the key missing.
+            optional: true
+        {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:

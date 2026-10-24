@@ -70,6 +70,10 @@
       cls: "warn",
       definition: "The access token is valid but lacks a scope the Gateway requires. The server was not called.",
     },
+    credential_unavailable: {
+      cls: "bad",
+      definition: "The server needs a stored credential the Gateway does not have for its current endpoint: the key or its .origin pin is missing from the upstream credentials Secret, or the endpoint changed. The server was not called.",
+    },
     auth_unavailable: {
       cls: "bad",
       definition: "The Gateway could not load the signing keys of the token's authorization server and refused the call (503). Check the issuer's metadata and key URLs.",

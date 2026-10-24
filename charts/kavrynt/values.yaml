@@ -4,6 +4,13 @@ global:
   # Operator reports servers in other namespaces as not Ready
   # (NamespaceNotWatched).
   watchNamespaces: []
+  # Secret in the release namespace holding the credentials of MCP servers
+  # that declare spec.credential: key <namespace>.<name> with the value and
+  # <namespace>.<name>.origin with the endpoint origin it may be sent to
+  # (scheme://host:port). The kubelet mounts it into the Gateway and the
+  # Operator; neither gets RBAC on Secrets. Empty: no credentials.
+  upstreamCredentials:
+    secretName: ""
 
 gateway:
   fullnameOverride: kavrynt-gateway

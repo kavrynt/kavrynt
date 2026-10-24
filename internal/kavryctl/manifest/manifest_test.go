@@ -71,3 +71,31 @@ func TestLoadMissingFile(t *testing.T) {
 		t.Fatalf("Load missing file error = %v", err)
 	}
 }
+
+// Verifies SPEC-0011-R01: kavryctl validate accepts a declared credential
+// and rejects a header that would replace request framing.
+func TestParseCredential(t *testing.T) {
+	const base = `apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: search
+spec:
+  version: 1.0.0
+  transport: http
+  endpoint: http://search.team-a.svc:8080
+  credential:
+`
+	server, err := Parse([]byte(base + "    scheme: Bearer\n"))
+	if err != nil {
+		t.Fatalf("credential rejected: %v", err)
+	}
+	if server.Spec.Credential == nil || server.Spec.Credential.Scheme != "Bearer" {
+		t.Fatalf("credential = %+v", server.Spec.Credential)
+	}
+	if _, err := Parse([]byte(base + "    header: Cookie\n")); err == nil {
+		t.Fatal("a Cookie credential header was accepted")
+	}
+	if _, err := Parse([]byte(base + "    value: secret\n")); err == nil {
+		t.Fatal("a credential value in the manifest was accepted")
+	}
+}

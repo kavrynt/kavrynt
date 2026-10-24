@@ -13,6 +13,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/operator/cloudsync"
 	"github.com/kavrynt/kavrynt/internal/operator/controller"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -35,6 +36,7 @@ func main() {
 		cloudTokenFile    string
 		cloudInterval     time.Duration
 		allowLoopback     bool
+		credentialsDir    string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address")
@@ -44,6 +46,7 @@ func main() {
 	flag.BoolVar(&toolDiscovery, "tool-discovery", true, "List the tools of Ready MCP servers into MCPServer status")
 	flag.DurationVar(&toolRefresh, "tool-refresh-interval", controller.DefaultToolRefreshInterval, "How often tools are listed again")
 	flag.BoolVar(&allowLoopback, "allow-loopback-endpoints", false, "Allow tool discovery against endpoints that resolve to loopback addresses (local development only)")
+	flag.StringVar(&credentialsDir, "upstream-credentials-dir", os.Getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR"), "Directory of the mounted upstream credentials Secret, for discovering the tools of MCP servers that declare spec.credential")
 	flag.BoolVar(&cloudSync, "cloud-sync", false, "Send the MCPServer inventory to Kavrynt Cloud")
 	flag.StringVar(&cloudURL, "cloud-url", "", "Kavrynt Cloud base URL (https)")
 	flag.StringVar(&cloudTokenFile, "cloud-token-file", cloudsync.DefaultTokenFile, "File holding the Kavrynt Cloud cluster token; read before every sync")
@@ -79,6 +82,7 @@ func main() {
 		Scheme:              mgr.GetScheme(),
 		GatewayNamespaces:   splitList(gatewayNamespaces),
 		ToolRefreshInterval: toolRefresh,
+		Credentials:         upstreamcred.Store{Dir: credentialsDir},
 	}
 	if toolDiscovery {
 		reconciler.Discoverer = discovery.New(build.Version, egress.Transport(allowLoopback))

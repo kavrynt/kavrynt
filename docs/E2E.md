@@ -46,6 +46,12 @@ it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
     client pod calls `tools/list` through the Gateway Service throughout a
     rolling restart of every Gateway replica and no call may fail; deleting
     the Operator leader lets the standby reconcile a new server to `Ready`.
+    Upstream credentials: a server that requires its own bearer token is
+    discovered and routed with the stored credential from the pre-created
+    Secret (the caller's token is replaced), a server whose credential is not
+    stored answers `503` with `CredentialUnavailable` discovery, neither
+    component can read Secrets, and the value appears in no response,
+    status, metric, or log. The CRD rejects a `Cookie` credential header.
     MCP client authentication: deploys the e2e image's test authorization
     server, turns `gateway.auth` on, and checks the `401` challenge and the
     route's Protected Resource Metadata, that a valid token is accepted and

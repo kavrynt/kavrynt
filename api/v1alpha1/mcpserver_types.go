@@ -24,6 +24,9 @@ const (
 	ReasonDiscovered           = "Discovered"
 	ReasonDiscoveryFailed      = "DiscoveryFailed"
 	ReasonNotRoutable          = "NotRoutable"
+	// ReasonCredentialUnavailable: the server declares a credential that is
+	// not stored, or not pinned to its endpoint (SPEC-0011).
+	ReasonCredentialUnavailable = "CredentialUnavailable" // #nosec G101 -- a condition reason, not a credential.
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
@@ -36,6 +39,35 @@ type MCPServerSpec struct {
 	Args        []string          `json:"args,omitempty"`
 	Endpoint    string            `json:"endpoint,omitempty"`
 	Environment map[string]string `json:"environment,omitempty"`
+	// Credential declares that the endpoint needs a credential, which the
+	// platform team stores for this server (SPEC-0011). The value is never
+	// part of the MCPServer.
+	Credential *MCPServerCredential `json:"credential,omitempty"`
+}
+
+// MCPServerCredential says how the Gateway and the Operator send a server's
+// stored credential.
+type MCPServerCredential struct {
+	// Header carries the credential; empty means Authorization.
+	Header string `json:"header,omitempty"`
+	// Scheme prefixes the value with a space, for example Bearer.
+	Scheme string `json:"scheme,omitempty"`
+}
+
+// HeaderName returns the header that carries the credential.
+func (c *MCPServerCredential) HeaderName() string {
+	if c == nil || c.Header == "" {
+		return "Authorization"
+	}
+	return c.Header
+}
+
+// HeaderValue returns the header value for a stored credential.
+func (c *MCPServerCredential) HeaderValue(value string) string {
+	if c == nil || c.Scheme == "" {
+		return value
+	}
+	return c.Scheme + " " + value
 }
 
 type MCPServerStatus struct {
@@ -101,6 +133,10 @@ func (in *MCPServer) DeepCopyObject() runtime.Object {
 		for key, value := range in.Spec.Environment {
 			out.Spec.Environment[key] = value
 		}
+	}
+	if in.Spec.Credential != nil {
+		credential := *in.Spec.Credential
+		out.Spec.Credential = &credential
 	}
 	if in.Status.Conditions != nil {
 		out.Status.Conditions = append([]metav1.Condition(nil), in.Status.Conditions...)

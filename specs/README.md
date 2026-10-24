@@ -135,6 +135,6 @@ against the assistant's summary of them.
 | [0008](0008-high-availability/spec.md) | High availability | Implemented |
 | [0009](0009-crd-lifecycle-and-upgrades/spec.md) | CRD lifecycle and upgrades | Implemented |
 | [0010](0010-alerts-and-runbooks/spec.md) | Alerts and runbooks | Implemented |
-| [0011](0011-upstream-credentials/spec.md) | Upstream credentials | Accepted |
+| [0011](0011-upstream-credentials/spec.md) | Upstream credentials | Implemented |
 | [0012](0012-tool-authorization-policy/spec.md) | Tool authorization policy | Accepted |
 | [0013](0013-audit-events/spec.md) | Audit events | Accepted |

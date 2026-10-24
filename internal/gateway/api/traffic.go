@@ -55,6 +55,10 @@ const (
 	outcomeUnauthenticated = "unauthenticated"
 	outcomeForbidden       = "forbidden"
 	outcomeAuthUnavailable = "auth_unavailable"
+
+	// The server needs a stored credential the Gateway does not have for its
+	// endpoint (SPEC-0011-R06).
+	outcomeCredentialUnavailable = "credential_unavailable" // #nosec G101 -- an outcome label, not a credential.
 )
 
 // mcpCall identifies what a client asked an MCP server to do.

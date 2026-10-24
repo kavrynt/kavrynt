@@ -406,8 +406,10 @@ the current release is not production-security complete:
   authorization server when `gateway.auth.enabled` is set (off by default):
   each route accepts only tokens issued for it.
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
-  to MCP servers, and drops upstream `Set-Cookie`. It does not yet exchange
-  tokens for upstream servers (ADR-0003).
+  to MCP servers, and drops upstream `Set-Cookie`. MCP servers that need
+  their own credential get it from a Secret the platform team manages,
+  pinned to the server's endpoint; token exchange is not implemented yet
+  (ADR-0003).
 - Gateway does not yet enforce actor, tool, or policy authorization.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
   else.
@@ -452,7 +454,7 @@ The release process is documented in [docs/RELEASE.md](docs/RELEASE.md).
 The full roadmap is in [ROADMAP.md](ROADMAP.md). The next product milestones
 are:
 
-1. upstream credentials and token exchange
+1. token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 2. policy decisions and tool-level authorization;
 3. audit and usage events;
