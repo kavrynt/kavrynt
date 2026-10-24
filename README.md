@@ -51,6 +51,12 @@ kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
 
+**Testing Kavrynt?** Follow the [developer testing runbook](docs/TESTING.md):
+on any Kubernetes cluster, in about 30 minutes, it registers a sample MCP
+server, calls its tools through the Gateway, and tests policy, audit, and the
+console. Then tell us what worked in a
+[tester feedback issue](https://github.com/kavrynt/kavrynt/issues/new?template=tester_feedback.yml).
+
 ## Contents
 
 - [Why Kavrynt](#why-kavrynt)
