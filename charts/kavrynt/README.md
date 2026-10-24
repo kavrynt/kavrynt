@@ -114,6 +114,38 @@ removed:
 kubectl delete crd mcpservers.kavrynt.io
 ```
 
+## Monitoring and alerts
+
+Both components expose Prometheus metrics: the Gateway on its Service
+(`gateway.metrics.*`), the Operator on `<release>-operator-metrics`
+(`operator.metrics.*`). With the Prometheus Operator:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set gateway.metrics.serviceMonitor.enabled=true \
+  --set operator.metrics.serviceMonitor.enabled=true \
+  --set metrics.prometheusRule.enabled=true
+```
+
+`metrics.prometheusRule` installs these alerts, each with a runbook in
+[docs/runbooks](../../docs/runbooks/README.md) linked from its `runbook_url`:
+
+| Alert | Severity | Fires when |
+| --- | --- | --- |
+| `KavryntGatewayDown` | critical | No Gateway target up for 5 minutes |
+| `KavryntGatewayRouteSyncFailing` | critical | A replica's route syncs failed for 10 minutes without a success |
+| `KavryntMCPUpstreamErrorsHigh` | warning | Over `errorRatio` (5%) of a route's calls fail upstream for 10 minutes |
+| `KavryntMCPLatencyHigh` | warning | A route's p95 latency is over `latencyP95Seconds` (5s) for 15 minutes |
+| `KavryntOperatorDown` | critical | No Operator target up for 5 minutes |
+| `KavryntMCPServerNotReady` | warning | An `MCPServer` is not `Ready` for `notReadyFor` (10m) |
+| `KavryntCloudSyncStale` | warning | Kavrynt Cloud accepted no snapshot for `cloudSyncStaleSeconds` (600); only with the Cloud connector |
+
+Set `metrics.prometheusRule.labels` to match your Prometheus `ruleSelector`,
+`alertLabels` to route alerts in Alertmanager, and `jobs` when Prometheus
+discovers the targets without the chart's ServiceMonitors. The rules are
+tested with `promtool` (`make alerts-test`).
+
 ## High availability
 
 [`examples/helm/values-production.yaml`](../../examples/helm/values-production.yaml)
@@ -225,6 +257,22 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | --- | --- | --- | --- |
 | `global.watchNamespaces` | list | `[]` | Namespaces whose `MCPServer` resources the Gateway routes; empty means all. A list switches Gateway RBAC to per-namespace Roles, and the Operator reports servers elsewhere as not `Ready` (`NamespaceNotWatched`). |
 
+### Alerts
+
+| Key | Type | Default | Description |
+| --- | --- | --- | --- |
+| `metrics.prometheusRule.enabled` | bool | `false` | Create the `PrometheusRule` with the Kavrynt alerts (requires the Prometheus Operator CRDs) |
+| `metrics.prometheusRule.labels` | object | `{}` | Labels on the `PrometheusRule`, for Prometheus' `ruleSelector` |
+| `metrics.prometheusRule.alertLabels` | object | `{}` | Labels added to every alert; `severity` and `component` cannot be overridden |
+| `metrics.prometheusRule.jobs.gateway` | string | Gateway Service name | Prometheus job of the Gateway targets |
+| `metrics.prometheusRule.jobs.operator` | string | `<release>-operator-metrics` | Prometheus job of the Operator targets |
+| `metrics.prometheusRule.errorRatio` | number | `0.05` | Upstream failure share that raises `KavryntMCPUpstreamErrorsHigh` |
+| `metrics.prometheusRule.minRequestsPerSecond` | number | `0.05` | Routes with less traffic never raise it |
+| `metrics.prometheusRule.latencyP95Seconds` | number | `5` | p95 latency that raises `KavryntMCPLatencyHigh` |
+| `metrics.prometheusRule.notReadyFor` | string | `10m` | How long an `MCPServer` may be not `Ready` |
+| `metrics.prometheusRule.cloudSyncStaleSeconds` | int | `600` | Age of the last accepted Cloud snapshot that raises `KavryntCloudSyncStale` |
+| `metrics.prometheusRule.runbookBaseURL` | string | this repository at the release tag | Base of every `runbook_url` |
+
 ### Network policies
 
 | Key | Type | Default | Description |
@@ -305,6 +353,10 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `operator.cloud.tokenSecret.name` | string | `""` | Secret in the release namespace holding the cluster token |
 | `operator.cloud.tokenSecret.key` | string | `token` | Key of the token in that Secret |
 | `operator.cloud.syncInterval` | string | `60s` | Inventory sync interval |
+| `operator.metrics.service.enabled` | bool | `true` | Service `<release>-operator-metrics` for the Operator's metrics port |
+| `operator.metrics.serviceMonitor.enabled` | bool | `false` | Create a Prometheus Operator `ServiceMonitor` for the Operator (requires its CRDs) |
+| `operator.metrics.serviceMonitor.interval` | string | `30s` | Scrape interval |
+| `operator.metrics.serviceMonitor.labels` | object | `{}` | Extra `ServiceMonitor` labels |
 | `operator.podSecurityContext` | object | non-root `65532`, `RuntimeDefault` seccomp | Pod security context |
 | `operator.securityContext` | object | no privilege escalation, all capabilities dropped, read-only root filesystem | Container security context |
 | `operator.resources` | object | requests `25m`/`64Mi`, limits `250m`/`256Mi` | Container resources |

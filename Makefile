@@ -27,6 +27,7 @@ help:
 	@printf "  make helm-template  Render the Helm chart\n"
 	@printf "  make helm-unittest  Run the chart unit tests (helm-unittest)\n"
 	@printf "  make helm-plugins   Install the pinned helm-unittest plugin\n"
+	@printf "  make alerts-test    Test the alert rules with promtool and check their runbooks (needs Docker)\n"
 	@printf "  make build          Build kavryctl, gateway, and operator binaries\n"
 	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
@@ -37,7 +38,7 @@ help:
 	@printf "  make demo-down      Delete the Kind demo cluster\n"
 
 .PHONY: qa
-qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck helm-lint helm-template helm-unittest
+qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck helm-lint helm-template helm-unittest alerts-test
 
 .PHONY: release-contract
 release-contract:
@@ -46,6 +47,12 @@ release-contract:
 .PHONY: spec-check
 spec-check:
 	bash ./scripts/verify-specs.sh
+
+# Alert rules: runbook coverage and promtool tests (SPEC-0010). promtool runs
+# from the pinned Prometheus image.
+.PHONY: alerts-test
+alerts-test:
+	bash ./scripts/test-alerts.sh
 
 .PHONY: spec-new
 spec-new:

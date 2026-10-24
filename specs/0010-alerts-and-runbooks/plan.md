@@ -11,8 +11,9 @@
 - **Operator Service (R02).** `templates/service.yaml` (port `metrics`,
   from `config.metricsBindAddress`) and `templates/servicemonitor.yaml` in
   the Operator subchart.
-- **Rules (R03–R06).** `charts/kavrynt/charts/gateway/templates/prometheusrule.yaml`.
-  Expressions:
+- **Rules (R03–R06).** `charts/kavrynt/templates/prometheusrule.yaml` in the
+  umbrella chart, with the rule groups in the helper `kavrynt.alertRules`
+  (`templates/_alerts.tpl`). Expressions:
   - `KavryntGatewayDown`: `absent(up{job="<gateway svc>"} == 1)` for 5m, critical.
   - `KavryntGatewayRouteSyncFailing`: failures increased and successes did
     not over 10m, critical.
@@ -31,11 +32,12 @@
   - `KavryntCloudSyncStale`: `time() -
     kavrynt_operator_cloud_sync_last_success_timestamp_seconds > 600`, warning.
   `runbook_url`: `https://github.com/kavrynt/kavrynt/blob/v{{ .Chart.Version }}/docs/runbooks/<Alert>.md`.
-  The Operator Service name comes from a value the umbrella chart sets, so
-  the Gateway subchart does not reach into the Operator's helpers.
+  Job names default to the Service names from the subcharts'
+  `fullnameOverride`; `metrics.prometheusRule.jobs` overrides them.
 - **Runbooks (R07).** `docs/runbooks/<Alert>.md` plus `README.md` index.
-  `scripts/verify-runbooks.sh` (in `make qa`) extracts alert names from the
-  rendered rule (`helm template ... | yq`) and compares with the files.
+  `scripts/test-alerts.sh` extracts alert names from the rendered rule
+  (`helm template`, `grep`) and compares them with the files one to one,
+  and checks each runbook's sections.
 - **Rule tests (R08).** `test/alerts/rules_test.yaml` (promtool unit tests
   with synthetic series). `make alerts-test` renders the rule with all
   options on, extracts `spec`, runs `promtool check rules` and
@@ -48,21 +50,22 @@
 | --- | --- |
 | `internal/operator/controller/` | Readiness gauge and tests |
 | `charts/kavrynt/charts/k8s-operator/templates/service.yaml`, `servicemonitor.yaml` | New |
-| `charts/kavrynt/charts/gateway/templates/prometheusrule.yaml` | New |
+| `charts/kavrynt/templates/prometheusrule.yaml`, `_alerts.tpl` | New |
 | Subchart `values.yaml` and schemas, umbrella `values.yaml` | New values |
 | `charts/kavrynt/tests/` | Rule rendering, Service, ServiceMonitor cases |
 | `docs/runbooks/` | New |
 | `test/alerts/` | promtool unit tests |
-| `scripts/verify-runbooks.sh`, `Makefile`, `.github/workflows/qa.yml` | New checks |
+| `scripts/test-alerts.sh`, `Makefile`, `.github/workflows/qa.yml` | New checks (`make alerts-test`, in `make qa`) |
 
 ## Verification
 
 | Requirement | Test |
 | --- | --- |
-| SPEC-0010-R01 | Controller test: gauge set, cleared on delete |
-| SPEC-0010-R02 | `operator_test.yaml` Service and ServiceMonitor |
-| SPEC-0010-R03, R04, R05, R06 | `gateway_test.yaml` rendered rules and annotations |
-| SPEC-0010-R07 | `scripts/verify-runbooks.sh` |
+| SPEC-0010-R01 | `internal/operator/controller/metrics_test.go` |
+| SPEC-0010-R02 | `alerts_test.yaml` Service and ServiceMonitor |
+| SPEC-0010-R03, R04, R05 | `alerts_test.yaml` rendered rules and annotations |
+| SPEC-0010-R06 | `test/alerts/rules_test.yaml` alert label sets |
+| SPEC-0010-R07 | `scripts/test-alerts.sh` via `make alerts-test` (cited in `test/alerts/rules_test.yaml`) |
 | SPEC-0010-R08 | `test/alerts/rules_test.yaml` via `make alerts-test` |
 
 ## Rollout

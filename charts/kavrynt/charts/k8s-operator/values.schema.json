@@ -102,6 +102,26 @@
         }
       }
     },
+    "metrics": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "service": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": { "enabled": { "type": "boolean" } }
+        },
+        "serviceMonitor": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": { "type": "boolean" },
+            "interval": { "$ref": "#/definitions/duration" },
+            "labels": { "$ref": "#/definitions/stringMap" }
+          }
+        }
+      }
+    },
     "cloud": {
       "type": "object",
       "additionalProperties": false,

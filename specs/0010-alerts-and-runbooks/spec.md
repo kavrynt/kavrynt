@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -106,7 +106,7 @@ can read Prometheus, which already sees Gateway route labels.
 
 ## Compatibility
 
-New values: `metrics.prometheusRule` (Gateway subchart, holds all rules),
+New values: `metrics.prometheusRule` (umbrella chart, holds all rules),
 `operator.metrics.service`, `operator.metrics.serviceMonitor`. The Operator
 Service is new but on by default; it changes no existing object. The
 PrometheusRule needs the Prometheus Operator CRDs, so it is off by default.
@@ -119,8 +119,9 @@ component docs (metrics), README observability line.
 
 ## Decisions
 
-- All rules in one PrometheusRule rendered by the Gateway subchart (which
-  already owns metrics values) rather than one per subchart: one switch,
-  one place for shared labels.
+- All rules in one PrometheusRule rendered by the umbrella chart rather than
+  one per subchart: one switch, one place for shared labels, and the
+  umbrella sees both components' values (the Cloud alert depends on
+  `operator.cloud.enabled`).
 - `promtool` runs from the official Prometheus container image pinned by
   digest, not a new Go dependency.

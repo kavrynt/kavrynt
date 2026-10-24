@@ -15,6 +15,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - Signed multi-architecture images and an OCI Helm chart.
 - `helm upgrade` and `helm rollback` that carry the `MCPServer` CRD, tested
   from the previous release on every change.
+- Alerting rules for the Gateway, the Operator, and MCP servers, each with a
+  runbook, tested with `promtool`.
 - A high-availability profile (several Gateway replicas with graceful drain,
   a standby Operator), tested with a rolling restart under load.
 

@@ -36,6 +36,18 @@ config:
     enabled: true
     refreshInterval: 5m
 
+# Operator metrics (controller-runtime, kavrynt_operator_mcpserver_ready, and
+# the Cloud connector) on the metrics port. The Service lets the Prometheus
+# Operator scrape them; only the leader exports MCPServer readiness.
+metrics:
+  service:
+    enabled: true
+  # ServiceMonitor for the Prometheus Operator (requires its CRDs).
+  serviceMonitor:
+    enabled: false
+    interval: 30s
+    labels: {}
+
 # Kavrynt Cloud connector: sends every MCPServer and its discovered tools to
 # Kavrynt Cloud. Off by default. Create the Secret first, for example:
 #   kubectl create secret generic kavrynt-cloud-token --from-literal=token=<cluster token>

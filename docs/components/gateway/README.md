@@ -191,9 +191,10 @@ tool arguments, and results are never recorded.
 
 The chart adds `prometheus.io/*` scrape annotations by default
 (`gateway.metrics.scrapeAnnotations`). Optional: a Prometheus Operator
-`ServiceMonitor` (`gateway.metrics.serviceMonitor.enabled`) and the
+`ServiceMonitor` (`gateway.metrics.serviceMonitor.enabled`), the
 "Kavrynt MCP Traffic" Grafana dashboard as a sidecar-labelled ConfigMap
-(`gateway.metrics.dashboard.enabled`).
+(`gateway.metrics.dashboard.enabled`), and alerting rules with runbooks
+(`metrics.prometheusRule.enabled`; see [docs/runbooks](../../runbooks/README.md)).
 
 ## Flags
 
