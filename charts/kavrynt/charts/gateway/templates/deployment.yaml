@@ -1,4 +1,8 @@
 {{- $credentials := (((.Values.global | default dict).upstreamCredentials | default dict).secretName) }}
+{{- $policy := .Values.policy | default dict }}
+{{- if and $policy.enabled (not $policy.configMap) }}
+{{- fail "policy.configMap is required when policy.enabled is true: the ConfigMap with the .rego files" }}
+{{- end }}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -79,6 +83,9 @@ spec:
             {{- if $credentials }}
             - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
             {{- end }}
+            {{- if $policy.enabled }}
+            - --policy-dir=/etc/kavrynt/policy
+            {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true
@@ -108,7 +115,7 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials }}
+          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled }}
           # The kubelet mounts these Secrets; the Gateway's service account has
           # no RBAC on Secrets.
           volumeMounts:
@@ -122,8 +129,13 @@ spec:
               mountPath: /etc/kavrynt/upstream-credentials
               readOnly: true
             {{- end }}
+            {{- if $policy.enabled }}
+            - name: policy
+              mountPath: /etc/kavrynt/policy
+              readOnly: true
+            {{- end }}
           {{- end }}
-      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials }}
+      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled }}
       volumes:
         {{- if include "gateway.consoleAuthEnabled" . }}
         - name: console-auth
@@ -141,6 +153,13 @@ spec:
             # Pods start before the Secret exists; until then credentialed
             # servers answer 503 and their discovery reports the key missing.
             optional: true
+        {{- end }}
+        {{- if $policy.enabled }}
+        # Tool authorization policy (SPEC-0012). Not optional: without it the
+        # Gateway must not start.
+        - name: policy
+          configMap:
+            name: {{ $policy.configMap | quote }}
         {{- end }}
       {{- end }}
       {{- with .Values.nodeSelector }}

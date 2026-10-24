@@ -21,10 +21,14 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/console"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
+	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
+
+// policyReloadInterval is how often the mounted policy is checked for changes.
+const policyReloadInterval = 10 * time.Second
 
 func main() {
 	addr := flag.String("addr", ":8080", "HTTP listen address")
@@ -40,6 +44,7 @@ func main() {
 	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
 	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
 	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
+	policyDir := flag.String("policy-dir", getenv("KAVRYNT_POLICY_DIR", ""), "Directory of the mounted tool authorization policy (.rego files defining data.kavrynt.authz.decision); every MCP request is then allowed or denied by it")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
@@ -61,6 +66,16 @@ func main() {
 	if err != nil {
 		slog.Error("configure MCP client authentication", "error", err)
 		os.Exit(1)
+	}
+
+	var policyEngine *policy.Engine
+	if *policyDir != "" {
+		// A policy that does not compile stops the Gateway (SPEC-0012-R03).
+		policyEngine, err = policy.New(*policyDir, slog.Default())
+		if err != nil {
+			slog.Error("load tool authorization policy", "error", err)
+			os.Exit(1)
+		}
 	}
 
 	cfg, err := ctrl.GetConfig()
@@ -94,6 +109,9 @@ func main() {
 	if consoleAuth != nil {
 		handler.EnableConsoleAuth(consoleAuth)
 	}
+	if policyEngine != nil {
+		handler.EnablePolicy(policyEngine)
+	}
 	if clientAuth != nil {
 		handler.EnableClientAuth(clientAuth)
 		if consoleAuth != nil {
@@ -103,6 +121,10 @@ func main() {
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+
+	if policyEngine != nil {
+		go policyEngine.Watch(ctx, policyReloadInterval)
+	}
 
 	errCh := make(chan error, 2)
 	go func() {
@@ -119,7 +141,7 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	go func() {
-		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "consoleAuth", consoleAuth != nil, "mcpAuth", clientAuth != nil, "version", build.Version)
+		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "consoleAuth", consoleAuth != nil, "mcpAuth", clientAuth != nil, "policy", policyEngine != nil, "version", build.Version)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}

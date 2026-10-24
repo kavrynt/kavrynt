@@ -56,7 +56,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   need a CNI that enforces NetworkPolicy.
 - MCP client authentication (opt-in, see below): every `/mcp/` request needs
   a bearer token for its route.
-- Not implemented: policy, audit, token exchange. See ADR-0003.
+- Tool authorization policy (opt-in, see below): every MCP request is
+  allowed or denied by Rego policy before it is forwarded.
+- Not implemented: audit, token exchange. See ADR-0003.
 
 ## Upstream credentials
 
@@ -100,6 +102,48 @@ The CRD rejects credential headers that frame or route the request
 (`Host`, `Content-Length`, `Connection`, ...), `Cookie`, and `Mcp-*`
 headers, and `credential` on `stdio` servers. Token exchange on behalf of
 the caller is not implemented.
+
+## Tool authorization policy
+
+With `--policy-dir` (chart: `gateway.policy.enabled` and
+`gateway.policy.configMap`) the Gateway evaluates a Rego policy, with Open
+Policy Agent embedded, before forwarding every `/mcp/` request (SPEC-0012).
+The policy is the `.rego` files of a ConfigMap, mounted by the kubelet. It
+must define `data.kavrynt.authz.decision`; the request is forwarded only when
+that is an object with `"allow": true`. An undefined decision, any other
+value, an evaluation error, or an evaluation longer than 100 ms denies.
+
+Input:
+
+| Field | Value |
+| --- | --- |
+| `subject`, `client_id`, `issuer`, `scopes` | The verified caller (MCP client authentication); empty without it |
+| `route.namespace`, `route.name` | The `MCPServer` |
+| `http_method` | `POST`, `GET`, `DELETE` |
+| `mcp_method` | JSON-RPC method of a `POST`; empty for other methods and for JSON-RPC responses |
+| `tool` | `params.name` of `tools/call`; empty otherwise |
+| `time` | Request time, RFC 3339, UTC |
+
+Tool arguments are never part of the input. A denied request gets `403` with
+a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
+policy's `reason` with control characters removed and at most 200
+characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
+read (not a single JSON object, over 1 MiB, `tools/call` without a string
+`params.name`) or whose `Mcp-Method`/`Mcp-Name` headers disagree with the body
+gets `400`. None of these reach the MCP server.
+
+A policy that does not compile stops the Gateway at start, naming the file
+and line. Changes are picked up within about 10 seconds of the kubelet
+updating the mount; an update that does not compile is logged and counted in
+`kavrynt_gateway_policy_load_failures_total`, and the previous policy stays in
+force. `kavrynt_gateway_policy_info{revision}` names the active revision (the
+SHA-256 of the files) on each replica, and
+`kavrynt_gateway_policy_decisions_total{result}` counts decisions. Policies
+cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
+environment (`opa.runtime`). Whoever can edit the ConfigMap controls
+authorization: restrict it with RBAC. Examples, tested in CI:
+[`examples/policy`](../../examples/policy) (allow authenticated callers, a
+per-client tool allow-list, read-only methods).
 
 ## MCP client authentication
 
@@ -299,7 +343,8 @@ tool arguments, and results are never recorded.
   client authentication on, `unauthenticated` (no valid token, `401`/`400`),
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
   unavailable, `503`); `credential_unavailable` (`503`) when a server's
-  stored upstream credential is missing or not pinned to its endpoint. JSON responses up
+  stored upstream credential is missing or not pinned to its endpoint; and
+  `denied` (`403`) when the tool authorization policy refuses the call. JSON responses up
   to 1 MiB are inspected; event streams are not.
 
 The chart adds `prometheus.io/*` scrape annotations by default
@@ -327,6 +372,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
+| `--policy-dir` | none (chart: the mounted `gateway.policy.configMap`) | Directory of the tool authorization policy (`.rego` files); every MCP request is then decided by it (`KAVRYNT_POLICY_DIR`) |
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |

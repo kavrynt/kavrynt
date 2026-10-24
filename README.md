@@ -27,8 +27,8 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 
 > [!IMPORTANT]
 > Kavrynt is currently an early MVP. The core registration and HTTP routing
-> loop works, MCP client authentication is available but off by default, and
-> tool-level policy and audit are not implemented yet. Run this version only
+> loop works, MCP client authentication and tool authorization policy are
+> available but off by default, and audit is not implemented yet. Run this version only
 > in trusted development or evaluation clusters.
 
 ## TL;DR
@@ -410,7 +410,8 @@ the current release is not production-security complete:
   their own credential get it from a Secret the platform team manages,
   pinned to the server's endpoint; token exchange is not implemented yet
   (ADR-0003).
-- Gateway does not yet enforce actor, tool, or policy authorization.
+- Gateway can decide every MCP call with a Rego tool authorization policy
+  (`gateway.policy`, off by default), denying anything it does not allow.
 - Gateway has read-only Kubernetes access to `MCPServer` resources and nothing
   else.
 - Gateway and Operator never connect to cloud metadata, link-local, or
@@ -456,12 +457,11 @@ are:
 
 1. token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
-2. policy decisions and tool-level authorization;
-3. audit and usage events;
-4. MCP client authentication on by default (`1.0.0-beta.1`);
-5. MCP Streamable HTTP and protocol-aware routing;
-6. upgrade and rollback commands in kavryctl;
-7. recovery workflows (restoring into a new cluster).
+2. audit and usage events;
+3. MCP client authentication on by default (`1.0.0-beta.1`);
+4. MCP Streamable HTTP and protocol-aware routing;
+5. upgrade and rollback commands in kavryctl;
+6. recovery workflows (restoring into a new cluster).
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this

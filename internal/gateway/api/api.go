@@ -15,10 +15,12 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/prometheus/client_golang/prometheus"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
+	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 )
@@ -80,7 +82,11 @@ type Handler struct {
 
 	traffic        *trafficMetrics
 	recent         *recentTraffic
+	registry       *prometheus.Registry
 	metricsHandler http.Handler
+
+	// policy decides every MCP request when set (SPEC-0012).
+	policy *policy.Engine
 }
 
 type errorResponse struct {
@@ -106,6 +112,7 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 	}
 	h.StripRequestHeaders(credentialHeaders...)
 	registry := h.newRegistry()
+	h.registry = registry
 	h.traffic = newTrafficMetrics(registry)
 	h.metricsHandler = promhttp.HandlerFor(registry, promhttp.HandlerOpts{})
 	return h
@@ -173,6 +180,13 @@ func (h *Handler) EnableClientAuth(a *clientauth.Authenticator) {
 // (SPEC-0011).
 func (h *Handler) EnableUpstreamCredentials(store upstreamcred.Store) {
 	h.credentials = store
+}
+
+// EnablePolicy has engine decide every MCP request before it is forwarded,
+// and exports its metrics (SPEC-0012).
+func (h *Handler) EnablePolicy(engine *policy.Engine) {
+	h.policy = engine
+	h.registry.MustRegister(engine.Collectors()...)
 }
 
 // EnableConsole serves console under /ui/ and redirects / to it. The console
@@ -437,6 +451,9 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		gatewayError(http.StatusBadGateway, fmt.Errorf("transport %q is not supported by gateway MVP", route.Transport))
 		return
 	}
+	if h.policy != nil && !h.authorize(w, r, route.Name, call, start, upstreamBody) {
+		return
+	}
 
 	target, err := buildTargetURL(route.Endpoint, suffix, r.URL.RawQuery)
 	if err != nil {
@@ -534,6 +551,66 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		h.proxied.Add(1)
 	}
 }
+
+// authorize asks the policy whether the request may reach the MCP server,
+// and answers it when not (SPEC-0012). It reports whether to forward.
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName string, call mcpCall, start time.Time, body *countingReader) bool {
+	refuse := func(err error) bool {
+		writeError(w, http.StatusBadRequest, err)
+		h.observe(routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
+		return false
+	}
+	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339)}
+	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
+	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
+		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
+	}
+	if r.Method == http.MethodPost {
+		// The policy decides on the body's JSON-RPC message, so a body it
+		// cannot read is refused (SPEC-0012-R09), and headers that name
+		// another method or tool are refused (SPEC-0012-R10).
+		b := call.body
+		switch {
+		case !b.read || !b.classified:
+			return refuse(errors.New("the request is not a single JSON-RPC message the Gateway can read (at most 1 MiB); the policy cannot decide on it"))
+		case b.method == "tools/call" && !b.toolOK:
+			return refuse(errors.New("tools/call needs a string params.name"))
+		case r.Header.Get("Mcp-Method") != "" && r.Header.Get("Mcp-Method") != b.method:
+			return refuse(errors.New("the Mcp-Method header does not match the request body"))
+		case r.Header.Get("Mcp-Name") != "" && b.method == "tools/call" && r.Header.Get("Mcp-Name") != b.tool:
+			return refuse(errors.New("the Mcp-Name header does not match the request body"))
+		}
+		input.MCPMethod = b.method
+		if b.method == "tools/call" {
+			input.Tool = b.tool
+		}
+	}
+
+	decision := h.policy.Decide(r.Context(), input)
+	if decision.Allow {
+		return true
+	}
+	message := "denied by policy"
+	if decision.Reason != "" {
+		message += ": " + decision.Reason
+	}
+	id := call.body.id
+	if len(id) == 0 {
+		id = json.RawMessage("null")
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	writeJSON(w, http.StatusForbidden, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": policyDeniedCode, "message": message},
+	})
+	h.observe(routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
+	return false
+}
+
+// policyDeniedCode is the JSON-RPC error code of a policy denial, in the
+// range JSON-RPC reserves for server errors.
+const policyDeniedCode = -32001
 
 // authenticate refuses tokens sent outside the Authorization header
 // (SPEC-0006-R04), then verifies the bearer token for the route.

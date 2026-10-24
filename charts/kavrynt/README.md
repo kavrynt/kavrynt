@@ -213,6 +213,22 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 The `.origin` key pins the credential to the server's endpoint. Details:
 [Gateway: Upstream credentials](../../docs/components/gateway/README.md#upstream-credentials).
 
+## Tool authorization policy
+
+The Gateway can decide every MCP call with a Rego policy (who may call which
+tool on which server). Put the `.rego` files in a ConfigMap and enable it:
+
+```bash
+kubectl -n kavrynt-system create configmap kavrynt-policy --from-file=examples/policy/client-allowlist.rego
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reuse-values \
+  --set gateway.policy.enabled=true --set gateway.policy.configMap=kavrynt-policy
+```
+
+Anything the policy does not allow is denied. Use it with MCP client
+authentication so decisions can name the caller. Details:
+[Gateway: Tool authorization policy](../../docs/components/gateway/README.md#tool-authorization-policy).
+
 ## Authenticating MCP clients
 
 The Gateway can require an OAuth 2.1 bearer token from your authorization
@@ -356,6 +372,8 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.auth.resourceURL` | string | `""` | The Gateway's external https origin; required when enabled |
 | `gateway.auth.issuers` | list | `[]` | Trusted authorization servers: `issuer` (equals the tokens' `iss`), optional `jwksURI`, `allowHTTP`; at least one when enabled |
 | `gateway.auth.requiredScopes` | list | `[]` | Scopes every token must carry |
+| `gateway.policy.enabled` | bool | `false` | Decide every MCP request with the tool authorization policy |
+| `gateway.policy.configMap` | string | `""` | ConfigMap with the `.rego` files; required when enabled |
 | `gateway.console.enabled` | bool | `true` | Serve the read-only web console at `/ui/` |
 | `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |

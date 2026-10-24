@@ -21,6 +21,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   a standby Operator), tested with a rolling restart under load.
 - Static upstream credentials for MCP servers that need an API key, from a
   Secret the platform team manages, pinned to each server's endpoint.
+- Opt-in tool authorization policy: Rego evaluated in the Gateway, deny by
+  default, from a ConfigMap.
 - Opt-in MCP client authentication: the Gateway is an OAuth 2.1 resource
   server with per-route token audiences and Protected Resource Metadata.
 
@@ -28,13 +30,12 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 
 1. Token exchange for upstream servers
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
-2. Policy decisions and tool-level authorization.
-3. Audit and usage events.
-4. MCP client authentication on by default (`1.0.0-beta.1`), with the
+2. Audit and usage events.
+3. MCP client authentication on by default (`1.0.0-beta.1`), with the
    console behind it.
-5. MCP Streamable HTTP and protocol-aware routing.
-6. Upgrade and rollback commands in `kavryctl`.
-7. Recovery workflows (restoring into a new cluster).
+4. MCP Streamable HTTP and protocol-aware routing.
+5. Upgrade and rollback commands in `kavryctl`.
+6. Recovery workflows (restoring into a new cluster).
 
 ## Project and community
 

@@ -70,6 +70,10 @@
       cls: "warn",
       definition: "The access token is valid but lacks a scope the Gateway requires. The server was not called.",
     },
+    denied: {
+      cls: "warn",
+      definition: "The tool authorization policy denied the call (403, with the policy's reason). The server was not called.",
+    },
     credential_unavailable: {
       cls: "bad",
       definition: "The server needs a stored credential the Gateway does not have for its current endpoint: the key or its .origin pin is missing from the upstream credentials Secret, or the endpoint changed. The server was not called.",
