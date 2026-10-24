@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log/slog"
 	"mime"
 	"net"
 	"net/http"
@@ -60,6 +61,9 @@ type Handler struct {
 	// allowedOrigins holds browser origins accepted besides loopback ones.
 	allowedOrigins map[string]struct{}
 	requestTimeout time.Duration
+	// strictProtocol refuses requests that fail the MCP Streamable HTTP
+	// checks; false only logs them (SPEC-0018).
+	strictProtocol bool
 	// console serves the web console under /ui/; nil disables it.
 	console http.Handler
 	// auth is the console admin login; nil leaves /v1/servers and
@@ -112,6 +116,7 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		stripRequest:   map[string]struct{}{},
 		allowedOrigins: map[string]struct{}{},
 		requestTimeout: DefaultRequestTimeout,
+		strictProtocol: true,
 		recent:         newRecentTraffic(recentTrafficSize),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
@@ -135,6 +140,13 @@ func (h *Handler) StripRequestHeaders(names ...string) {
 // SetRequestTimeout bounds proxied requests; zero or less disables the bound.
 func (h *Handler) SetRequestTimeout(timeout time.Duration) {
 	h.requestTimeout = timeout
+}
+
+// SetStrictProtocol sets whether requests that are not well-formed MCP
+// Streamable HTTP requests are refused (true, the default) or forwarded
+// with a debug log entry, for clients that are being migrated (SPEC-0018).
+func (h *Handler) SetStrictProtocol(strict bool) {
+	h.strictProtocol = strict
 }
 
 // AllowOrigins adds browser origins (scheme://host[:port]) whose requests are
@@ -457,6 +469,17 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	gatewayError := func(status int, err error) {
 		writeError(w, status, err)
 		h.finish(r, route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
+	}
+	if err := checkProtocol(r, call.body); err != nil {
+		if h.strictProtocol {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
+			}
+			writeError(w, http.StatusBadRequest, err)
+			h.finish(r, route.Name, call, outcomeProtocolError, http.StatusBadRequest, time.Since(start), 0, 0)
+			return
+		}
+		slog.Debug("forwarding a request that fails the MCP protocol checks", "route", route.Name, "error", err)
 	}
 
 	if r.Header.Get(routeHeader) != "" {

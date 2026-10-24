@@ -478,7 +478,7 @@ are:
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 2. the console signed in through the authorization server;
 3. audit delivery to Kavrynt Cloud and usage events;
-4. MCP Streamable HTTP and protocol-aware routing;
+4. protocol-aware routing beyond the request checks;
 5. upgrade and rollback commands in kavryctl;
 6. recovery workflows (restoring into a new cluster).
 

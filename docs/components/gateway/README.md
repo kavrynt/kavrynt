@@ -19,6 +19,20 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   at connect time, so DNS names and rebinding cannot bypass it. Refused
   requests return `502`.
 - Upstream redirects are passed to the client, never followed.
+- MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
+  `400` and outcome `protocol_error` before anything is forwarded: an
+  `MCP-Protocol-Version` other than `2024-11-05`, `2025-03-26`,
+  `2025-06-18`, `2025-11-25`, or `2026-07-28` (the answer lists them); a
+  JSON-RPC batch (an array body); an `Mcp-Method` header that names another
+  method than the body, or an `Mcp-Name` header on `tools/call` that names
+  another tool than `params.name`; and, from `2026-07-28`, a request whose
+  body has a `method` but no `Mcp-Method` header. Requests without
+  `MCP-Protocol-Version` are treated as `2025-03-26`. `GET` event streams
+  and `DELETE` session requests are not checked, and `Last-Event-ID` and
+  `Mcp-Session-Id` are forwarded unchanged. Bodies over 1 MiB or not JSON
+  are forwarded unchecked (unless a policy is on). `--strict-protocol=false`
+  (chart: `config.strictProtocol`) forwards such requests while clients are
+  migrated.
 - Path suffixes with `.` or `..` segments are rejected with `400`, so callers
   cannot leave the endpoint's path.
 - A request that already carries `X-Kavrynt-Route` (an endpoint pointing back
@@ -392,8 +406,10 @@ tool arguments, and results are never recorded.
   client authentication on, `unauthenticated` (no valid token, `401`/`400`),
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
   unavailable, `503`); `credential_unavailable` (`503`) when a server's
-  stored upstream credential is missing or not pinned to its endpoint; and
-  `denied` (`403`) when the tool authorization policy refuses the call. JSON responses up
+  stored upstream credential is missing or not pinned to its endpoint;
+  `denied` (`403`) when the tool authorization policy refuses the call; and
+  `protocol_error` (`400`) when the request is not well-formed MCP
+  Streamable HTTP. JSON responses up
   to 1 MiB are inspected; event streams are not.
 
 The chart adds `prometheus.io/*` scrape annotations by default
@@ -428,6 +444,7 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
+| `--strict-protocol` | `true` (chart: `config.strictProtocol`) | Refuse requests that are not well-formed MCP Streamable HTTP; `false` forwards them |
 | `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`
