@@ -139,7 +139,7 @@ supports HTTP endpoints only.
 ### Prerequisites
 
 - A conformant Kubernetes cluster.
-- Helm 3.x or 4.x.
+- Helm 3.14 or newer (3.x or 4.x).
 - `kubectl` access with permission to create CRDs, Deployments, Services,
   ServiceAccounts, ClusterRoles, and ClusterRoleBindings.
 

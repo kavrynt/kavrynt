@@ -43,7 +43,9 @@ command that checks the outcome.
   owned by the release; if not owned, it MUST stop and explain unless
   `--adopt-crd` is given.
 - **SPEC-0019-R03** It MUST record the routed servers (from `MCPServer`
-  status), run `helm upgrade --reuse-values --version <v> --wait`, and after
+  status), run `helm upgrade --reset-then-reuse-values --version <v> --wait`
+  (amended: `--reuse-values` keeps the previous chart's defaults, including
+  its image tags, so the upgrade would not take effect), and after
   the rollout MUST report any server that was routed before and is not now;
   it MUST exit non-zero in that case.
 - **SPEC-0019-R04** `kavryctl rollback [--revision N]` MUST run `helm
