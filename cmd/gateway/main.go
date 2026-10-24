@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"flag"
 	"fmt"
@@ -17,6 +18,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
 	"github.com/kavrynt/kavrynt/internal/gateway/auth"
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
+	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/console"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
@@ -33,6 +35,10 @@ func main() {
 	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic (with --console); MCP routes are not affected")
 	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
 	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
+	authEnabled := flag.Bool("auth", false, "Require a bearer access token for the route on every /mcp/ request (MCP client authentication)")
+	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
+	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
+	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
@@ -46,6 +52,12 @@ func main() {
 	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL)
 	if err != nil {
 		slog.Error("configure console login", "error", err)
+		os.Exit(1)
+	}
+
+	clientAuth, err := newClientAuth(*authEnabled, *authResourceURL, *authIssuers, *authScopes)
+	if err != nil {
+		slog.Error("configure MCP client authentication", "error", err)
 		os.Exit(1)
 	}
 
@@ -79,6 +91,12 @@ func main() {
 	if consoleAuth != nil {
 		handler.EnableConsoleAuth(consoleAuth)
 	}
+	if clientAuth != nil {
+		handler.EnableClientAuth(clientAuth)
+		if consoleAuth != nil {
+			consoleAuth.ReportMCPAuth(true)
+		}
+	}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
@@ -98,7 +116,7 @@ func main() {
 		IdleTimeout:       2 * time.Minute,
 	}
 	go func() {
-		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "consoleAuth", consoleAuth != nil, "version", build.Version)
+		slog.Info("starting kavrynt gateway", "addr", *addr, "watchNamespaces", namespaces, "console", *consoleEnabled, "consoleAuth", consoleAuth != nil, "mcpAuth", clientAuth != nil, "version", build.Version)
 		if err := server.ListenAndServe(); err != nil && err != http.ErrServerClosed {
 			errCh <- err
 		}
@@ -152,6 +170,29 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 		return nil, fmt.Errorf("--console-session-ttl must be positive, got %s", ttl)
 	}
 	return auth.New(dir, ttl), nil
+}
+
+// newClientAuth returns the MCP client authenticator, or nil when --auth is
+// off. Authentication without a resource URL or a trusted issuer is refused
+// (SPEC-0006-R02). Key and metadata requests use the egress guard without the
+// loopback exception (SPEC-0006-R11).
+func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes string) (*clientauth.Authenticator, error) {
+	if !enabled {
+		return nil, nil
+	}
+	var issuers []clientauth.Issuer
+	if strings.TrimSpace(issuersJSON) != "" {
+		decoder := json.NewDecoder(strings.NewReader(issuersJSON))
+		decoder.DisallowUnknownFields()
+		if err := decoder.Decode(&issuers); err != nil {
+			return nil, fmt.Errorf("--auth-issuers must be a JSON array of issuers: %w", err)
+		}
+	}
+	return clientauth.New(clientauth.Config{
+		ResourceURL:    resourceURL,
+		Issuers:        issuers,
+		RequiredScopes: splitList(scopes),
+	}, egress.Transport(false), slog.Default())
 }
 
 func splitList(value string) []string {

@@ -27,8 +27,8 @@ Kavrynt is designed to operate like other Kubernetes platform products:
 
 > [!IMPORTANT]
 > Kavrynt is currently an early MVP. The core registration and HTTP routing
-> loop works, but authentication, policy enforcement, and high availability are
-> not implemented yet. Run this version only
+> loop works, MCP client authentication is available but off by default, and
+> tool-level policy and audit are not implemented yet. Run this version only
 > in trusted development or evaluation clusters.
 
 ## TL;DR
@@ -278,7 +278,8 @@ failing, and the tools that fail most. **Servers** and **Tools** list every
 the Gateway exactly as an agent would; **Traffic** shows recent calls with
 per-tool error rate and latency. Point your own agent at
 `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls arrive.
-The login protects the console only: MCP routes are not authenticated yet.
+The login protects the console only: MCP routes stay open unless MCP client
+authentication (`gateway.auth`) is on.
 Details: [Gateway console](docs/components/gateway/README.md#console).
 
 ### 6. Clean up the example
@@ -401,7 +402,9 @@ The MVP uses defensive container defaults: non-root users, dropped Linux
 capabilities, read-only root filesystems, and limited Kubernetes RBAC. However,
 the current release is not production-security complete:
 
-- Gateway does not authenticate clients.
+- Gateway authenticates MCP clients with OAuth 2.1 bearer tokens from your
+  authorization server when `gateway.auth.enabled` is set (off by default):
+  each route accepts only tokens issued for it.
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
   to MCP servers, and drops upstream `Set-Cookie`. It does not yet exchange
   tokens for upstream servers (ADR-0003).
@@ -449,13 +452,14 @@ The release process is documented in [docs/RELEASE.md](docs/RELEASE.md).
 The full roadmap is in [ROADMAP.md](ROADMAP.md). The next product milestones
 are:
 
-1. Gateway authentication and no token passthrough
+1. upstream credentials and token exchange
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
-2. MCP Streamable HTTP and protocol-aware routing;
-3. policy decisions and tool-level authorization;
-4. audit and usage events;
-5. upgrade and rollback commands in kavryctl;
-6. recovery workflows (restoring into a new cluster).
+2. policy decisions and tool-level authorization;
+3. audit and usage events;
+4. MCP client authentication on by default (`1.0.0-beta.1`);
+5. MCP Streamable HTTP and protocol-aware routing;
+6. upgrade and rollback commands in kavryctl;
+7. recovery workflows (restoring into a new cluster).
 
 Hosted commercial management, cross-cluster inventory, enterprise identity,
 and dedicated customer control planes belong to Kavrynt Cloud rather than this

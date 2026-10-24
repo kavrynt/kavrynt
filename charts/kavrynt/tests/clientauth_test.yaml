@@ -1,0 +1,100 @@
+suite: MCP client authentication
+templates:
+  - charts/gateway/templates/deployment.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0006-R01.
+  - it: leaves MCP routes open by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --auth
+
+  # Verifies SPEC-0006-R01.
+  - it: passes the authentication settings to the Gateway
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.resourceURL: https://mcp.example.com/
+      gateway.auth.issuers:
+        - issuer: https://login.example.com/realms/agents
+        - issuer: http://keycloak.auth.svc/realms/agents
+          allowHTTP: true
+      gateway.auth.requiredScopes: [mcp:tools]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --auth
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: https://mcp.example.com
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: '[{"issuer":"https://login.example.com/realms/agents"},{"allowHTTP":true,"issuer":"http://keycloak.auth.svc/realms/agents"}]'
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: mcp:tools
+
+  # Verifies SPEC-0006-R02.
+  - it: refuses authentication without a resource URL
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: "auth.resourceURL is required when auth.enabled is true: the Gateway's external https origin"
+
+  # Verifies SPEC-0006-R02.
+  - it: refuses authentication without a trusted issuer
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.resourceURL: https://mcp.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: auth.issuers needs at least one trusted authorization server when auth.enabled is true
+
+  # Verifies SPEC-0006-R02.
+  - it: refuses a resource URL that is not an https origin
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.resourceURL: https://mcp.example.com/kavrynt
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0006-R20.
+  - it: refuses an http issuer unless allowHTTP is set
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: http://keycloak.auth.svc/realms/agents
+    asserts:
+      - failedTemplate:
+          errorMessage: "auth.issuers: http://keycloak.auth.svc/realms/agents uses http; set allowHTTP: true for an in-cluster authorization server"
+
+  # Verifies SPEC-0006-R20.
+  - it: refuses an http key URL unless allowHTTP is set
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+          jwksURI: http://login.example.com/keys
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0006-R02.
+  - it: rejects unknown issuer fields
+    set:
+      gateway.auth.enabled: true
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+          audience: x
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'audience' not allowed"

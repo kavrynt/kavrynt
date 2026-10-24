@@ -71,7 +71,8 @@ func TestStaticFilesUseNoHTMLSinks(t *testing.T) {
 // for its theme preference.
 var storageAPIs = regexp.MustCompile(`localStorage|sessionStorage|indexedDB|document\.cookie`)
 
-// Verifies SPEC-0002-R13.
+// Verifies SPEC-0002-R13 and SPEC-0006-R16 (the Playground's access token
+// stays in page memory: nothing but the theme reaches browser storage).
 func TestStaticFilesStoreOnlyTheTheme(t *testing.T) {
 	uses := 0
 	err := fs.WalkDir(static, "static", func(path string, entry fs.DirEntry, err error) error {

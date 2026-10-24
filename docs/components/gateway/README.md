@@ -51,8 +51,70 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   only from the Gateway and the Operator, so clients cannot skip the
   Gateway; `networkPolicy.gateway` limits who can call the Gateway. Both
   need a CNI that enforces NetworkPolicy.
-- Not implemented: authentication, policy, audit, token exchange. See
-  ADR-0003.
+- MCP client authentication (opt-in, see below): every `/mcp/` request needs
+  a bearer token for its route.
+- Not implemented: policy, audit, token exchange. See ADR-0003.
+
+## MCP client authentication
+
+With `--auth` (chart: `gateway.auth.enabled`) the Gateway is an OAuth 2.1
+resource server (SPEC-0006). It never issues tokens: agents get them from
+your authorization server, which the Gateway trusts by configuration.
+
+A request to `/mcp/<namespace>.<name>` is forwarded only with
+`Authorization: Bearer <token>` where the token is a JWT that:
+
+- is signed with an asymmetric algorithm (RS, PS, ES 256/384/512 or EdDSA;
+  never `none` or HMAC) by a key of the issuer's key set;
+- has `iss` exactly equal to a trusted issuer;
+- has `exp` in the future and, if present, `nbf` and `iat` not in the future
+  (60 s leeway);
+- has an `aud` that contains the route's resource URI,
+  `<resourceURL>/mcp/<namespace>.<name>` (RFC 8707): a token for another
+  route, for the Gateway's base URL, or for any other resource is refused;
+- carries every scope in `--auth-required-scopes` (`scope`, space-separated,
+  or `scp`).
+
+Answers:
+
+| Case | Status | `WWW-Authenticate` |
+| --- | --- | --- |
+| No bearer token | `401` | `Bearer [scope="..."], resource_metadata="<url>"` |
+| Token in a query parameter or form field | `400` | `error="invalid_request"` |
+| Invalid, expired, wrong issuer or audience | `401` | `error="invalid_token"` (the body never says which check failed) |
+| Missing required scope | `403` | `error="insufficient_scope", scope="..."` |
+| Issuer's keys cannot be loaded | `503`, `Retry-After: 60` | |
+
+The check runs before the route is looked up, so callers without a valid
+token cannot tell registered routes from others. The token is removed before
+forwarding (no passthrough) and never logged, recorded, or returned.
+
+**Discovery.** `GET /.well-known/oauth-protected-resource/mcp/<route>`
+(no authentication) serves RFC 9728 metadata: `resource`,
+`authorization_servers` (the trusted issuers), `bearer_methods_supported`
+(`header`), and `scopes_supported`. Standard MCP clients follow the
+`resource_metadata` URL of the `401` to find the authorization server.
+
+**Keys.** Each issuer's key set comes from its `jwksURI`, or from its
+metadata (RFC 8414 `/.well-known/oauth-authorization-server`, then OpenID
+Connect discovery), whose `issuer` must match. Keys are cached, refreshed
+every 15 minutes, and fetched again for an unknown `kid` at most once a
+minute. Requests use https (unless the issuer sets `allowHTTP`, logged as a
+warning), time out after 5 s, read at most 1 MiB, follow no redirects, and
+pass the egress guard. If an issuer's keys cannot be loaded, only that
+issuer's tokens fail (`503`); `/readyz` is not affected.
+
+**Your authorization server** must issue JWT access tokens whose `aud` is
+the route's resource URI. Authorization servers that support RFC 8707
+resource indicators do this from the client's `resource` parameter; others
+need an audience configured per route. Opaque tokens and token introspection
+are not supported.
+
+**Effects elsewhere.** `/v1/routes` lists names, versions, and transports
+only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's
+Playground offers a field for an access token, kept in page memory only and
+sent only in the `Authorization` header of its own calls, and explains `401`,
+`403`, and `503` answers. The console login never authorizes `/mcp/` calls.
 
 ## High availability
 
@@ -76,12 +138,13 @@ cluster-wide view.
 | `GET /readyz` | `200` after the `MCPServer` cache has synced once; `503` while draining on shutdown |
 | `GET /version` | Build metadata |
 | `GET /metrics` | Prometheus metrics: MCP traffic (below), Gateway counters, Go runtime, and process |
-| `GET /v1/routes` | Current route table |
+| `GET /v1/routes` | Current route table: name, version, transport, and the endpoint without credentials, query, or fragment (no endpoint while MCP client authentication is on) |
 | `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, the `serverInfo` it reported, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
 | `GET /v1/traffic` | `instance` (this replica's name) and `requests`: the last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
-| `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`), sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
+| `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`) and `mcpAuth`, sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
+| `GET /.well-known/oauth-protected-resource/mcp/<route>` | Protected Resource Metadata of a route (RFC 9728), only with MCP client authentication |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
-| `* /mcp/<route>/...` | Proxied MCP traffic |
+| `* /mcp/<route>/...` | Proxied MCP traffic; with MCP client authentication, only with a bearer token for the route |
 
 ## Console
 
@@ -152,12 +215,12 @@ the Gateway's service account has no RBAC on Secrets.
   off; `/v1/servers` and `/v1/traffic` are then open as before.
 
 **What the login does not protect.** It covers the console and the two
-endpoints it reads. It is not client authentication: `/mcp/` routes stay
-open, so anyone who can reach the Gateway can call every routed tool, with
-or without the console. `/v1/routes`, `/healthz`, `/readyz`, `/version`, and
-`/metrics` stay open too. Keep the Gateway Service internal. When the
-console is opened from an address other than loopback, it shows a banner
-saying that MCP routes are not authenticated.
+endpoints it reads. It is not client authentication: unless MCP client
+authentication is on, `/mcp/` routes stay open, so anyone who can reach the
+Gateway can call every routed tool, with or without the console.
+`/v1/routes`, `/healthz`, `/readyz`, `/version`, and `/metrics` stay open
+too. When the console is opened from an address other than loopback, it
+shows a banner saying whether MCP routes require access tokens.
 
 To serve the console through an Ingress, add the Ingress origin to
 `config.allowedOrigins`; the Gateway rejects logins and MCP calls from other
@@ -185,8 +248,11 @@ tool arguments, and results are never recorded.
   values become `other`.
 - `outcome`: `ok`, `tool_error` (`result.isError`), `rpc_error` (JSON-RPC
   `error`), `client_error` (4xx), `upstream_error` (5xx),
-  `upstream_unreachable`, `timeout`, `incomplete` (response copy failed), or
-  `gateway_error` (unsupported transport or bad endpoint). JSON responses up
+  `upstream_unreachable`, `timeout`, `incomplete` (response copy failed),
+  `gateway_error` (unsupported transport or bad endpoint), or, with MCP
+  client authentication on, `unauthenticated` (no valid token, `401`/`400`),
+  `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
+  unavailable, `503`). JSON responses up
   to 1 MiB are inspected; event streams are not.
 
 The chart adds `prometheus.io/*` scrape annotations by default
@@ -210,6 +276,10 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
+| `--auth` | `false` (chart: `auth.enabled`) | Require a bearer access token for the route on every `/mcp/` request |
+| `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
+| `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
+| `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
 | `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |

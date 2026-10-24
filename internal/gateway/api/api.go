@@ -1,11 +1,13 @@
 package api
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
+	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -15,6 +17,7 @@ import (
 
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
+	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 )
@@ -57,6 +60,9 @@ type Handler struct {
 	// auth is the console admin login; nil leaves /v1/servers and
 	// /v1/traffic open (SPEC-0005-R03).
 	auth ConsoleAuth
+	// clientAuth authenticates MCP clients; nil leaves /mcp/ routes open
+	// (SPEC-0006-R01).
+	clientAuth *clientauth.Authenticator
 
 	// instance names this replica (its pod name) in /v1/traffic.
 	instance string
@@ -152,6 +158,12 @@ func (h *Handler) EnableConsoleAuth(auth ConsoleAuth) {
 	h.auth = auth
 }
 
+// EnableClientAuth requires a valid bearer token for the route on every
+// /mcp/ request and serves Protected Resource Metadata (SPEC-0006).
+func (h *Handler) EnableClientAuth(a *clientauth.Authenticator) {
+	h.clientAuth = a
+}
+
 // EnableConsole serves console under /ui/ and redirects / to it. The console
 // receives paths without the /ui prefix.
 func (h *Handler) EnableConsole(console http.Handler) {
@@ -197,6 +209,8 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case r.URL.Path == "/v1/session":
 		h.session(w, r)
+	case h.clientAuth != nil && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, metadataPrefix):
+		h.protectedResource(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):
 		h.proxy(w, r)
 	case h.console != nil && r.Method == http.MethodGet && (r.URL.Path == "/" || r.URL.Path == "/ui"):
@@ -242,8 +256,50 @@ func (h *Handler) metrics(w http.ResponseWriter, r *http.Request) {
 	h.metricsHandler.ServeHTTP(w, r)
 }
 
+// routeView is a route in /v1/routes. Endpoints never include credentials,
+// a query, or a fragment (SPEC-0006-R18), and are left out when MCP client
+// authentication is on, so unauthenticated callers do not learn internal
+// addresses (SPEC-0006-R19).
+type routeView struct {
+	Name      string `json:"name"`
+	Version   string `json:"version"`
+	Transport string `json:"transport"`
+	Endpoint  string `json:"endpoint,omitempty"`
+}
+
 func (h *Handler) listRoutes(w http.ResponseWriter, _ *http.Request) {
-	writeJSON(w, http.StatusOK, map[string][]model.Route{"routes": h.table.List()})
+	routes := []routeView{}
+	for _, route := range h.table.List() {
+		view := routeView{Name: route.Name, Version: route.Version, Transport: route.Transport}
+		if h.clientAuth == nil {
+			view.Endpoint = redactEndpoint(route.Endpoint)
+		}
+		routes = append(routes, view)
+	}
+	writeJSON(w, http.StatusOK, map[string][]routeView{"routes": routes})
+}
+
+// redactEndpoint drops userinfo, query, and fragment from an endpoint.
+func redactEndpoint(raw string) string {
+	u, err := url.Parse(raw)
+	if err != nil {
+		return ""
+	}
+	u.User, u.RawQuery, u.ForceQuery, u.Fragment, u.RawFragment = nil, "", false, "", ""
+	return u.String()
+}
+
+const metadataPrefix = "/.well-known/oauth-protected-resource/mcp/"
+
+// protectedResource serves the RFC 9728 metadata of a routed server, without
+// authentication (SPEC-0006-R07).
+func (h *Handler) protectedResource(w http.ResponseWriter, r *http.Request) {
+	name := strings.TrimPrefix(r.URL.Path, metadataPrefix)
+	if _, exists := h.table.Get(name); !exists || strings.Contains(name, "/") {
+		writeError(w, http.StatusNotFound, errors.New("not found"))
+		return
+	}
+	writeJSON(w, http.StatusOK, h.clientAuth.Metadata(name))
 }
 
 func (h *Handler) listServers(w http.ResponseWriter, _ *http.Request) {
@@ -276,7 +332,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("console login is disabled"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false})
+	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false, "mcpAuth": h.clientAuth != nil})
 }
 
 func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
@@ -321,13 +377,27 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	start := time.Now()
 	route, exists := h.table.Get(name)
+	if h.clientAuth != nil {
+		// Authentication runs before the route is looked up, so callers
+		// without a valid token cannot tell registered routes from others.
+		identity, refusal := h.authenticate(r, name)
+		if refusal != nil {
+			writeRefusal(w, refusal)
+			if exists {
+				call, _, _ := inspectRequest(r)
+				h.observe(route.Name, call, refusalOutcome(refusal.Outcome), refusal.Status, time.Since(start), 0, 0)
+			}
+			return
+		}
+		r = r.WithContext(clientauth.WithIdentity(r.Context(), identity))
+	}
 	if !exists {
 		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
 		return
 	}
 
-	start := time.Now()
 	call, body, err := inspectRequest(r)
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("read request body"))
@@ -433,6 +503,59 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	if copyErr == nil {
 		h.proxied.Add(1)
 	}
+}
+
+// authenticate refuses tokens sent outside the Authorization header
+// (SPEC-0006-R04), then verifies the bearer token for the route.
+func (h *Handler) authenticate(r *http.Request, route string) (clientauth.Identity, *clientauth.Refusal) {
+	if tokenOutsideHeader(r) {
+		return clientauth.Identity{}, h.clientAuth.InvalidRequest(route)
+	}
+	return h.clientAuth.Authenticate(r, route)
+}
+
+// tokenOutsideHeader reports an access_token query parameter or form field.
+// A form body is read (bounded) and put back for the request.
+func tokenOutsideHeader(r *http.Request) bool {
+	if r.URL.Query().Has("access_token") {
+		return true
+	}
+	if r.Body == nil || r.Body == http.NoBody {
+		return false
+	}
+	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
+	if mediaType != "application/x-www-form-urlencoded" {
+		return false
+	}
+	prefix, err := io.ReadAll(io.LimitReader(r.Body, maxInspectBytes))
+	r.Body = struct {
+		io.Reader
+		io.Closer
+	}{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
+	if err != nil {
+		return false
+	}
+	form, err := url.ParseQuery(string(prefix))
+	return err == nil && form.Has("access_token")
+}
+
+// refusalOutcome keeps metric labels to the known outcomes.
+func refusalOutcome(outcome string) string {
+	switch outcome {
+	case outcomeUnauthenticated, outcomeForbidden, outcomeAuthUnavailable:
+		return outcome
+	default:
+		return outcomeGatewayError
+	}
+}
+
+func writeRefusal(w http.ResponseWriter, refusal *clientauth.Refusal) {
+	w.Header().Set("WWW-Authenticate", refusal.WWWAuthenticate)
+	w.Header().Set("Cache-Control", "no-store")
+	if refusal.RetryAfter != "" {
+		w.Header().Set("Retry-After", refusal.RetryAfter)
+	}
+	writeError(w, refusal.Status, errors.New(refusal.Message))
 }
 
 // observe records a proxied request in the metrics and the recent traffic.

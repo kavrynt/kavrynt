@@ -55,6 +55,24 @@ config:
   shutdownDelay: 5s
   shutdownTimeout: 10s
 
+# MCP client authentication (SPEC-0006): the Gateway is an OAuth 2.1 resource
+# server. Every /mcp/ request needs a bearer access token (a JWT) from a
+# trusted authorization server, whose audience is the route's resource URI,
+# <resourceURL>/mcp/<namespace>.<name>. Clients discover where to get one from
+# the 401 answer and /.well-known/oauth-protected-resource/mcp/<route>.
+auth:
+  enabled: false
+  # The Gateway's external https origin, as clients reach it (no path), for
+  # example https://mcp.example.com.
+  resourceURL: ""
+  # Trusted authorization servers, normally your identity provider.
+  issuers: []
+  # - issuer: https://login.example.com/realms/agents   # must equal the tokens' iss
+  #   jwksURI: ""        # optional; discovered from the issuer's metadata
+  #   allowHTTP: false   # true only for an in-cluster authorization server on http
+  # Scopes every token must carry, for example [mcp:tools].
+  requiredScopes: []
+
 # Read-only web console at /ui/: MCP servers and their tools, a playground that
 # calls tools through the Gateway, and recent traffic. It needs no extra RBAC.
 console:

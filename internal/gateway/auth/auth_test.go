@@ -315,3 +315,20 @@ func TestSessionsWorkAcrossReplicas(t *testing.T) {
 		t.Fatal("a session from one replica is rejected by another replica with the same Secret")
 	}
 }
+
+// Verifies SPEC-0006-R15: the session reports MCP client authentication.
+func TestSessionReportsMCPAuth(t *testing.T) {
+	a, _, _, _ := newTestAuth(t)
+	a.ReportMCPAuth(true)
+	rr := httptest.NewRecorder()
+	a.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/session", nil))
+	if rr.Code != http.StatusUnauthorized || !strings.Contains(rr.Body.String(), `"mcpAuth":true`) {
+		t.Fatalf("GET /v1/session = %d %s, want 401 reporting mcpAuth", rr.Code, rr.Body.String())
+	}
+	cookie := sessionCookie(t, login(t, a, "admin", testPassword))
+	rr = httptest.NewRecorder()
+	a.ServeHTTP(rr, withCookie(cookie))
+	if !strings.Contains(rr.Body.String(), `"mcpAuth":true`) {
+		t.Fatalf("signed-in session = %s, want mcpAuth", rr.Body.String())
+	}
+}

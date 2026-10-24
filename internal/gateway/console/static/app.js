@@ -14,7 +14,7 @@
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
   } = Kavrynt.stats;
-  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage } = Kavrynt.state;
+  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
@@ -38,7 +38,7 @@
     routes: null,
     // Console admin login (SPEC-0005). checked is false until GET
     // /v1/session answers; nothing is drawn or fetched before that.
-    auth: { checked: false, enabled: false, signedIn: false, username: "", expiresAt: "" },
+    auth: { checked: false, enabled: false, signedIn: false, username: "", expiresAt: "", mcpAuth: false },
   };
 
   const main = () => document.getElementById("main");
@@ -773,13 +773,8 @@
       el.hidden = true;
       return;
     }
-    if (state.auth.enabled) {
-      put(clear(el), h("strong", { text: "MCP routes are not authenticated. " }),
-        "This login protects the console only. Anyone who can reach this Gateway can call every routed tool. Keep the Gateway Service internal until client authentication is available.");
-    } else {
-      put(clear(el), h("strong", { text: "No login. " }),
-        "Anyone who can reach this Gateway can use this console and call every routed tool. Keep the Gateway Service internal until client authentication is available.");
-    }
+    const { title, text } = notice(state.auth);
+    put(clear(el), h("strong", { text: title + " " }), text);
     el.hidden = false;
   }
 

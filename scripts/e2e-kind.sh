@@ -118,6 +118,26 @@ start_gateway_port_forward() {
   fail "Gateway port-forward did not start: $(cat "${log_file}")"
 }
 
+# start_port_forward sets variable $4 to a local URL for port $3 of Service
+# $2 in namespace $1. It runs in this shell (not in $(...)) so cleanup can
+# stop the forward.
+start_port_forward() {
+  local namespace=$1 service=$2 target=$3 variable=$4 log_file port="" i
+  log_file="${TEMP_DIR}/${service}-port-forward.log"
+  kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" \
+    port-forward --address 127.0.0.1 "service/${service}" ":${target}" >"${log_file}" 2>&1 &
+  PORT_FORWARD_PIDS+=("$!")
+  for ((i = 1; i <= 30; i++)); do
+    port="$(tr -d '\r' <"${log_file}" | sed -n 's/^Forwarding from 127\.0\.0\.1:\([0-9][0-9]*\) -> .*/\1/p' | head -n 1)"
+    if [ -n "${port}" ]; then
+      printf -v "${variable}" 'http://127.0.0.1:%s' "${port}"
+      return 0
+    fi
+    sleep 1
+  done
+  fail "port-forward to ${service} did not start: $(cat "${log_file}")"
+}
+
 stop_gateway_port_forwards() {
   if [ "${#PORT_FORWARD_PIDS[@]}" -gt 0 ]; then
     kill "${PORT_FORWARD_PIDS[@]}" >/dev/null 2>&1 || true
@@ -602,6 +622,156 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/failover-mcp-server --wait=true --timeout=60s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
   rollout status deployment/kavrynt-operator --timeout=120s
+
+# MCP client authentication (SPEC-0006) with a test authorization server, the
+# e2e image's issuer mode, reached by the Gateway over in-cluster http.
+log "deploying a test authorization server"
+ISSUER_URL="http://e2e-issuer.${E2E_NAMESPACE}.svc.cluster.local:8080"
+RESOURCE_URL="https://mcp.e2e.test"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: e2e-issuer
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: e2e-issuer
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: e2e-issuer
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: issuer
+          image: ${SAMPLE_IMAGE}
+          imagePullPolicy: Never
+          args: [issuer]
+          env:
+            - name: ISSUER
+              value: ${ISSUER_URL}
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: e2e-issuer
+spec:
+  selector:
+    app.kubernetes.io/name: e2e-issuer
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" rollout status deployment/e2e-issuer --timeout=120s
+
+log "enabling MCP client authentication"
+helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
+  --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" \
+  --reuse-values \
+  --set gateway.auth.enabled=true \
+  --set gateway.auth.resourceURL="${RESOURCE_URL}" \
+  --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true}]" \
+  --set "gateway.auth.requiredScopes={mcp:tools}" \
+  --wait --timeout 180s >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_url "${GATEWAY_URL}/readyz"
+start_port_forward "${E2E_NAMESPACE}" e2e-issuer 8080 ISSUER_LOCAL
+wait_for_url "${ISSUER_LOCAL}/healthz"
+mint() {
+  curl --fail --silent --show-error --get "${ISSUER_LOCAL}/mint" \
+    --data-urlencode "aud=$1" --data-urlencode "scope=$2" \
+    --data-urlencode "sub=e2e-user" --data-urlencode "client_id=e2e-agent"
+}
+mcp_status() {
+  curl --silent --output "${TEMP_DIR}/mcp-body" --dump-header "${TEMP_DIR}/mcp-headers" --write-out '%{http_code}' \
+    --request POST "${GATEWAY_URL}/mcp/${SERVER_ID}" --header 'Content-Type: application/json' "$@" \
+    --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+}
+ROUTE_RESOURCE="${RESOURCE_URL}/mcp/${SERVER_ID}"
+
+# Verifies SPEC-0006-R03 and SPEC-0006-R07.
+log "verifying calls without a token are challenged with the route's metadata"
+STATUS="$(mcp_status)"
+[ "${STATUS}" = "401" ] || fail "a call without a token answered HTTP ${STATUS}, want 401"
+grep -i '^www-authenticate:' "${TEMP_DIR}/mcp-headers" |
+  grep --fixed-strings --quiet "resource_metadata=\"${RESOURCE_URL}/.well-known/oauth-protected-resource/mcp/${SERVER_ID}\"" ||
+  fail "the 401 does not point at the route's protected resource metadata: $(cat "${TEMP_DIR}/mcp-headers")"
+curl --fail --silent --show-error "${GATEWAY_URL}/.well-known/oauth-protected-resource/mcp/${SERVER_ID}" |
+  jq --exit-status --arg resource "${ROUTE_RESOURCE}" --arg issuer "${ISSUER_URL}" '
+    .resource == $resource and .authorization_servers == [$issuer] and
+    .bearer_methods_supported == ["header"] and .scopes_supported == ["mcp:tools"]' >/dev/null ||
+  fail "the protected resource metadata does not name the route and the issuer"
+
+# Verifies SPEC-0006-R08 and SPEC-0006-R13.
+log "verifying a valid token is accepted and never reaches the MCP server"
+TOKEN="$(mint "${ROUTE_RESOURCE}" "mcp:tools")"
+STATUS="$(mcp_status --header "Authorization: Bearer ${TOKEN}")"
+[ "${STATUS}" = "200" ] || fail "a valid token answered HTTP ${STATUS}: $(cat "${TEMP_DIR}/mcp-body")"
+jq --exit-status '.result.tools[0].name == "echo"' "${TEMP_DIR}/mcp-body" >/dev/null || fail "tools/list with a valid token returned no tools"
+curl --fail --silent --show-error --header "Authorization: Bearer ${TOKEN}" "${GATEWAY_URL}/mcp/${SERVER_ID}/debug/headers" |
+  jq --exit-status 'has("Authorization") | not' >/dev/null || fail "the Gateway forwarded the access token to the MCP server"
+
+# Verifies SPEC-0006-R04, SPEC-0006-R06, and SPEC-0006-R09.
+log "verifying wrong audiences, missing scopes, and query tokens are refused"
+STATUS="$(mcp_status --header "Authorization: Bearer $(mint "${RESOURCE_URL}/mcp/${E2E_NAMESPACE}.other" "mcp:tools")")"
+[ "${STATUS}" = "401" ] || fail "a token for another route answered HTTP ${STATUS}, want 401"
+STATUS="$(mcp_status --header "Authorization: Bearer $(mint "${ROUTE_RESOURCE}" "openid")")"
+[ "${STATUS}" = "403" ] || fail "a token without the required scope answered HTTP ${STATUS}, want 403"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --request POST \
+  "${GATEWAY_URL}/mcp/${SERVER_ID}?access_token=${TOKEN}" --header 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
+[ "${STATUS}" = "400" ] || fail "a token in the query string answered HTTP ${STATUS}, want 400"
+
+# Verifies SPEC-0006-R14, SPEC-0006-R15, and SPEC-0006-R19.
+log "verifying refusals are recorded and the console and route list know about authentication"
+METRICS="$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"
+grep --quiet "outcome=\"unauthenticated\",route=\"${SERVER_ID}\"" <<<"${METRICS}" ||
+  fail "the Gateway did not record unauthenticated calls"
+grep --fixed-strings --quiet "${TOKEN}" <<<"${METRICS}" && fail "the Gateway metrics contain an access token"
+curl --silent "${GATEWAY_URL}/v1/session" | jq --exit-status '.mcpAuth == true' >/dev/null ||
+  fail "/v1/session does not report MCP client authentication"
+curl --fail --silent --show-error "${GATEWAY_URL}/v1/routes" |
+  jq --exit-status --arg route "${SERVER_ID}" '(.routes | map(.name) | index($route) != null) and all(.routes[]; has("endpoint") | not)' >/dev/null ||
+  fail "/v1/routes lists endpoints while MCP client authentication is on"
+if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
+  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt | grep --fixed-strings --quiet "${TOKEN}"; then
+  fail "the Gateway logged an access token"
+fi
+
+log "turning MCP client authentication off again"
+helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
+  --kube-context "${KUBE_CONTEXT}" \
+  --namespace "${CONTROL_NAMESPACE}" \
+  --reuse-values \
+  --set gateway.auth.enabled=false \
+  --wait --timeout 180s >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_url "${GATEWAY_URL}/readyz"
 
 log "verifying deletion cleanup"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \

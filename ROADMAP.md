@@ -19,16 +19,20 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   runbook, tested with `promtool`.
 - A high-availability profile (several Gateway replicas with graceful drain,
   a standby Operator), tested with a rolling restart under load.
+- Opt-in MCP client authentication: the Gateway is an OAuth 2.1 resource
+  server with per-route token audiences and Protected Resource Metadata.
 
 ## Next
 
-1. Gateway client authentication and no token passthrough
-   ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)), with the console behind it.
-2. MCP Streamable HTTP and protocol-aware routing.
-3. Policy decisions and tool-level authorization.
-4. Audit and usage events.
-5. Upgrade and rollback commands in `kavryctl`.
-6. Recovery workflows (restoring into a new cluster).
+1. Upstream credentials and token exchange
+   ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
+2. Policy decisions and tool-level authorization.
+3. Audit and usage events.
+4. MCP client authentication on by default (`1.0.0-beta.1`), with the
+   console behind it.
+5. MCP Streamable HTTP and protocol-aware routing.
+6. Upgrade and rollback commands in `kavryctl`.
+7. Recovery workflows (restoring into a new cluster).
 
 ## Project and community
 

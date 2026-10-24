@@ -62,6 +62,18 @@
       cls: "bad",
       definition: "The Gateway did not proxy the request, for example because the endpoint points back at a Gateway.",
     },
+    unauthenticated: {
+      cls: "warn",
+      definition: "MCP client authentication refused the call: no access token, an invalid or expired one, one for another route or issuer, or a token outside the Authorization header. The server was not called.",
+    },
+    forbidden: {
+      cls: "warn",
+      definition: "The access token is valid but lacks a scope the Gateway requires. The server was not called.",
+    },
+    auth_unavailable: {
+      cls: "bad",
+      definition: "The Gateway could not load the signing keys of the token's authorization server and refused the call (503). Check the issuer's metadata and key URLs.",
+    },
   };
 
   // Server health thresholds (SPEC-0002-R19).

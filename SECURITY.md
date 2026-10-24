@@ -24,13 +24,16 @@ fixes. Fixes are not backported.
 
 These are documented gaps, not vulnerabilities:
 
-- The Gateway does not authenticate clients or authorize tool calls yet
+- MCP client authentication (OAuth 2.1 bearer tokens, `gateway.auth`) is off
+  by default; until it is turned on, anyone who can reach the Gateway can call
+  every routed tool. The Gateway does not authorize individual tool calls yet
   ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 - The web console at `/ui/` has a single `admin` login with a generated
-  password. It protects the console, `/v1/servers`, and `/v1/traffic` only:
-  `/mcp/` routes, `/v1/routes`, and `/metrics` stay reachable by anyone who
-  can reach the Gateway. There are no other users, roles, or SSO.
-- There is no audit log and no high-availability profile.
+  password. It protects the console, `/v1/servers`, and `/v1/traffic` only;
+  `/v1/routes` and `/metrics` stay reachable by anyone who can reach the
+  Gateway (`/v1/routes` lists no endpoints while MCP client authentication
+  is on). There are no other users, roles, or SSO.
+- There is no audit log.
 
 Run the current release only in trusted development or evaluation clusters.
 

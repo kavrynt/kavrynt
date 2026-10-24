@@ -44,10 +44,20 @@
   array of objects with `additionalProperties: false`; template `fail` when
   enabled without `resourceURL` or issuers, or with an `http` issuer lacking
   `allowHTTP`.
-- **End to end.** `test/e2e/` gains a tiny issuer: the e2e MCP server image
-  serves a JWKS and mints tokens with a test key on a debug path enabled by
-  env only in e2e. `e2e-kind.sh` enables auth, checks `401` + metadata,
-  valid token success, wrong-audience `401`, missing scope `403`.
+- **End to end.** The e2e MCP server image gains an `issuer` mode
+  (`test/e2e/mcp-server/issuer.go`): RFC 8414 metadata, a JWKS with an ES256
+  key generated at start, and `GET /mint` (test-only). `e2e-kind.sh` deploys
+  it as `e2e-issuer`, enables auth with `helm upgrade --reuse-values`
+  (`allowHTTP` for the in-cluster issuer), checks the `401` challenge and
+  metadata, a valid token (and that it is not forwarded), a wrong audience,
+  a missing scope, a query token, recorded outcomes, `/v1/session`,
+  `/v1/routes`, and that no token appears in metrics or logs, then turns
+  auth off again.
+- **Refusal outcomes.** `traffic.go` declares `unauthenticated`,
+  `forbidden`, and `auth_unavailable` (the outcome sync test reads them
+  there); refusals are recorded only for registered routes, so arbitrary
+  path names cannot create metric series. The route is looked up only after
+  authentication, so unauthenticated callers cannot enumerate routes.
 
 ## Affected files
 
@@ -73,7 +83,9 @@
 | SPEC-0006-R10, R11, R12 | `clientauth` key set tests with fake transport and clock |
 | SPEC-0006-R13 | Existing strip tests extended with auth on |
 | SPEC-0006-R14 | Log capture and traffic assertions |
-| SPEC-0006-R15, R16, R17 | `auth_test.go`; console smoke test; `console_test.go` storage scan |
+| SPEC-0006-R15 | `auth_test.go`, `clientauth_test.go` (api), `state.test.mjs`, `e2e-kind.sh` |
+| SPEC-0006-R16 | `state.test.mjs` refusal messages; `console_test.go` storage scan (SPEC-0002-R13) covers the in-memory token |
+| SPEC-0006-R17 | `app.js` notice; verified with the smoke test when it runs with authentication on (follow-up) |
 | SPEC-0006-R18, R19 | `api_test.go` route listing |
 | SPEC-0006-R20 | `clientauth` config tests; `gateway_test.yaml` |
 | All | `e2e-kind.sh` authentication section |

@@ -49,6 +49,12 @@ const (
 	outcomeTimeout             = "timeout"
 	outcomeIncomplete          = "incomplete"
 	outcomeGatewayError        = "gateway_error"
+
+	// Requests refused by MCP client authentication (SPEC-0006-R14); the
+	// values are clientauth's Outcome* constants.
+	outcomeUnauthenticated = "unauthenticated"
+	outcomeForbidden       = "forbidden"
+	outcomeAuthUnavailable = "auth_unavailable"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.
