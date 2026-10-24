@@ -121,13 +121,15 @@ await check("server cards show the version the server reports", async (page) => 
   assert.ok(!reported.startsWith("–"), "server detail shows no reported version: " + reported);
 });
 
-// Verifies SPEC-0002-R09.
+// Verifies SPEC-0002-R09 and SPEC-0008-R06: once traffic has loaded, the
+// note names the Gateway replica that answered.
 await check("every traffic view states its replica and window", async (page) => {
   await signIn(page);
   for (const hash of ["#/overview", "#/traffic", "#/servers/" + route + "/traffic"]) {
     await page.goto(base + "/ui/" + hash);
     await page.waitForSelector(".scope-note");
-    assert.match(await page.innerText(".scope-note"), /This Gateway replica only · last 500 requests/, hash);
+    await page.waitForFunction(() => /^Gateway replica \S+ only/.test(document.querySelector(".scope-note")?.innerText || ""));
+    assert.match(await page.innerText(".scope-note"), /^Gateway replica kavrynt-gateway-\S+ only · last 500 requests/, hash);
   }
 });
 
