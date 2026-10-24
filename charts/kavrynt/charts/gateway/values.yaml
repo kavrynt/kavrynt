@@ -73,6 +73,17 @@ auth:
   # Scopes every token must carry, for example [mcp:tools].
   requiredScopes: []
 
+# Audit events (SPEC-0013): one JSON line per MCP request on the Gateway's
+# standard output ("type":"kavrynt.audit.v1"), with the caller, route, method,
+# tool, decision, and outcome, never arguments, results, or tokens. Chained
+# with SHA-256 per Gateway instance; check with kavryctl audit verify.
+audit:
+  enabled: false
+  queueSize: 10000
+  # With a full queue: reject (refuse new MCP requests with 503; no call is
+  # served without its record) or drop (serve them, count the lost events).
+  onOverflow: reject
+
 # Tool authorization policy (SPEC-0012): every MCP request is allowed or
 # denied by Rego policy evaluated in the Gateway (Open Policy Agent). The
 # ConfigMap holds .rego files defining data.kavrynt.authz.decision; anything

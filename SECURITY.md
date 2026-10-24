@@ -33,7 +33,9 @@ These are documented gaps, not vulnerabilities:
   `/v1/routes` and `/metrics` stay reachable by anyone who can reach the
   Gateway (`/v1/routes` lists no endpoints while MCP client authentication
   is on). There are no other users, roles, or SSO.
-- There is no audit log.
+- Audit events (`gateway.audit`) are tamper-evident, not tamper-proof: the
+  hash chain detects a removed, reordered, or edited event unless every later
+  event is recomputed as well. Ship them out of the cluster to protect them.
 
 Run the current release only in trusted development or evaluation clusters.
 

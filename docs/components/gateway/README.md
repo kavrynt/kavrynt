@@ -58,7 +58,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   a bearer token for its route.
 - Tool authorization policy (opt-in, see below): every MCP request is
   allowed or denied by Rego policy before it is forwarded.
-- Not implemented: audit, token exchange. See ADR-0003.
+- Audit events (opt-in, see below): one JSON line per MCP request.
+- Every `/mcp/` response carries `X-Request-Id`.
+- Not implemented: token exchange, approvals. See ADR-0003.
 
 ## Upstream credentials
 
@@ -102,6 +104,50 @@ The CRD rejects credential headers that frame or route the request
 (`Host`, `Content-Length`, `Connection`, ...), `Cookie`, and `Mcp-*`
 headers, and `credential` on `stdio` servers. Token exchange on behalf of
 the caller is not implemented.
+
+## Audit events
+
+With `--audit` (chart: `gateway.audit.enabled`, on in
+`examples/helm/values-production.yaml`) the Gateway writes one event per
+`/mcp/` request to standard output, as a single JSON line (SPEC-0013);
+operational logs stay on standard error. Every request is recorded,
+including those refused by authentication, policy, a missing upstream
+credential, or an unknown route, when it completes.
+
+| Field | Value |
+| --- | --- |
+| `type` | `kavrynt.audit.v1` |
+| `time` | Request start, RFC 3339 with milliseconds, UTC |
+| `instance`, `seq` | Gateway instance (pod name and a start nonce) and its event number, from 1 |
+| `request_id` | Also returned to the client as `X-Request-Id` |
+| `subject`, `client_id`, `issuer` | The verified caller; empty without client authentication |
+| `route` | `namespace`, `name` |
+| `http_method`, `mcp_method`, `tool` | What was asked |
+| `decision` | `allow`, `deny` (policy), `unauthenticated`, `forbidden` (scope), `invalid` (bad request, unknown route), `unavailable` (issuer keys or upstream credential) |
+| `reason` | Why it was refused |
+| `policy_revision` | SHA-256 of the policy in force, with a policy |
+| `outcome`, `status`, `duration_ms`, `bytes_in`, `bytes_out` | How it ended (traffic outcome) |
+| `prev_hash`, `hash` | The chain |
+
+Fields that do not apply are present and empty. Events never contain tool
+arguments, results, bodies, tokens, credentials, cookies, or headers; they do
+identify people and agents, so treat them as personal data.
+
+**Chain.** `hash` is the hex SHA-256 of `prev_hash` followed by the event's
+canonical JSON without `hash` (fields in the order above, no whitespace);
+`prev_hash` of an instance's first event is 64 zeros. `kavryctl audit verify
+<file>` (or standard input) reads collected Gateway logs, skips other lines,
+and reports each gap, reordering, or altered event. The chain is
+tamper-evident, not tamper-proof: ship events out of the cluster with your
+log pipeline (filter on `"type":"kavrynt.audit.v1"`).
+
+**Back-pressure.** Up to `--audit-queue-size` (10,000) events wait to be
+written. When the queue is full, `--audit-on-overflow=reject` (default)
+answers new MCP requests `503` without forwarding them, so no call is served
+without its record; `drop` serves them and counts the lost events. Metrics:
+`kavrynt_gateway_audit_events_total`, `kavrynt_gateway_audit_overflow_total{action}`,
+`kavrynt_gateway_audit_queue_length`. Queued events are written on graceful
+shutdown. Delivery to Kavrynt Cloud is not implemented.
 
 ## Tool authorization policy
 
@@ -372,6 +418,9 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
+| `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
+| `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |
+| `--audit-on-overflow` | `reject` (chart: `audit.onOverflow`) | With a full queue: `reject` new MCP requests (`503`) or `drop` their events |
 | `--policy-dir` | none (chart: the mounted `gateway.policy.configMap`) | Directory of the tool authorization policy (`.rego` files); every MCP request is then decided by it (`KAVRYNT_POLICY_DIR`) |
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |

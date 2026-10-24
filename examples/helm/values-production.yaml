@@ -17,6 +17,10 @@ gateway:
   config:
     shutdownDelay: 5s
     shutdownTimeout: 30s
+  # One audit event per MCP request on standard output; collect it with your
+  # log pipeline and check it with kavryctl audit verify.
+  audit:
+    enabled: true
   resources:
     requests:
       cpu: 100m

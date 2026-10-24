@@ -13,6 +13,7 @@ Client CLI for `MCPServer` resources. Source: `cmd/kavryctl`,
 | `kavryctl unregister [-n NS] <name>` | Delete the `MCPServer` |
 | `kavryctl list [-n NS] [-A]` | Table with readiness, Gateway route (`-` until the server is `Ready`), and tool count (`-` until the Operator has listed the tools) |
 | `kavryctl inspect [-n NS] <name>` | Full resource as JSON |
+| `kavryctl audit verify [file]` | Verify Gateway audit event chains from a file or standard input; other log lines are skipped. Prints each break (gap, reordering, altered event) and exits `1` when there is one |
 
 Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
 Without `-n`, the namespace comes from the manifest, then the kubeconfig

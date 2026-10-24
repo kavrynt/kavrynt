@@ -88,7 +88,8 @@ Show this list as a slide as well. Do not soften it.
   token exchange: without it, anyone who can reach the Gateway can call every
   routed tool. The console has an admin login, but it does not protect MCP
   routes.
-- No policy, no tool-level authorization, and no audit log.
+- Tool authorization policy and audit events exist but are off by default;
+  there are no approvals.
 - HTTP MCP servers only. `stdio` manifests validate but are not proxied.
 - Kavrynt does not deploy MCP servers; it registers and routes to existing
   endpoints.
@@ -127,7 +128,7 @@ do not offer. The Gateway records that request as `http_get` with outcome
 - **Authentication and authorization.** Designed in
   [ADR-0003](ADR-0003-Runtime-Authorization.md). Client authentication (OAuth
   2.1 bearer tokens, per-route audience) is implemented and opt-in; policy
-  and audit are not yet. The Gateway never forwards caller credentials
+  and audit are opt-in; approvals are not built. The Gateway never forwards caller credentials
   upstream.
 - **Multi-tenancy.** Routes are namespace-qualified, and
   `global.watchNamespaces` limits the Gateway to listed namespaces with
