@@ -1,0 +1,11 @@
+# Kind cluster for scripts/e2e-kind.sh. The kubelet syncs pods every 10 s
+# instead of every minute, so updated ConfigMap and Secret mounts (the
+# policy, upstream credentials) reach pods in seconds and the e2e waits less.
+kind: Cluster
+apiVersion: kind.x-k8s.io/v1alpha4
+nodes:
+  - role: control-plane
+    kubeadmConfigPatches:
+      - |
+        kind: KubeletConfiguration
+        syncFrequency: 10s
