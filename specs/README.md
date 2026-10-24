@@ -144,3 +144,7 @@ against the assistant's summary of them.
 | [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Draft |
 | [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Draft |
 | [0019](0019-kavryctl-upgrade-rollback/spec.md) | kavryctl upgrade and rollback | Draft |
+| [0020](0020-console-alerts/spec.md) | Alerts in the console | Draft |
+| [0021](0021-tool-and-discovery-alerts/spec.md) | Tool error and discovery alerts | Draft |
+| [0022](0022-alert-notifications/spec.md) | Alert notifications | Draft |
+| [0023](0023-custom-dashboards/spec.md) | Custom dashboards | Draft |
