@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Accepted |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -12,8 +12,8 @@
 ## Summary
 
 The chart can install an `AlertmanagerConfig` that sends Kavrynt alerts to
-Slack, email, or a webhook (for example PagerDuty or Microsoft Teams through
-their webhook bridges), with messages that name the server or tool, say what
+Slack, email, Microsoft Teams, or a webhook (for example PagerDuty through
+its webhook bridge), with messages that name the server or tool, say what
 is wrong, and link the runbook. A tested example covers the common setups.
 
 ## Problem
@@ -25,7 +25,7 @@ example. Teams install alerts and never hear from them.
 ## Goals
 
 - One Helm value block gets Kavrynt alerts to a Slack channel, an email list,
-  or a webhook.
+  a Teams channel, or a webhook.
 - Messages are useful without opening Prometheus.
 
 ## Non-goals
@@ -40,12 +40,17 @@ example. Teams install alerts and never hear from them.
   `metrics.prometheusRule.enabled`), the chart MUST render one
   `AlertmanagerConfig` (monitoring.coreos.com/v1alpha1) that routes alerts
   with `component` in `gateway`, `operator`, or `mcp-server` from this
-  release to the configured receivers.
+  release to the configured receivers. Every chart alert MUST carry the
+  label `kavrynt_release` (the release name) so the route can tell this
+  release's alerts from another's.
 - **SPEC-0022-R02** Receivers MUST support Slack (webhook URL from a Secret),
-  email (addresses; SMTP settings from Alertmanager or values), and a generic
-  webhook (URL from a Secret); secrets MUST be referenced, never put in values.
+  email (addresses; SMTP settings from Alertmanager or values), Microsoft
+  Teams (Alertmanager's `msteamsv2` receiver, webhook URL from a Secret), and
+  a generic webhook (URL from a Secret); secrets MUST be referenced, never
+  put in values.
 - **SPEC-0022-R03** `critical` and `warning` alerts MUST be routable to
-  different receivers, with grouping by alert name and route and a
+  different receivers, with grouping by alert name and route (or
+  `namespace` and `name` for alerts about an `MCPServer`) and a
   configurable repeat interval (default 4 hours).
 - **SPEC-0022-R04** Messages MUST include the alert name, severity, the
   server (and tool when present), the summary and description, firing or
@@ -72,13 +77,19 @@ Alert content is route, tool, and server names, no arguments or identities.
 ## Compatibility
 
 New values under `metrics.notifications`; needs the Prometheus Operator's
-`AlertmanagerConfig` CRD and an Alertmanager that selects it.
+`AlertmanagerConfig` CRD and an Alertmanager that selects it. Alerts about an
+`MCPServer` carry that server's `namespace`, not the release's, so the
+Alertmanager must not scope the config to its own namespace
+(`alertmanagerConfigMatcherStrategy.type: None`). The new `kavrynt_release`
+label is added to every alert; Alertmanager routes that match on labels
+keep working.
 
 ## Documentation
 
 Chart README (notifications), runbooks README, examples.
 
-## Open questions
+## Decisions
 
-- Should Microsoft Teams get a dedicated receiver (Alertmanager supports
-  `msteamsv2_configs`) instead of the generic webhook?
+- Microsoft Teams gets a dedicated receiver (`msteamsv2`, Teams workflows),
+  because its message card needs a title and text that the generic webhook
+  cannot shape.
