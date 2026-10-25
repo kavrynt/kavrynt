@@ -72,7 +72,7 @@ tests:
           of: PrometheusRule
       - lengthEqual:
           path: spec.groups[0].rules
-          count: 4
+          count: 5
       - equal:
           path: spec.groups[0].rules[0].alert
           value: KavryntGatewayDown
@@ -87,7 +87,7 @@ tests:
           value: KavryntMCPLatencyHigh
       - lengthEqual:
           path: spec.groups[1].rules
-          count: 2
+          count: 3
       - equal:
           path: spec.groups[1].rules[0].alert
           value: KavryntOperatorDown
@@ -105,7 +105,7 @@ tests:
       operator.cloud.tokenSecret.name: kavrynt-cloud-token
     asserts:
       - equal:
-          path: spec.groups[1].rules[2].alert
+          path: spec.groups[1].rules[3].alert
           value: KavryntCloudSyncStale
 
   # Verifies SPEC-0010-R04.
@@ -179,5 +179,92 @@ tests:
     set:
       metrics.prometheusRule.enabled: true
       metrics.prometheusRule.errorRatio: 5
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0021-R02, SPEC-0021-R03, and SPEC-0021-R04.
+  - it: renders the tool error and discovery alerts with labels and runbooks
+    template: templates/prometheusrule.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[4].alert
+          value: KavryntMCPToolErrorsHigh
+      - equal:
+          path: spec.groups[0].rules[4].for
+          value: 10m
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: 'sum by \(route, tool\) \(rate\(kavrynt_gateway_mcp_requests_total\{job="kavrynt-gateway",method="tools/call",outcome=~"tool_error\|rpc_error"\}\[10m\]\)\)'
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: '\) > 0\.2\n'
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: '>= 0\.02$'
+      - equal:
+          path: spec.groups[0].rules[4].labels
+          value:
+            severity: warning
+            component: mcp-server
+      - equal:
+          path: spec.groups[0].rules[4].annotations.runbook_url
+          value: https://github.com/kavrynt/kavrynt/blob/v1.2.3/docs/runbooks/KavryntMCPToolErrorsHigh.md
+      - equal:
+          path: spec.groups[1].rules[2].alert
+          value: KavryntMCPToolDiscoveryFailing
+      - equal:
+          path: spec.groups[1].rules[2].for
+          value: 15m
+      - matchRegex:
+          path: spec.groups[1].rules[2].expr
+          pattern: 'kavrynt_operator_mcpserver_tools_discovered\{job="kavrynt-operator-metrics"\}\) == 0\nand on \(namespace, name\) max by \(namespace, name\) \(kavrynt_operator_mcpserver_ready\{job="kavrynt-operator-metrics"\}\) == 1$'
+      - equal:
+          path: spec.groups[1].rules[2].labels
+          value:
+            severity: warning
+            component: mcp-server
+      - equal:
+          path: spec.groups[1].rules[2].annotations.runbook_url
+          value: https://github.com/kavrynt/kavrynt/blob/v1.2.3/docs/runbooks/KavryntMCPToolDiscoveryFailing.md
+
+  # Verifies SPEC-0021-R02 and SPEC-0021-R03.
+  - it: takes the tool error and discovery thresholds from values
+    template: templates/prometheusrule.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.toolErrorRatio: 0.5
+      metrics.prometheusRule.minToolRequestsPerSecond: 0.1
+      metrics.prometheusRule.discoveryFailingFor: 1h
+    asserts:
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: '\) > 0\.5\n'
+      - matchRegex:
+          path: spec.groups[0].rules[4].expr
+          pattern: '>= 0\.1$'
+      - equal:
+          path: spec.groups[1].rules[2].for
+          value: 1h
+      - matchRegex:
+          path: spec.groups[1].rules[2].annotations.description
+          pattern: 'has failed for 1h;'
+
+  # Verifies SPEC-0021-R02.
+  - it: rejects a tool error ratio above 1
+    template: templates/prometheusrule.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.toolErrorRatio: 1.5
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0021-R03.
+  - it: rejects a discovery duration without a unit
+    template: templates/prometheusrule.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.discoveryFailingFor: "15"
     asserts:
       - failedTemplate: {}

@@ -180,8 +180,10 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 | `KavryntGatewayRouteSyncFailing` | critical | A replica's route syncs failed for 10 minutes without a success |
 | `KavryntMCPUpstreamErrorsHigh` | warning | Over `errorRatio` (5%) of a route's calls fail upstream for 10 minutes |
 | `KavryntMCPLatencyHigh` | warning | A route's p95 latency is over `latencyP95Seconds` (5s) for 15 minutes |
+| `KavryntMCPToolErrorsHigh` | warning | Over `toolErrorRatio` (20%) of a tool's calls end in `tool_error` or `rpc_error` for 10 minutes |
 | `KavryntOperatorDown` | critical | No Operator target up for 5 minutes |
 | `KavryntMCPServerNotReady` | warning | An `MCPServer` is not `Ready` for `notReadyFor` (10m) |
+| `KavryntMCPToolDiscoveryFailing` | warning | The Operator cannot list a `Ready` server's tools for `discoveryFailingFor` (15m) |
 | `KavryntCloudSyncStale` | warning | Kavrynt Cloud accepted no snapshot for `cloudSyncStaleSeconds` (600); only with the Cloud connector |
 
 Set `metrics.prometheusRule.labels` to match your Prometheus `ruleSelector`,
@@ -412,6 +414,9 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `metrics.prometheusRule.minRequestsPerSecond` | number | `0.05` | Routes with less traffic never raise it |
 | `metrics.prometheusRule.latencyP95Seconds` | number | `5` | p95 latency that raises `KavryntMCPLatencyHigh` |
 | `metrics.prometheusRule.notReadyFor` | string | `10m` | How long an `MCPServer` may be not `Ready` |
+| `metrics.prometheusRule.toolErrorRatio` | number | `0.2` | Share of a tool's calls ending in `tool_error` or `rpc_error` that raises `KavryntMCPToolErrorsHigh` |
+| `metrics.prometheusRule.minToolRequestsPerSecond` | number | `0.02` | Tools with fewer `tools/call` requests never raise it |
+| `metrics.prometheusRule.discoveryFailingFor` | string | `15m` | How long tool discovery of a `Ready` `MCPServer` may fail |
 | `metrics.prometheusRule.cloudSyncStaleSeconds` | int | `600` | Age of the last accepted Cloud snapshot that raises `KavryntCloudSyncStale` |
 | `metrics.prometheusRule.runbookBaseURL` | string | this repository at the release tag | Base of every `runbook_url` |
 
@@ -497,7 +502,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `operator.config.metricsBindAddress` | string | `":8080"` | Metrics listen address |
 | `operator.config.healthProbeBindAddress` | string | `":8081"` | `/healthz` and `/readyz` listen address |
 | `operator.config.leaderElect` | bool | `true` | Enable leader election |
-| `operator.config.toolDiscovery.enabled` | bool | `true` | List the tools of `Ready` servers into `status.tools`. Needs network access to each endpoint; sends no credentials. |
+| `operator.config.toolDiscovery.enabled` | bool | `true` | List the tools of `Ready` servers into `status.tools`. Needs network access to each endpoint; sends only a server's stored upstream credential (`spec.credential`), to its pinned origin. |
 | `operator.config.toolDiscovery.refreshInterval` | string | `5m` | Tool discovery refresh interval |
 | `operator.cloud.enabled` | bool | `false` | Send `MCPServer` inventory and tools to Kavrynt Cloud |
 | `operator.cloud.url` | string | `""` | Kavrynt Cloud base URL (https only) |

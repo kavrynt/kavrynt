@@ -1,8 +1,8 @@
 {{- /*
 kavrynt.alertRules renders the rule groups of the PrometheusRule
-(SPEC-0010). It is a separate helper so the promtool tests in test/alerts
-run the same rules. Expressions use only bounded labels: job, instance,
-route, method, outcome, namespace, name (SPEC-0010-R06).
+(SPEC-0010, SPEC-0021). It is a separate helper so the promtool tests in
+test/alerts run the same rules. Expressions use only bounded labels: job,
+instance, route, method, tool, outcome, namespace, name (SPEC-0010-R06).
 */}}
 {{- define "kavrynt.alertRules" -}}
 {{- $rule := (.Values.metrics | default dict).prometheusRule | default dict }}
@@ -13,6 +13,7 @@ route, method, outcome, namespace, name (SPEC-0010-R06).
 {{- $extra := $rule.alertLabels | default dict }}
 {{- $cloud := ((.Values.operator | default dict).cloud | default dict).enabled }}
 {{- $upstreamFailures := `outcome=~"upstream_error|upstream_unreachable|timeout"` }}
+{{- $discoveryFailingFor := $rule.discoveryFailingFor | default "15m" }}
 groups:
   - name: kavrynt-gateway
     rules:
@@ -61,6 +62,20 @@ groups:
           summary: MCP route {{ "{{ $labels.route }}" }} is slow.
           description: The p95 latency of calls to {{ "{{ $labels.route }}" }} has been {{ "{{ $value | humanizeDuration }}" }} for 15 minutes.
           runbook_url: {{ $base }}/KavryntMCPLatencyHigh.md
+      - alert: KavryntMCPToolErrorsHigh
+        expr: |-
+          (
+            sum by (route, tool) (rate(kavrynt_gateway_mcp_requests_total{job="{{ $gatewayJob }}",method="tools/call",outcome=~"tool_error|rpc_error"}[10m]))
+            / sum by (route, tool) (rate(kavrynt_gateway_mcp_requests_total{job="{{ $gatewayJob }}",method="tools/call"}[10m]))
+          ) > {{ $rule.toolErrorRatio | default 0.2 }}
+          and sum by (route, tool) (rate(kavrynt_gateway_mcp_requests_total{job="{{ $gatewayJob }}",method="tools/call"}[10m])) >= {{ $rule.minToolRequestsPerSecond | default 0.02 }}
+        for: 10m
+        labels:
+          {{- toYaml (merge (dict "severity" "warning" "component" "mcp-server") $extra) | nindent 10 }}
+        annotations:
+          summary: Tool {{ "{{ $labels.tool }}" }} on {{ "{{ $labels.route }}" }} keeps failing.
+          description: '{{ "{{ $value | humanizePercentage }}" }} of calls to tool {{ "{{ $labels.tool }}" }} on {{ "{{ $labels.route }}" }} ended in tool_error or rpc_error over 10 minutes.'
+          runbook_url: {{ $base }}/KavryntMCPToolErrorsHigh.md
   - name: kavrynt-operator
     rules:
       - alert: KavryntOperatorDown
@@ -81,6 +96,17 @@ groups:
           summary: MCPServer {{ "{{ $labels.namespace }}/{{ $labels.name }}" }} is not Ready.
           description: The Operator has reported {{ "{{ $labels.namespace }}/{{ $labels.name }}" }} as not Ready for {{ $rule.notReadyFor | default "10m" }}; the Gateway does not route it.
           runbook_url: {{ $base }}/KavryntMCPServerNotReady.md
+      - alert: KavryntMCPToolDiscoveryFailing
+        expr: |-
+          max by (namespace, name) (kavrynt_operator_mcpserver_tools_discovered{job="{{ $operatorJob }}"}) == 0
+          and on (namespace, name) max by (namespace, name) (kavrynt_operator_mcpserver_ready{job="{{ $operatorJob }}"}) == 1
+        for: {{ $discoveryFailingFor }}
+        labels:
+          {{- toYaml (merge (dict "severity" "warning" "component" "mcp-server") $extra) | nindent 10 }}
+        annotations:
+          summary: The Operator cannot list the tools of MCPServer {{ "{{ $labels.namespace }}/{{ $labels.name }}" }}.
+          description: Tool discovery for the Ready MCPServer {{ "{{ $labels.namespace }}/{{ $labels.name }}" }} has failed for {{ $discoveryFailingFor }}; status.tools is stale or empty.
+          runbook_url: {{ $base }}/KavryntMCPToolDiscoveryFailing.md
       {{- if $cloud }}
       - alert: KavryntCloudSyncStale
         expr: time() - max(kavrynt_operator_cloud_sync_last_success_timestamp_seconds{job="{{ $operatorJob }}"}) > {{ $rule.cloudSyncStaleSeconds | default 600 }}

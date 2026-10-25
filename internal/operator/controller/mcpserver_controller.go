@@ -109,6 +109,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		status.ServerInfo = nil
 		apimeta.RemoveStatusCondition(&status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
 	}
+	recordToolsDiscovered(req.NamespacedName, apimeta.FindStatusCondition(status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered))
 
 	if statusUnchanged(server.Status, status) {
 		return result, nil
@@ -137,7 +138,7 @@ func statusUnchanged(current, desired kavryntv1alpha1.MCPServerStatus) bool {
 // reconcile again; zero means not needed.
 func (r *MCPServerReconciler) applyTools(ctx context.Context, key types.NamespacedName, server *kavryntv1alpha1.MCPServer, status *kavryntv1alpha1.MCPServerStatus) time.Duration {
 	if !apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady) {
-		r.forget(key)
+		r.forgetAttempt(key)
 		status.Tools = nil
 		status.ServerInfo = nil
 		apimeta.SetStatusCondition(&status.Conditions, metav1.Condition{
@@ -247,11 +248,18 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 	return attempt
 }
 
+// forget drops everything kept for a deleted MCPServer, including its metrics.
 func (r *MCPServerReconciler) forget(key types.NamespacedName) {
+	r.forgetAttempt(key)
+	forgetReady(key)
+	forgetToolsDiscovered(key)
+}
+
+// forgetAttempt drops the last discovery of a server that still exists.
+func (r *MCPServerReconciler) forgetAttempt(key types.NamespacedName) {
 	r.mu.Lock()
 	delete(r.attempts, key)
 	r.mu.Unlock()
-	forgetReady(key)
 }
 
 func (r *MCPServerReconciler) clock() time.Time {

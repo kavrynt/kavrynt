@@ -5,6 +5,8 @@
 # alert fires and stays quiet as specified, with only bounded labels.
 # Verifies SPEC-0010-R07: the same run fails when an alert and a runbook in
 # docs/runbooks do not match one to one, or a runbook lacks a section.
+# Verifies SPEC-0021-R02, SPEC-0021-R03, and SPEC-0021-R04: the tool error and
+# discovery alerts fire and stay quiet, with their annotations and runbooks.
 rule_files:
   - rules.yaml
 
@@ -209,4 +211,98 @@ tests:
     alert_rule_test:
       - eval_time: 20m
         alertname: KavryntCloudSyncStale
+        exp_alerts: []
+
+  - name: KavryntMCPToolErrorsHigh fires at 30% tool errors of 100 calls a minute
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", instance="10.0.0.1:8080", route="team-a.search", method="tools/call", tool="search", outcome="ok"}'
+        values: '0+70x30'
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", instance="10.0.0.1:8080", route="team-a.search", method="tools/call", tool="search", outcome="tool_error"}'
+        values: '0+30x30'
+      # A healthy tool on the same route.
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", instance="10.0.0.1:8080", route="team-a.search", method="tools/call", tool="lookup", outcome="ok"}'
+        values: '0+100x30'
+    alert_rule_test:
+      - eval_time: 5m
+        alertname: KavryntMCPToolErrorsHigh
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: KavryntMCPToolErrorsHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, component: mcp-server, route: team-a.search, tool: search}
+            exp_annotations:
+              summary: Tool search on team-a.search keeps failing.
+              description: 30% of calls to tool search on team-a.search ended in tool_error or rpc_error over 10 minutes.
+              runbook_url: https://runbooks.test/KavryntMCPToolErrorsHigh.md
+
+  - name: KavryntMCPToolErrorsHigh counts JSON-RPC errors of tool calls
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-a.search", method="tools/call", tool="search", outcome="ok"}'
+        values: '0+5x30'
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-a.search", method="tools/call", tool="search", outcome="rpc_error"}'
+        values: '0+5x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: KavryntMCPToolErrorsHigh
+        exp_alerts:
+          - exp_labels: {severity: warning, component: mcp-server, route: team-a.search, tool: search}
+            exp_annotations:
+              summary: Tool search on team-a.search keeps failing.
+              description: 50% of calls to tool search on team-a.search ended in tool_error or rpc_error over 10 minutes.
+              runbook_url: https://runbooks.test/KavryntMCPToolErrorsHigh.md
+
+  - name: KavryntMCPToolErrorsHigh stays quiet at 10%, for rare tools, and outside tool calls
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-a.search", method="tools/call", tool="search", outcome="ok"}'
+        values: '0+90x30'
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-a.search", method="tools/call", tool="search", outcome="tool_error"}'
+        values: '0+10x30'
+      # One failing call every two minutes: 100% errors, but below the rate floor.
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-b.rare", method="tools/call", tool="export", outcome="tool_error"}'
+        values: '0+0.5x30'
+      # Unknown methods are caller mistakes, not a broken tool.
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-c.chat", method="other", tool="none", outcome="rpc_error"}'
+        values: '0+60x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: KavryntMCPToolErrorsHigh
+        exp_alerts: []
+
+  - name: KavryntMCPToolDiscoveryFailing names the Ready server whose tools are not listed
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_operator_mcpserver_tools_discovered{job="kavrynt-operator-metrics", instance="10.0.0.3:8080", namespace="team-a", name="search"}'
+        values: '0x25'
+      - series: 'kavrynt_operator_mcpserver_ready{job="kavrynt-operator-metrics", instance="10.0.0.3:8080", namespace="team-a", name="search"}'
+        values: '1x25'
+      - series: 'kavrynt_operator_mcpserver_tools_discovered{job="kavrynt-operator-metrics", instance="10.0.0.3:8080", namespace="team-a", name="billing"}'
+        values: '1x25'
+      - series: 'kavrynt_operator_mcpserver_ready{job="kavrynt-operator-metrics", instance="10.0.0.3:8080", namespace="team-a", name="billing"}'
+        values: '1x25'
+    alert_rule_test:
+      - eval_time: 10m
+        alertname: KavryntMCPToolDiscoveryFailing
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: KavryntMCPToolDiscoveryFailing
+        exp_alerts:
+          - exp_labels: {severity: warning, component: mcp-server, namespace: team-a, name: search}
+            exp_annotations:
+              summary: The Operator cannot list the tools of MCPServer team-a/search.
+              description: Tool discovery for the Ready MCPServer team-a/search has failed for 15m; status.tools is stale or empty.
+              runbook_url: https://runbooks.test/KavryntMCPToolDiscoveryFailing.md
+
+  - name: KavryntMCPToolDiscoveryFailing stays quiet for servers that are not Ready
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_operator_mcpserver_tools_discovered{job="kavrynt-operator-metrics", namespace="team-a", name="search"}'
+        values: '0x25'
+      - series: 'kavrynt_operator_mcpserver_ready{job="kavrynt-operator-metrics", namespace="team-a", name="search"}'
+        values: '0x25'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: KavryntMCPToolDiscoveryFailing
         exp_alerts: []

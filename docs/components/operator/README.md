@@ -24,6 +24,11 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
   port, which the chart exposes through the Service
   `<release>-operator-metrics` (`operator.metrics.service.enabled`, on by
   default) and optionally a ServiceMonitor. Only the leader exports it.
+- Exports `kavrynt_operator_mcpserver_tools_discovered{namespace,name}` (1
+  when `ToolsDiscovered` is `True`, 0 when discovery failed with
+  `DiscoveryFailed` or `CredentialUnavailable`; no series while tool
+  discovery is off, for servers that are not `Ready` or have
+  `spec.tokenExchange`, or after the `MCPServer` is deleted). `KavryntMCPToolDiscoveryFailing` alerts on it.
 - Does not deploy MCP server workloads, manage secrets, or proxy MCP traffic.
 
 ## Tool discovery
@@ -49,7 +54,9 @@ version in the `REPORTED` column.
   `ToolsDiscovered` is `False` with reason `DiscoveryFailed`, the last known
   tools are kept, and the Operator retries with backoff (30 s, doubling, up to
   the refresh interval).
-- The Operator sends no credentials and follows no redirects.
+- The Operator sends no credentials except a server's stored upstream
+  credential (`spec.credential`), only to its pinned origin, and follows no
+  redirects.
 - It never connects to unspecified, link-local (including
   `169.254.169.254`), multicast, cloud metadata, or loopback addresses; such
   servers get `DiscoveryFailed`. `--allow-loopback-endpoints` permits

@@ -84,8 +84,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   requests (`--allowed-origins`), and Gateway loops, and sandboxes proxied
   responses with CSP.
 - Opt-in alerting rules (`metrics.prometheusRule`) for the Gateway, the
-  Operator, and MCP servers, each with a runbook in `docs/runbooks`; the
-  Operator exports `kavrynt_operator_mcpserver_ready` on a metrics Service.
+  Operator, MCP servers, and their tools (SPEC-0021: tool errors, failing
+  discovery), each with a runbook in `docs/runbooks`; the Operator exports
+  `kavrynt_operator_mcpserver_ready` and
+  `kavrynt_operator_mcpserver_tools_discovered` on a metrics Service.
 - Opt-in chart NetworkPolicies (`networkPolicy`) make labelled MCP server
   pods reachable only from the Gateway and the Operator, and can limit who
   calls the Gateway.

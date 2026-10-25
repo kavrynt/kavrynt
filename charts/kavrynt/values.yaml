@@ -72,6 +72,14 @@ metrics:
     latencyP95Seconds: 5
     # KavryntMCPServerNotReady: how long an MCPServer may stay not Ready.
     notReadyFor: 10m
+    # KavryntMCPToolErrorsHigh: share of a tool's tools/call requests that end
+    # in tool_error or rpc_error over 10 minutes, for tools with at least
+    # minToolRequestsPerSecond.
+    toolErrorRatio: 0.2
+    minToolRequestsPerSecond: 0.02
+    # KavryntMCPToolDiscoveryFailing: how long tool discovery of a Ready
+    # MCPServer may fail.
+    discoveryFailingFor: 15m
     # KavryntCloudSyncStale (only with operator.cloud.enabled).
     cloudSyncStaleSeconds: 600
     # Where runbook_url points; empty uses this repository at the chart's
