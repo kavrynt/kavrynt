@@ -185,6 +185,7 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 | `KavryntMCPServerNotReady` | warning | An `MCPServer` is not `Ready` for `notReadyFor` (10m) |
 | `KavryntMCPToolDiscoveryFailing` | warning | The Operator cannot list a `Ready` server's tools for `discoveryFailingFor` (15m) |
 | `KavryntCloudSyncStale` | warning | Kavrynt Cloud accepted no snapshot for `cloudSyncStaleSeconds` (600); only with the Cloud connector |
+| `KavryntAuditDeliveryStale` | warning | A Gateway replica has audit events waiting and Kavrynt Cloud accepted none for `auditDeliveryStaleSeconds` (600); only with `gateway.audit.cloud.enabled` |
 
 The console's Alerts page shows the MCP server conditions of these alerts
 without Prometheus, evaluated by the Gateway with the same
@@ -364,6 +365,23 @@ kubectl -n kavrynt-system logs -l app.kubernetes.io/name=gateway --tail=-1 --pre
 kavryctl audit verify gateway.log
 ```
 
+To also deliver the events to Kavrynt Cloud, with the same cluster token
+Secret as the Operator's connector:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reset-then-reuse-values \
+  --set gateway.audit.cloud.enabled=true \
+  --set gateway.audit.cloud.url=https://<your Kavrynt Cloud URL> \
+  --set gateway.audit.cloud.tokenSecret.name=kavrynt-cloud-token
+```
+
+Events then leave the cluster, including each caller's subject and client
+ID. Standard output keeps every event; events that wait for Cloud are
+buffered (`gateway.audit.cloud.bufferSize`, 100,000) and the alert
+`KavryntAuditDeliveryStale` fires when Cloud accepts none for 10 minutes.
+Kavrynt Cloud must serve the ingestion endpoint `POST /v1/sync/audit-events`.
+
 Details: [Gateway: Audit events](../../docs/components/gateway/README.md#audit-events).
 
 ## Tool authorization policy
@@ -511,6 +529,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `metrics.prometheusRule.minToolRequestsPerSecond` | number | `0.02` | Tools with fewer `tools/call` requests never raise it |
 | `metrics.prometheusRule.discoveryFailingFor` | string | `15m` | How long tool discovery of a `Ready` `MCPServer` may fail |
 | `metrics.prometheusRule.cloudSyncStaleSeconds` | int | `600` | Age of the last accepted Cloud snapshot that raises `KavryntCloudSyncStale` |
+| `metrics.prometheusRule.auditDeliveryStaleSeconds` | int | `600` | Age of the last accepted audit batch, with events waiting, that raises `KavryntAuditDeliveryStale` |
 | `metrics.prometheusRule.runbookBaseURL` | string | this repository at the release tag | Base of every `runbook_url` |
 | `metrics.notifications.enabled` | bool | `false` | Create the `AlertmanagerConfig` (requires `metrics.prometheusRule.enabled` and a receiver) |
 | `metrics.notifications.labels` | object | `{}` | Labels on the `AlertmanagerConfig`, for `alertmanagerConfigSelector` |

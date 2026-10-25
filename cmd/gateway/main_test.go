@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -112,5 +115,36 @@ func TestWarnsWhenMCPRoutesAreUnauthenticated(t *testing.T) {
 		if warned == authenticated {
 			t.Errorf("authenticated=%v: logged %q", authenticated, logs.String())
 		}
+	}
+}
+
+// Verifies SPEC-0017-R01 and SPEC-0017-R06: delivery needs audit, an https
+// Cloud URL, and a positive buffer, and its requests follow the egress
+// guard: a cloud metadata address is refused before any connection.
+func TestAuditShipperConfiguration(t *testing.T) {
+	if s, err := newAuditShipper(true, "", "", 10, false); s != nil || err != nil {
+		t.Fatalf("no URL: %v, %v; want nothing", s, err)
+	}
+	if _, err := newAuditShipper(false, "https://cloud.example.com", "/token", 10, false); err == nil {
+		t.Error("delivery without audit configured")
+	}
+	if _, err := newAuditShipper(true, "https://cloud.example.com", "/token", 0, false); err == nil {
+		t.Error("a zero buffer accepted")
+	}
+	if _, err := newAuditShipper(true, "http://cloud.example.com", "/token", 10, false); err == nil {
+		t.Error("an http Cloud URL accepted")
+	}
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("cluster-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newAuditShipper(true, "https://169.254.169.254", token, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Add([]byte(`{"seq":1}`))
+	err = s.Flush(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("delivery to a metadata address = %v, want refused by the egress guard", err)
 	}
 }

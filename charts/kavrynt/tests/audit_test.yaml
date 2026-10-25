@@ -37,3 +37,93 @@ tests:
       gateway.audit.onOverflow: block
     asserts:
       - failedTemplate: {}
+
+  # Verifies SPEC-0017-R01: delivery to Kavrynt Cloud gets the URL, the
+  # token from the mounted Secret (no RBAC), and the buffer size.
+  - it: delivers audit events to Kavrynt Cloud with the mounted cluster token
+    set:
+      gateway.audit.enabled: true
+      gateway.audit.cloud.enabled: true
+      gateway.audit.cloud.url: https://cloud.example.com
+      gateway.audit.cloud.tokenSecret.name: kavrynt-cloud-token
+      gateway.audit.cloud.tokenSecret.key: cluster-token
+      gateway.audit.cloud.bufferSize: 5000
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-cloud-url=https://cloud.example.com
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-cloud-token-file=/etc/kavrynt/audit-cloud/token
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-cloud-buffer-size=5000
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: audit-cloud-token
+            mountPath: /etc/kavrynt/audit-cloud
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: audit-cloud-token
+            secret:
+              secretName: kavrynt-cloud-token
+              defaultMode: 0444
+              items:
+                - key: cluster-token
+                  path: token
+
+  # Verifies SPEC-0017-R01 and SPEC-0017-R04: the buffer defaults to 100,000
+  # events, and delivery is off by default.
+  - it: keeps 100,000 undelivered events by default
+    set:
+      gateway.audit.enabled: true
+      gateway.audit.cloud.enabled: true
+      gateway.audit.cloud.url: https://cloud.example.com
+      gateway.audit.cloud.tokenSecret.name: kavrynt-cloud-token
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-cloud-buffer-size=100000
+
+  # Verifies SPEC-0017-R01.
+  - it: does not deliver audit events by default
+    set:
+      gateway.audit.enabled: true
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --audit-cloud-url=https://cloud.example.com
+      - notExists:
+          path: spec.template.spec.containers[0].volumeMounts[?(@.name == "audit-cloud-token")]
+
+  # Verifies SPEC-0017-R01 and SPEC-0017-R06: delivery needs audit, an https
+  # URL, and the token Secret.
+  - it: refuses delivery without audit, an https URL, or the token Secret
+    set:
+      gateway.audit.cloud.enabled: true
+      gateway.audit.cloud.url: https://cloud.example.com
+      gateway.audit.cloud.tokenSecret.name: kavrynt-cloud-token
+    asserts:
+      - failedTemplate:
+          errorMessage: "audit.cloud.enabled needs audit.enabled: only written audit events are delivered"
+
+  - it: refuses an http Cloud URL
+    set:
+      gateway.audit.enabled: true
+      gateway.audit.cloud.enabled: true
+      gateway.audit.cloud.url: http://cloud.example.com
+      gateway.audit.cloud.tokenSecret.name: kavrynt-cloud-token
+    asserts:
+      - failedTemplate: {}
+
+  - it: refuses delivery without the token Secret
+    set:
+      gateway.audit.enabled: true
+      gateway.audit.cloud.enabled: true
+      gateway.audit.cloud.url: https://cloud.example.com
+    asserts:
+      - failedTemplate:
+          errorMessage: audit.cloud.tokenSecret.name is required when audit.cloud.enabled is true

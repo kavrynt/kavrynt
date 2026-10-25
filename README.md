@@ -455,8 +455,9 @@ the current release is not production-security complete:
   high-availability profile is `examples/helm/values-production.yaml`.
 - The Gateway can write one audit event per MCP request (`gateway.audit`):
   caller, tool, decision, and outcome, hash-chained per instance and checked
-  with `kavryctl audit verify`. Approvals and usage services are not part of
-  the current runtime beta.
+  with `kavryctl audit verify`, and can also deliver them to Kavrynt Cloud
+  (`gateway.audit.cloud`). Approvals and usage services are not part of the
+  current runtime beta.
 
 Keep Gateway as an internal `ClusterIP` service, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
@@ -487,7 +488,7 @@ are:
 1. approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 2. the console signed in through the authorization server;
-3. audit delivery to Kavrynt Cloud and usage events;
+3. audit delivery to Kavrynt Cloud end to end (the Gateway side is built) and usage events;
 4. protocol-aware routing beyond the request checks;
 5. recovery workflows (restoring into a new cluster).
 

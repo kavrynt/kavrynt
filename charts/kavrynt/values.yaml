@@ -82,6 +82,9 @@ metrics:
     discoveryFailingFor: 15m
     # KavryntCloudSyncStale (only with operator.cloud.enabled).
     cloudSyncStaleSeconds: 600
+    # KavryntAuditDeliveryStale (only with gateway.audit.cloud.enabled): how
+    # long audit events may wait without Kavrynt Cloud accepting a batch.
+    auditDeliveryStaleSeconds: 600
     # Where runbook_url points; empty uses this repository at the chart's
     # release tag.
     runbookBaseURL: ""

@@ -1,9 +1,9 @@
 {{- /*
 kavrynt.alertRules renders the rule groups of the PrometheusRule
-(SPEC-0010, SPEC-0021). Every alert carries kavrynt_release, the release
-name, so notifications route only this release's alerts (SPEC-0022-R01). It
-is a separate helper so the promtool tests in test/alerts run the same
-rules. Expressions use only bounded labels: job,
+(SPEC-0010, SPEC-0021, SPEC-0017). Every alert carries kavrynt_release, the
+release name, so notifications route only this release's alerts
+(SPEC-0022-R01). It is a separate helper so the promtool tests in
+test/alerts run the same rules. Expressions use only bounded labels: job,
 instance, route, method, tool, outcome, namespace, name (SPEC-0010-R06).
 */}}
 {{- /* kavrynt.runbookBaseURL is where every runbook_url points. */}}
@@ -20,6 +20,7 @@ instance, route, method, tool, outcome, namespace, name (SPEC-0010-R06).
 {{- $base := include "kavrynt.runbookBaseURL" . }}
 {{- $extra := $rule.alertLabels | default dict }}
 {{- $cloud := ((.Values.operator | default dict).cloud | default dict).enabled }}
+{{- $auditCloud := ((((.Values.gateway | default dict).audit | default dict).cloud | default dict).enabled) }}
 {{- $upstreamFailures := `outcome=~"upstream_error|upstream_unreachable|timeout"` }}
 {{- $discoveryFailingFor := $rule.discoveryFailingFor | default "15m" }}
 groups:
@@ -84,6 +85,19 @@ groups:
           summary: Tool {{ "{{ $labels.tool }}" }} on {{ "{{ $labels.route }}" }} keeps failing.
           description: '{{ "{{ $value | humanizePercentage }}" }} of calls to tool {{ "{{ $labels.tool }}" }} on {{ "{{ $labels.route }}" }} ended in tool_error or rpc_error over 10 minutes.'
           runbook_url: {{ $base }}/KavryntMCPToolErrorsHigh.md
+      {{- if $auditCloud }}
+      - alert: KavryntAuditDeliveryStale
+        expr: |-
+          (time() - kavrynt_gateway_audit_delivery_last_success_timestamp_seconds{job="{{ $gatewayJob }}"}) > {{ $rule.auditDeliveryStaleSeconds | default 600 }}
+          and kavrynt_gateway_audit_delivery_buffer_length{job="{{ $gatewayJob }}"} > 0
+        for: 5m
+        labels:
+          {{- toYaml (merge (dict "kavrynt_release" $.Release.Name "severity" "warning" "component" "gateway") $extra) | nindent 10 }}
+        annotations:
+          summary: Gateway {{ "{{ $labels.instance }}" }} cannot deliver audit events to Kavrynt Cloud.
+          description: Audit events are waiting and Kavrynt Cloud accepted no batch for {{ "{{ $value | humanizeDuration }}" }}. Standard output still has every event; the oldest undelivered events are dropped once the buffer is full.
+          runbook_url: {{ $base }}/KavryntAuditDeliveryStale.md
+      {{- end }}
   - name: kavrynt-operator
     rules:
       - alert: KavryntOperatorDown
