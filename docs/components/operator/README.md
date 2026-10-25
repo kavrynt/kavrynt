@@ -107,6 +107,35 @@ helm upgrade --install kavrynt charts/kavrynt -n kavrynt-system \
   --set operator.cloud.tokenSecret.name=kavrynt-cloud-token
 ```
 
+## Metrics reference
+
+Every Operator metric besides the controller-runtime (`controller_runtime_*`,
+`workqueue_*`, `rest_client_*`), Go runtime, and process metrics, on the
+metrics port (`<release>-operator-metrics`). Only the leader exports the
+`MCPServer` gauges. Scrape with `honor_labels: true` (the chart's
+ServiceMonitor does) so `namespace` stays the server's.
+
+| Metric | Type | Labels and bounds |
+| --- | --- | --- |
+| `kavrynt_operator_mcpserver_ready` | gauge | `namespace`, `name` (one series per `MCPServer`); 1 when `Ready` is `True`, else 0 |
+| `kavrynt_operator_mcpserver_tools_discovered` | gauge | `namespace`, `name`; 1 discovered, 0 failed, no series when not listed |
+| `kavrynt_operator_cloud_sync_success_total` | counter | none; with the Cloud connector |
+| `kavrynt_operator_cloud_sync_failure_total` | counter | `reason` (`token`, `inventory`, `too_large`, `network`, `rejected`, `throttled`, `server_error`) |
+| `kavrynt_operator_cloud_sync_last_success_timestamp_seconds` | gauge | none; Unix time |
+
+Example PromQL:
+
+```promql
+# MCPServers that are not Ready
+max by (namespace, name) (kavrynt_operator_mcpserver_ready) == 0
+
+# Ready servers whose tools cannot be listed
+max by (namespace, name) (kavrynt_operator_mcpserver_tools_discovered) == 0
+```
+
+The Gateway's metrics are in the
+[Gateway reference](../gateway/README.md#metrics-reference).
+
 ## Flags
 
 | Flag | Default | Purpose |

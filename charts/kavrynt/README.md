@@ -237,6 +237,47 @@ Teams needs Prometheus Operator v0.82 or later (`msteamsv2Configs`, a Teams
 workflow webhook). The configuration is checked with `amtool` in CI
 (`make alerts-test`).
 
+### Dashboards
+
+`gateway.metrics.dashboard.enabled` installs two Grafana dashboards as
+ConfigMaps for the Grafana sidecar (`gateway.metrics.dashboard.labels`,
+`grafana_dashboard: "1"` by default): "Kavrynt MCP Traffic" for every server,
+and "Kavrynt MCP Server" for one server (readiness, tool discovery, traffic,
+errors, latency per tool, failing tools, and bytes). The metrics and labels
+you can use are listed in the
+[Gateway](../../docs/components/gateway/README.md#metrics-reference) and
+[Operator](../../docs/components/operator/README.md#metrics-reference)
+metrics references.
+
+To release your own dashboards with Kavrynt, build them in Grafana, then
+**Share > Export** (leave "Export for sharing externally" off, so the
+datasource stays a variable) and save the JSON. Add each file under
+`gateway.metrics.dashboard.extra`:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reset-then-reuse-values \
+  --set gateway.metrics.dashboard.enabled=true \
+  --set-file 'gateway.metrics.dashboard.extra.team-mcp\.json=team-mcp.json'
+```
+
+or in a values file, as JSON text or YAML:
+
+```yaml
+gateway:
+  metrics:
+    dashboard:
+      enabled: true
+      extra:
+        team-mcp.json: |
+          {"title": "Team MCP", "uid": "team-mcp", "panels": []}
+```
+
+Each entry becomes a ConfigMap `<release>-gateway-dashboard-<name>` with the
+same labels, so `helm upgrade` updates it and `helm uninstall` removes it.
+File names are lower case, end in `.json`, and must be unique; a value that
+is not JSON fails the install. A ConfigMap holds at most 1 MiB.
+
 ## High availability
 
 [`examples/helm/values-production.yaml`](../../examples/helm/values-production.yaml)
@@ -532,9 +573,10 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.metrics.serviceMonitor.enabled` | bool | `false` | Create a Prometheus Operator `ServiceMonitor` (requires its CRDs) |
 | `gateway.metrics.serviceMonitor.interval` | string | `30s` | Scrape interval |
 | `gateway.metrics.serviceMonitor.labels` | object | `{}` | Extra `ServiceMonitor` labels |
-| `gateway.metrics.dashboard.enabled` | bool | `false` | Create the "Kavrynt MCP Traffic" Grafana dashboard ConfigMap |
+| `gateway.metrics.dashboard.enabled` | bool | `false` | Create the "Kavrynt MCP Traffic" and "Kavrynt MCP Server" Grafana dashboard ConfigMap |
 | `gateway.metrics.dashboard.namespace` | string | `""` | Dashboard namespace; release namespace when empty |
 | `gateway.metrics.dashboard.labels` | object | `{grafana_dashboard: "1"}` | Labels the Grafana sidecar selects |
+| `gateway.metrics.dashboard.extra` | object | `{}` | Your dashboards: `<name>.json` to dashboard JSON (string or object), one ConfigMap each |
 | `gateway.podSecurityContext` | object | non-root `65532`, `RuntimeDefault` seccomp | Pod security context |
 | `gateway.securityContext` | object | no privilege escalation, all capabilities dropped, read-only root filesystem | Container security context |
 | `gateway.resources` | object | requests `25m`/`64Mi`, limits `250m`/`256Mi` | Container resources |

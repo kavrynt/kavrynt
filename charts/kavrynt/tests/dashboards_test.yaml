@@ -1,0 +1,104 @@
+suite: dashboards
+templates:
+  - charts/gateway/templates/dashboard.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
+tests:
+  - it: renders no dashboards by default
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Verifies SPEC-0023-R01.
+  - it: ships the traffic and server dashboards
+    set:
+      gateway.metrics.dashboard.enabled: true
+    asserts:
+      - hasDocuments:
+          count: 1
+      - equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      - matchRegex:
+          path: data["kavrynt-mcp-traffic.json"]
+          pattern: '"uid": "kavrynt-mcp-traffic"'
+      - matchRegex:
+          path: data["kavrynt-mcp-server.json"]
+          pattern: '"title": "Kavrynt MCP Server"'
+
+  # Verifies SPEC-0023-R02: a dashboard given as JSON text becomes its own
+  # ConfigMap with the sidecar labels and namespace.
+  - it: releases a custom dashboard from JSON text
+    set:
+      gateway.metrics.dashboard.enabled: true
+      gateway.metrics.dashboard.namespace: monitoring
+      gateway.metrics.dashboard.labels:
+        grafana_dashboard: "1"
+        team: search
+      gateway.metrics.dashboard.extra:
+        team.json: '{"title": "Team", "uid": "team", "panels": []}'
+    asserts:
+      - hasDocuments:
+          count: 2
+      - documentIndex: 1
+        equal:
+          path: metadata.name
+          value: kavrynt-gateway-dashboard-team
+      - documentIndex: 1
+        equal:
+          path: metadata.namespace
+          value: monitoring
+      - documentIndex: 1
+        equal:
+          path: metadata.labels.grafana_dashboard
+          value: "1"
+      - documentIndex: 1
+        equal:
+          path: metadata.labels.team
+          value: search
+      - documentIndex: 1
+        matchRegex:
+          path: data["team.json"]
+          pattern: '"uid": "team"'
+
+  # Verifies SPEC-0023-R02: a dashboard given as YAML is written as JSON.
+  - it: releases a custom dashboard from an object
+    set:
+      gateway.metrics.dashboard.enabled: true
+      gateway.metrics.dashboard.extra:
+        ops-overview.json:
+          title: Ops
+          uid: ops
+          panels: []
+    asserts:
+      - documentIndex: 1
+        equal:
+          path: metadata.name
+          value: kavrynt-gateway-dashboard-ops-overview
+      - documentIndex: 1
+        matchRegex:
+          path: data["ops-overview.json"]
+          pattern: '"title": "Ops"'
+
+  # Verifies SPEC-0023-R02: text that is not JSON fails the install.
+  - it: rejects a dashboard that is not JSON
+    set:
+      gateway.metrics.dashboard.enabled: true
+      gateway.metrics.dashboard.extra:
+        team.json: "title: Team"
+    asserts:
+      - failedTemplate:
+          errorMessage: gateway.metrics.dashboard.extra.team.json is not a JSON dashboard
+
+  # Verifies SPEC-0023-R02: file names are ConfigMap-safe and end in .json.
+  - it: rejects a file name that is not <name>.json
+    set:
+      gateway.metrics.dashboard.enabled: true
+      gateway.metrics.dashboard.extra:
+        Team Dashboard.yaml: "{}"
+    asserts:
+      - failedTemplate:
+          errorPattern: "does not match pattern"
