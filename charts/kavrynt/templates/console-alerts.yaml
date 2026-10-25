@@ -1,0 +1,28 @@
+{{- /*
+The console alerts' thresholds (SPEC-0020-R03): the same values as the
+Prometheus rules, written whether or not the rules are installed. The
+Gateway subchart cannot read these values, so it mounts this ConfigMap and
+rereads it when it changes.
+*/}}
+{{- $rule := (.Values.metrics | default dict).prometheusRule | default dict }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Release.Name }}-console-alerts
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: kavrynt
+data:
+  config.json: |-
+    {{- dict
+      "errorRatio" ($rule.errorRatio | default 0.05)
+      "minRequestsPerSecond" ($rule.minRequestsPerSecond | default 0.05)
+      "latencyP95Seconds" ($rule.latencyP95Seconds | default 5)
+      "toolErrorRatio" ($rule.toolErrorRatio | default 0.2)
+      "minToolRequestsPerSecond" ($rule.minToolRequestsPerSecond | default 0.02)
+      "notReadyFor" ($rule.notReadyFor | default "10m")
+      "discoveryFailingFor" ($rule.discoveryFailingFor | default "15m")
+      "runbookBaseURL" (include "kavrynt.runbookBaseURL" .)
+      | toPrettyJson | nindent 4 }}

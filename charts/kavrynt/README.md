@@ -186,6 +186,12 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 | `KavryntMCPToolDiscoveryFailing` | warning | The Operator cannot list a `Ready` server's tools for `discoveryFailingFor` (15m) |
 | `KavryntCloudSyncStale` | warning | Kavrynt Cloud accepted no snapshot for `cloudSyncStaleSeconds` (600); only with the Cloud connector |
 
+The console's Alerts page shows the MCP server conditions of these alerts
+without Prometheus, evaluated by the Gateway with the same
+`metrics.prometheusRule` thresholds (written to the ConfigMap
+`<release>-console-alerts` even while the rules are off); see
+[console alerts](../../docs/components/gateway/README.md#console-alerts).
+
 Set `metrics.prometheusRule.labels` to match your Prometheus `ruleSelector`,
 `alertLabels` to route alerts in Alertmanager, and `jobs` when Prometheus
 discovers the targets without the chart's ServiceMonitors. The Operator's
@@ -294,8 +300,8 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 The end-to-end test installs it, restarts every Gateway replica while a
 client calls tools continuously (no call may fail), and deletes the Operator
 leader (the standby must reconcile new servers). Recent traffic in the
-console and the console login limiter are per Gateway replica; use
-Prometheus for cluster-wide traffic.
+console, the console's traffic alerts, and the console login limiter are
+per Gateway replica; use Prometheus for cluster-wide traffic.
 
 ## Backing up
 
@@ -319,7 +325,7 @@ Operator; it does not need to be restored.
 - The console has a single `admin` login. The chart generates its password
   into the Secret `kavrynt-gateway-console-admin` (kept on uninstall); read it
   with `kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d`. The login protects the console and
-  `/v1/servers`, `/v1/traffic`, not MCP routes. With `helm template` or GitOps,
+  `/v1/servers`, `/v1/traffic`, `/v1/alerts`, not MCP routes. With `helm template` or GitOps,
   set `gateway.console.auth.existingSecret`, because a render without cluster
   access generates a new password each time.
 - The Gateway has read-only access to `MCPServer` resources and no Secret

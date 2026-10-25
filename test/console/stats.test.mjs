@@ -232,3 +232,58 @@ test("the scope note names the Gateway replica whose traffic is shown", () => {
   assert.equal(scopeNote("kavrynt-gateway-7d9f-abcde"), "Gateway replica kavrynt-gateway-7d9f-abcde only · last 500 requests · use /metrics for history");
   for (const missing of ["", undefined, null, 42]) assert.equal(scopeNote(missing), SCOPE_NOTE);
 });
+
+const alert = (name, severity, since, extra = {}) => ({ name, severity, scope: { route: "team-a.search" }, summary: name, since, runbookURL: "https://runbooks.test/" + name + ".md", ...extra });
+
+// Verifies SPEC-0020-R06 and SPEC-0020-R08: active alerts come first,
+// critical before warning and then oldest first; resolved ones follow,
+// most recently resolved first.
+test("alerts are ordered for the Alerts page", () => {
+  const { sortAlerts } = stats;
+  const list = [
+    alert("SlowRoute", "warning", "2026-10-25T10:00:00Z"),
+    alert("ServerNotReady", "warning", "2026-10-25T09:00:00Z"),
+    alert("ToolErrors", "warning", "2026-10-25T08:00:00Z", { resolvedAt: "2026-10-25T10:30:00Z" }),
+    alert("GatewayDown", "critical", "2026-10-25T11:00:00Z"),
+    alert("UpstreamErrors", "warning", "2026-10-25T07:00:00Z", { resolvedAt: "2026-10-25T10:45:00Z" }),
+    null,
+    { severity: "warning" },
+  ];
+  const { active, resolved } = sortAlerts(list);
+  assert.deepEqual(active.map((a) => a.name), ["GatewayDown", "ServerNotReady", "SlowRoute"]);
+  assert.deepEqual(resolved.map((a) => a.name), ["UpstreamErrors", "ToolErrors"]);
+  assert.deepEqual(sortAlerts(undefined), { active: [], resolved: [] });
+});
+
+// Verifies SPEC-0020-R07 and SPEC-0020-R08: the navigation counts active
+// alerts only.
+test("the navigation counts active alerts", () => {
+  const { activeAlertCount } = stats;
+  const list = [
+    alert("ServerNotReady", "warning", "2026-10-25T09:00:00Z"),
+    alert("SlowRoute", "warning", "2026-10-25T10:00:00Z"),
+    alert("DiscoveryFailing", "warning", "2026-10-25T10:00:00Z"),
+    alert("ToolErrors", "warning", "2026-10-25T08:00:00Z", { resolvedAt: "2026-10-25T10:30:00Z" }),
+  ];
+  assert.equal(activeAlertCount(list), 3);
+  assert.equal(activeAlertCount([]), 0);
+});
+
+// Verifies SPEC-0020-R06 and SPEC-0020-R08: each alert links its tool's
+// calls, its server's traffic, or its server, and only https runbooks are
+// linked.
+test("alerts link their server or tool and their runbook", () => {
+  const { alertLink, alertTitle, isRunbookURL } = stats;
+  assert.deepEqual(alertLink({ name: "ToolErrors", scope: { route: "team-a.search", tool: "lookup" } }),
+    { page: "traffic", rest: [], params: { route: "team-a.search", tool: "lookup" } });
+  assert.deepEqual(alertLink({ name: "UpstreamErrors", scope: { route: "team-a.search" } }),
+    { page: "servers", rest: ["team-a.search", "traffic"], params: {} });
+  assert.deepEqual(alertLink({ name: "ServerNotReady", scope: { route: "team-a.search" } }),
+    { page: "servers", rest: ["team-a.search"], params: {} });
+  assert.equal(alertTitle({ name: "DiscoveryFailing" }), "Tool discovery failing");
+  assert.equal(alertTitle({ name: "Future" }), "Future");
+  assert.equal(isRunbookURL("https://github.com/kavrynt/kavrynt/blob/v1.2.3/docs/runbooks/KavryntMCPServerNotReady.md"), true);
+  for (const bad of ["javascript:alert(1)", "http://runbooks.test/x.md", "", null, "https://a b"]) {
+    assert.equal(isRunbookURL(bad), false, String(bad));
+  }
+});

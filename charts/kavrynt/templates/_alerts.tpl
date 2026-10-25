@@ -6,12 +6,18 @@ is a separate helper so the promtool tests in test/alerts run the same
 rules. Expressions use only bounded labels: job,
 instance, route, method, tool, outcome, namespace, name (SPEC-0010-R06).
 */}}
+{{- /* kavrynt.runbookBaseURL is where every runbook_url points. */}}
+{{- define "kavrynt.runbookBaseURL" -}}
+{{- $rule := (.Values.metrics | default dict).prometheusRule | default dict }}
+{{- $rule.runbookBaseURL | default (printf "https://github.com/kavrynt/kavrynt/blob/v%s/docs/runbooks" .Chart.Version) | trimSuffix "/" }}
+{{- end }}
+
 {{- define "kavrynt.alertRules" -}}
 {{- $rule := (.Values.metrics | default dict).prometheusRule | default dict }}
 {{- $jobs := $rule.jobs | default dict }}
 {{- $gatewayJob := $jobs.gateway | default ((.Values.gateway | default dict).fullnameOverride | default (printf "%s-gateway" .Release.Name)) }}
 {{- $operatorJob := $jobs.operator | default (printf "%s-metrics" ((.Values.operator | default dict).fullnameOverride | default (printf "%s-operator" .Release.Name))) }}
-{{- $base := $rule.runbookBaseURL | default (printf "https://github.com/kavrynt/kavrynt/blob/v%s/docs/runbooks" .Chart.Version) | trimSuffix "/" }}
+{{- $base := include "kavrynt.runbookBaseURL" . }}
 {{- $extra := $rule.alertLabels | default dict }}
 {{- $cloud := ((.Values.operator | default dict).cloud | default dict).enabled }}
 {{- $upstreamFailures := `outcome=~"upstream_error|upstream_unreachable|timeout"` }}

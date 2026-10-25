@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/gateway/alerts"
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
 	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/auth"
@@ -40,7 +41,7 @@ func main() {
 	requestTimeout := flag.Duration("request-timeout", api.DefaultRequestTimeout, "Upstream request timeout (event streams: until response headers)")
 	allowedOrigins := flag.String("allowed-origins", getenv("KAVRYNT_ALLOWED_ORIGINS", ""), "Comma-separated browser origins (scheme://host[:port]) allowed besides loopback; requests from other origins are rejected")
 	consoleEnabled := flag.Bool("console", true, "Serve the read-only web console at /ui/")
-	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic (with --console); MCP routes are not affected")
+	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic, /v1/alerts (with --console); MCP routes are not affected")
 	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
 	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
 	authEnabled := flag.Bool("auth", false, "Require a bearer access token for the route on every /mcp/ request (MCP client authentication)")
@@ -58,7 +59,8 @@ func main() {
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
-	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic, normally the pod name")
+	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic and /v1/alerts, normally the pod name")
+	alertsConfig := flag.String("alerts-config", getenv("KAVRYNT_ALERTS_CONFIG", ""), "JSON file with the console alert thresholds, reread when it changes; the chart writes it from metrics.prometheusRule (missing: the defaults)")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
 		flag.PrintDefaults()
@@ -152,6 +154,11 @@ func main() {
 	if policyEngine != nil {
 		go policyEngine.Watch(ctx, policyReloadInterval)
 	}
+	alertConfig := func() alerts.Config { return alerts.DefaultConfig(build.Version) }
+	if *alertsConfig != "" {
+		alertConfig = alerts.FileConfig(*alertsConfig, alerts.DefaultConfig(build.Version), slog.Default())
+	}
+	go handler.EnableAlerts(alertConfig).Run(ctx, alerts.EvaluationInterval, table.Servers)
 
 	errCh := make(chan error, 2)
 	go func() {
