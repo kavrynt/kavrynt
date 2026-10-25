@@ -188,8 +188,11 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 
 Set `metrics.prometheusRule.labels` to match your Prometheus `ruleSelector`,
 `alertLabels` to route alerts in Alertmanager, and `jobs` when Prometheus
-discovers the targets without the chart's ServiceMonitors. The rules are
-tested with `promtool` (`make alerts-test`).
+discovers the targets without the chart's ServiceMonitors. The Operator's
+`MCPServer` metrics carry the server's `namespace` and `name`, so scrape them
+with `honor_labels: true` (the chart's ServiceMonitor does); otherwise
+Prometheus replaces `namespace` with the Operator's. The rules are tested
+with `promtool` (`make alerts-test`).
 
 ## High availability
 
