@@ -31,14 +31,16 @@ config:
   leaderElect: true
   # The Operator lists the tools of Ready MCPServers (MCP tools/list) into
   # status. It needs network access to each server's spec.endpoint and sends
-  # no credentials. Disable where the Operator must not reach MCP servers.
+  # only the server's stored upstream credential (spec.credential), to its
+  # pinned origin. Disable where the Operator must not reach MCP servers.
   toolDiscovery:
     enabled: true
     refreshInterval: 5m
 
-# Operator metrics (controller-runtime, kavrynt_operator_mcpserver_ready, and
-# the Cloud connector) on the metrics port. The Service lets the Prometheus
-# Operator scrape them; only the leader exports MCPServer readiness.
+# Operator metrics (controller-runtime, kavrynt_operator_mcpserver_ready,
+# kavrynt_operator_mcpserver_tools_discovered, and the Cloud connector) on the
+# metrics port. The Service lets the Prometheus Operator scrape them; only the
+# leader exports MCPServer readiness and discovery.
 metrics:
   service:
     enabled: true

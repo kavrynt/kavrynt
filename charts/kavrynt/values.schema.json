@@ -41,7 +41,7 @@
       "properties": {
         "prometheusRule": {
           "type": "object",
-          "description": "Alerting rules (SPEC-0010).",
+          "description": "Alerting rules (SPEC-0010, SPEC-0021).",
           "additionalProperties": false,
           "properties": {
             "enabled": { "type": "boolean" },
@@ -59,6 +59,9 @@
             "minRequestsPerSecond": { "type": "number", "minimum": 0 },
             "latencyP95Seconds": { "type": "number", "exclusiveMinimum": 0 },
             "notReadyFor": { "type": "string", "pattern": "^[0-9]+[smh]$" },
+            "toolErrorRatio": { "type": "number", "exclusiveMinimum": 0, "maximum": 1 },
+            "minToolRequestsPerSecond": { "type": "number", "minimum": 0 },
+            "discoveryFailingFor": { "type": "string", "pattern": "^[0-9]+[smh]$" },
             "cloudSyncStaleSeconds": { "type": "integer", "minimum": 60 },
             "runbookBaseURL": { "type": "string", "pattern": "^(https://\\S+)?$" }
           }
