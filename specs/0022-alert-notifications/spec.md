@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |

@@ -22,7 +22,7 @@ tests:
       - eval_time: 10m
         alertname: KavryntGatewayDown
         exp_alerts:
-          - exp_labels: {severity: critical, component: gateway}
+          - exp_labels: {kavrynt_release: kavrynt, severity: critical, component: gateway}
             exp_annotations:
               summary: No Kavrynt Gateway replica is up.
               description: Prometheus has scraped no healthy target of job kavrynt-gateway for 5 minutes. MCP clients cannot reach any routed server.
@@ -51,7 +51,7 @@ tests:
       - eval_time: 20m
         alertname: KavryntGatewayRouteSyncFailing
         exp_alerts:
-          - exp_labels: {severity: critical, component: gateway, instance: "10.0.0.1:8080"}
+          - exp_labels: {kavrynt_release: kavrynt, severity: critical, component: gateway, instance: "10.0.0.1:8080"}
             exp_annotations:
               summary: Gateway 10.0.0.1:8080 cannot sync its routes.
               description: Route syncs from the Kubernetes API failed for 10 minutes without one success. The replica keeps its last routes, but new, changed, and deleted MCPServers are not applied.
@@ -80,7 +80,7 @@ tests:
       - eval_time: 20m
         alertname: KavryntMCPUpstreamErrorsHigh
         exp_alerts:
-          - exp_labels: {severity: warning, component: mcp-server, route: team-a.search}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: mcp-server, route: team-a.search}
             exp_annotations:
               summary: MCP route team-a.search fails upstream.
               description: 20% of calls to team-a.search ended in upstream_error, upstream_unreachable, or timeout over 10 minutes.
@@ -116,7 +116,7 @@ tests:
       - eval_time: 30m
         alertname: KavryntMCPLatencyHigh
         exp_alerts:
-          - exp_labels: {severity: warning, component: mcp-server, route: team-a.search}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: mcp-server, route: team-a.search}
             exp_annotations:
               summary: MCP route team-a.search is slow.
               description: The p95 latency of calls to team-a.search has been 9.75s for 15 minutes.
@@ -143,7 +143,7 @@ tests:
       - eval_time: 10m
         alertname: KavryntOperatorDown
         exp_alerts:
-          - exp_labels: {severity: critical, component: operator}
+          - exp_labels: {kavrynt_release: kavrynt, severity: critical, component: operator}
             exp_annotations:
               summary: No Kavrynt Operator replica is up.
               description: Prometheus has scraped no healthy target of job kavrynt-operator-metrics for 5 minutes. New and changed MCPServers are not validated, so the Gateway does not route them.
@@ -172,7 +172,7 @@ tests:
       - eval_time: 15m
         alertname: KavryntMCPServerNotReady
         exp_alerts:
-          - exp_labels: {severity: warning, component: mcp-server, namespace: team-a, name: search}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: mcp-server, namespace: team-a, name: search}
             exp_annotations:
               summary: MCPServer team-a/search is not Ready.
               description: The Operator has reported team-a/search as not Ready for 10m; the Gateway does not route it.
@@ -197,7 +197,7 @@ tests:
       - eval_time: 20m
         alertname: KavryntCloudSyncStale
         exp_alerts:
-          - exp_labels: {severity: warning, component: operator}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: operator}
             exp_annotations:
               summary: The Operator has not synced to Kavrynt Cloud.
               description: Kavrynt Cloud last accepted an inventory snapshot 19m 0s ago.
@@ -230,7 +230,7 @@ tests:
       - eval_time: 20m
         alertname: KavryntMCPToolErrorsHigh
         exp_alerts:
-          - exp_labels: {severity: warning, component: mcp-server, route: team-a.search, tool: search}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: mcp-server, route: team-a.search, tool: search}
             exp_annotations:
               summary: Tool search on team-a.search keeps failing.
               description: 30% of calls to tool search on team-a.search ended in tool_error or rpc_error over 10 minutes.
@@ -247,7 +247,7 @@ tests:
       - eval_time: 20m
         alertname: KavryntMCPToolErrorsHigh
         exp_alerts:
-          - exp_labels: {severity: warning, component: mcp-server, route: team-a.search, tool: search}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: mcp-server, route: team-a.search, tool: search}
             exp_annotations:
               summary: Tool search on team-a.search keeps failing.
               description: 50% of calls to tool search on team-a.search ended in tool_error or rpc_error over 10 minutes.
@@ -289,7 +289,7 @@ tests:
       - eval_time: 20m
         alertname: KavryntMCPToolDiscoveryFailing
         exp_alerts:
-          - exp_labels: {severity: warning, component: mcp-server, namespace: team-a, name: search}
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: mcp-server, namespace: team-a, name: search}
             exp_annotations:
               summary: The Operator cannot list the tools of MCPServer team-a/search.
               description: Tool discovery for the Ready MCPServer team-a/search has failed for 15m; status.tools is stale or empty.

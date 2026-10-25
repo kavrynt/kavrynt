@@ -191,8 +191,51 @@ Set `metrics.prometheusRule.labels` to match your Prometheus `ruleSelector`,
 discovers the targets without the chart's ServiceMonitors. The Operator's
 `MCPServer` metrics carry the server's `namespace` and `name`, so scrape them
 with `honor_labels: true` (the chart's ServiceMonitor does); otherwise
-Prometheus replaces `namespace` with the Operator's. The rules are tested
-with `promtool` (`make alerts-test`).
+Prometheus replaces `namespace` with the Operator's. Every alert carries
+`kavrynt_release` (the release name). The rules are tested with `promtool`
+(`make alerts-test`).
+
+### Notifications
+
+`metrics.notifications` installs an `AlertmanagerConfig` that sends this
+release's alerts to Slack, email, Microsoft Teams, or a webhook (for example a
+PagerDuty bridge). Each message names the alert, its severity, whether it is
+firing or resolved, the server (and tool), what is wrong, and the runbook.
+URLs and passwords stay in Secrets in the release namespace; values only name
+them.
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-alerts-slack \
+  --from-literal=url=https://hooks.slack.com/services/...
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reset-then-reuse-values \
+  --values examples/helm/values-notifications-slack.yaml
+```
+
+[`values-notifications-slack.yaml`](../../examples/helm/values-notifications-slack.yaml)
+and [`values-notifications-email.yaml`](../../examples/helm/values-notifications-email.yaml)
+are tested examples. A receiver is on once its Secret (email: `to`) is set,
+and takes the severities in its `severities` list, so critical alerts can go
+to a pager webhook and warnings to Slack. Alerts are grouped by alert and
+server and repeated every `repeatInterval` (4h) while they fire.
+
+The Alertmanager must select the config and must not scope it to its own
+namespace, because alerts about an `MCPServer` carry that server's namespace.
+With kube-prometheus-stack:
+
+```yaml
+alertmanager:
+  alertmanagerSpec:
+    alertmanagerConfigSelector:
+      matchLabels:
+        alertmanagerConfig: kavrynt   # metrics.notifications.labels
+    alertmanagerConfigMatcherStrategy:
+      type: None
+```
+
+Teams needs Prometheus Operator v0.82 or later (`msteamsv2Configs`, a Teams
+workflow webhook). The configuration is checked with `amtool` in CI
+(`make alerts-test`).
 
 ## High availability
 
@@ -422,6 +465,18 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `metrics.prometheusRule.discoveryFailingFor` | string | `15m` | How long tool discovery of a `Ready` `MCPServer` may fail |
 | `metrics.prometheusRule.cloudSyncStaleSeconds` | int | `600` | Age of the last accepted Cloud snapshot that raises `KavryntCloudSyncStale` |
 | `metrics.prometheusRule.runbookBaseURL` | string | this repository at the release tag | Base of every `runbook_url` |
+| `metrics.notifications.enabled` | bool | `false` | Create the `AlertmanagerConfig` (requires `metrics.prometheusRule.enabled` and a receiver) |
+| `metrics.notifications.labels` | object | `{}` | Labels on the `AlertmanagerConfig`, for `alertmanagerConfigSelector` |
+| `metrics.notifications.groupWait` / `groupInterval` / `repeatInterval` | string | `30s` / `5m` / `4h` | Alertmanager grouping and repeat timing |
+| `metrics.notifications.slack.webhookSecret` | object | `{name: "", key: url}` | Secret key with the Slack webhook URL; a name turns Slack on |
+| `metrics.notifications.slack.channel` | string | `""` | Channel; empty uses the webhook's |
+| `metrics.notifications.email.to` | list | `[]` | Recipients; any turn email on |
+| `metrics.notifications.email.from` / `smarthost` / `authUsername` | string | `""` | SMTP settings; empty uses the Alertmanager's global ones |
+| `metrics.notifications.email.authPasswordSecret` | object | `{name: "", key: password}` | Secret key with the SMTP password |
+| `metrics.notifications.email.requireTLS` | bool | `true` | Require STARTTLS |
+| `metrics.notifications.msteams.webhookSecret` | object | `{name: "", key: url}` | Secret key with the Teams workflow webhook URL |
+| `metrics.notifications.webhook.urlSecret` | object | `{name: "", key: url}` | Secret key with a webhook URL (Alertmanager's JSON payload) |
+| `metrics.notifications.<receiver>.severities` | list | `[critical, warning]` | Severities the receiver gets |
 
 ### Network policies
 

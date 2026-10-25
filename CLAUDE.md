@@ -85,7 +85,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   responses with CSP.
 - Opt-in alerting rules (`metrics.prometheusRule`) for the Gateway, the
   Operator, MCP servers, and their tools (SPEC-0021: tool errors, failing
-  discovery), each with a runbook in `docs/runbooks`; the Operator exports
+  discovery), each with a runbook in `docs/runbooks` and labelled
+  `kavrynt_release`; opt-in notifications (`metrics.notifications`,
+  SPEC-0022) render an `AlertmanagerConfig` for Slack, email, Teams, or a
+  webhook, checked with `amtool`; the Operator exports
   `kavrynt_operator_mcpserver_ready` and
   `kavrynt_operator_mcpserver_tools_discovered` on a metrics Service.
 - Opt-in chart NetworkPolicies (`networkPolicy`) make labelled MCP server
@@ -182,7 +185,7 @@ make spec-check      # specs well formed; Implemented requirements cited by test
 make spec-new NAME=x # scaffold specs/NNNN-x/spec.md
 make helm-plugins    # once: install the pinned helm-unittest plugin
 make helm-unittest   # chart unit tests (charts/kavrynt/tests)
-make alerts-test     # alert rules: runbook per alert, promtool tests (needs Docker)
+make alerts-test     # alert rules: runbook per alert, promtool tests; notifications: amtool (needs Docker)
 make build           # bin/kavryctl, bin/gateway, bin/operator
 make docker-build    # local images tagged $(LOCAL_VERSION)
 make e2e-kind        # disposable Kind cluster, full product loop (scripts/e2e-kind.sh)

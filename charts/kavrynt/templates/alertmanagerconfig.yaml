@@ -1,0 +1,54 @@
+{{- $n := (.Values.metrics | default dict).notifications | default dict }}
+{{- if $n.enabled }}
+{{- if not ((.Values.metrics.prometheusRule | default dict).enabled) }}
+{{- fail "metrics.notifications.enabled requires metrics.prometheusRule.enabled" }}
+{{- end }}
+{{- $receivers := (include "kavrynt.notificationReceivers" . | fromYaml).receivers }}
+{{- if not $receivers }}
+{{- fail "metrics.notifications.enabled needs a receiver: set slack.webhookSecret.name, email.to, msteams.webhookSecret.name, or webhook.urlSecret.name" }}
+{{- end }}
+# Sends this release's alerts (SPEC-0022) to the configured receivers. The
+# Alertmanager must select it with alertmanagerConfigMatcherStrategy type
+# None: alerts about an MCPServer carry that server's namespace.
+apiVersion: monitoring.coreos.com/v1alpha1
+kind: AlertmanagerConfig
+metadata:
+  name: {{ .Release.Name }}-notifications
+  namespace: {{ .Release.Namespace }}
+  labels:
+    app.kubernetes.io/instance: {{ .Release.Name }}
+    app.kubernetes.io/managed-by: {{ .Release.Service }}
+    app.kubernetes.io/part-of: kavrynt
+    {{- with $n.labels }}
+    {{- toYaml . | nindent 4 }}
+    {{- end }}
+spec:
+  route:
+    receiver: kavrynt-none
+    groupBy: [alertname, route, namespace, name]
+    groupWait: {{ $n.groupWait | default "30s" }}
+    groupInterval: {{ $n.groupInterval | default "5m" }}
+    repeatInterval: {{ $n.repeatInterval | default "4h" }}
+    matchers:
+      - name: component
+        matchType: "=~"
+        value: gateway|operator|mcp-server
+      - name: kavrynt_release
+        matchType: "="
+        value: {{ .Release.Name | quote }}
+    routes:
+      {{- range $receivers }}
+      - receiver: {{ .name }}
+        continue: true
+        matchers:
+          - name: severity
+            matchType: "=~"
+            value: {{ join "|" (.severities | default (list "critical" "warning")) | quote }}
+      {{- end }}
+  {{- $configs := list (dict "name" "kavrynt-none") }}
+  {{- range $receivers }}
+  {{- $configs = append $configs (omit . "severities") }}
+  {{- end }}
+  receivers:
+    {{- toYaml $configs | nindent 4 }}
+{{- end }}

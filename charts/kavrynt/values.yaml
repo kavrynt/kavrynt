@@ -85,3 +85,50 @@ metrics:
     # Where runbook_url points; empty uses this repository at the chart's
     # release tag.
     runbookBaseURL: ""
+  # Notifications for the alerts above (SPEC-0022): an AlertmanagerConfig
+  # that sends this release's alerts to Slack, email, Microsoft Teams, or a
+  # webhook. Requires prometheusRule.enabled, the Prometheus Operator's
+  # AlertmanagerConfig CRD (v0.82 or later for Teams), and an Alertmanager
+  # that selects the config with alertmanagerConfigMatcherStrategy type None:
+  # alerts about an MCPServer carry its namespace, not this release's.
+  # Secrets are referenced by name and key in the release namespace; values
+  # never hold a URL or password.
+  notifications:
+    enabled: false
+    # Labels on the AlertmanagerConfig, for alertmanagerConfigSelector.
+    labels: {}
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    # Each receiver below is on once its Secret name (email: to) is set, and
+    # gets the alerts whose severity is in its severities.
+    slack:
+      webhookSecret:
+        name: ""
+        key: url
+      # Empty uses the webhook's own channel.
+      channel: ""
+      severities: [critical, warning]
+    email:
+      to: []
+      # Empty from and smarthost use the Alertmanager's global SMTP settings.
+      from: ""
+      smarthost: ""
+      authUsername: ""
+      authPasswordSecret:
+        name: ""
+        key: password
+      requireTLS: true
+      severities: [critical, warning]
+    msteams:
+      webhookSecret:
+        name: ""
+        key: url
+      severities: [critical, warning]
+    # Alertmanager's JSON webhook payload, for example to a PagerDuty or
+    # incident tool bridge.
+    webhook:
+      urlSecret:
+        name: ""
+        key: url
+      severities: [critical, warning]
