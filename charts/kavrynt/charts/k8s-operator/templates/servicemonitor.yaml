@@ -17,4 +17,8 @@ spec:
     - port: metrics
       path: /metrics
       interval: {{ .Values.metrics.serviceMonitor.interval }}
+      # The MCPServer metrics carry the server's own namespace and name
+      # labels; without this Prometheus renames them exported_namespace and
+      # sets namespace to the Operator's.
+      honorLabels: true
 {{- end }}
