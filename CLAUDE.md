@@ -91,6 +91,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   webhook, checked with `amtool`; the Operator exports
   `kavrynt_operator_mcpserver_ready` and
   `kavrynt_operator_mcpserver_tools_discovered` on a metrics Service.
+- Opt-in Grafana dashboards (`gateway.metrics.dashboard`, SPEC-0023): MCP
+  traffic, one MCP server, and the team's own from `extra`, all checked by
+  `test/dashboards` against the exported metrics and the metrics reference
+  in the component docs.
 - Opt-in chart NetworkPolicies (`networkPolicy`) make labelled MCP server
   pods reachable only from the Gateway and the Operator, and can limit who
   calls the Gateway.

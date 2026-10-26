@@ -396,6 +396,16 @@
             },
             "labels": {
               "$ref": "#/definitions/stringMap"
+            },
+            "extra": {
+              "type": "object",
+              "description": "Custom dashboards by file name (SPEC-0023-R02).",
+              "propertyNames": {
+                "pattern": "^[a-z0-9][a-z0-9-]{0,40}\\.json$"
+              },
+              "additionalProperties": {
+                "type": ["string", "object"]
+              }
             }
           }
         }

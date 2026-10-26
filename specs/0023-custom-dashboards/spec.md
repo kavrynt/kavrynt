@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -29,8 +29,8 @@ release, and there is no list of the metrics and labels they can use.
 
 ## Non-goals
 
-- A dashboard builder inside the console. Grafana does this well; the console
-  stays a fixed operational UI (decision below, open for review).
+- A dashboard builder or saved views inside the console. Grafana does this
+  well; the console stays a fixed operational UI (see Decisions).
 - Dashboards for other Prometheus-compatible UIs.
 
 ## Requirements
@@ -40,8 +40,10 @@ release, and there is no list of the metrics and labels they can use.
   discovery status, request rate, error rate by outcome, p50 and p95 latency
   by tool, top failing tools, and bytes.
 - **SPEC-0023-R02** `gateway.metrics.dashboard.extra` MUST accept a map of
-  file name to dashboard JSON, rendered as additional ConfigMaps with the
-  same sidecar labels, so custom dashboards are released with the chart.
+  file name (`<name>.json`) to dashboard JSON (a string, for example from
+  `--set-file`, or an object), rendered as one additional ConfigMap per
+  entry with the same sidecar labels, so custom dashboards are released
+  with the chart. A value that is not valid JSON MUST fail the install.
 - **SPEC-0023-R03** Every shipped dashboard MUST use only metrics the runtime
   exports, with a `datasource` variable, and a test MUST fail when a
   dashboard query names a metric that does not exist.
@@ -66,13 +68,17 @@ arguments, results, or identities.
 
 ## Compatibility
 
-New values and ConfigMaps; existing dashboard unchanged.
+New values and ConfigMaps; existing dashboard unchanged. The server
+dashboard reads the Operator's `namespace` and `name` labels, which needs
+the Operator's ServiceMonitor to keep them (`honorLabels`, a fix shipped
+with this work).
 
 ## Documentation
 
 Metrics reference in component docs, chart README (dashboards).
 
-## Open questions
+## Decisions
 
-- Do you want saved views in the console instead of, or as well as, Grafana
-  (filters and pinned servers saved per user)? This spec assumes Grafana only.
+- Grafana only. Saved views in the console (filters and pinned servers per
+  user) would need per-user storage in the Gateway; they can be proposed
+  separately.

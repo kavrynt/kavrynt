@@ -144,14 +144,19 @@ metrics:
     enabled: false
     interval: 30s
     labels: {}
-  # ConfigMap with the "Kavrynt MCP Traffic" Grafana dashboard, picked up by
-  # the Grafana dashboard sidecar through the labels below.
+  # ConfigMap with the "Kavrynt MCP Traffic" and "Kavrynt MCP Server" Grafana
+  # dashboards, picked up by the Grafana dashboard sidecar through the labels
+  # below.
   dashboard:
     enabled: false
     # Namespace the sidecar watches; empty uses the release namespace.
     namespace: ""
     labels:
       grafana_dashboard: "1"
+    # Your own dashboards, released with the chart: file name (<name>.json)
+    # to dashboard JSON, as a string (--set-file) or an object. Each becomes
+    # a ConfigMap with the labels above.
+    extra: {}
 
 podSecurityContext:
   runAsNonRoot: true

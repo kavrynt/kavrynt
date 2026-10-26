@@ -496,9 +496,56 @@ tool arguments, and results are never recorded.
 The chart adds `prometheus.io/*` scrape annotations by default
 (`gateway.metrics.scrapeAnnotations`). Optional: a Prometheus Operator
 `ServiceMonitor` (`gateway.metrics.serviceMonitor.enabled`), the
-"Kavrynt MCP Traffic" Grafana dashboard as a sidecar-labelled ConfigMap
-(`gateway.metrics.dashboard.enabled`), and alerting rules with runbooks
-(`metrics.prometheusRule.enabled`; see [docs/runbooks](../../runbooks/README.md)).
+"Kavrynt MCP Traffic" and "Kavrynt MCP Server" Grafana dashboards and your
+own as sidecar-labelled ConfigMaps (`gateway.metrics.dashboard.*`), and
+alerting rules with runbooks (`metrics.prometheusRule.enabled`; see
+[docs/runbooks](../../runbooks/README.md)).
+
+## Metrics reference
+
+Every metric the Gateway exports on `/metrics`, besides the Go runtime
+(`go_*`) and process (`process_*`) metrics. Labels are bounded: no metric
+carries a caller identity, tool arguments, or results. The Operator's metrics
+are in the [Operator reference](../operator/README.md#metrics-reference).
+
+| Metric | Type | Labels and bounds |
+| --- | --- | --- |
+| `kavrynt_gateway_mcp_requests_total` | counter | `route` (one per routed `MCPServer`, `<namespace>.<name>`), `method` (50 per route, then `other`), `tool` (200 per route, then `other`; `none`, `invalid`), `outcome` (the list above) |
+| `kavrynt_gateway_mcp_request_duration_seconds` | histogram | as `kavrynt_gateway_mcp_requests_total`; buckets 5 ms to 30 s |
+| `kavrynt_gateway_mcp_bytes_total` | counter | `route`, `direction` (`in`, `out`) |
+| `kavrynt_gateway_requests_total` | counter | none; every HTTP request the Gateway received |
+| `kavrynt_gateway_proxied_requests_total` | counter | none; requests proxied to an MCP server to completion |
+| `kavrynt_gateway_stripped_credential_requests_total` | counter | none; proxied requests whose `Authorization`, `Cookie`, or `Proxy-Authorization` was removed |
+| `kavrynt_gateway_routes` | gauge | none; routes served now |
+| `kavrynt_gateway_route_sync_success_total` | counter | none |
+| `kavrynt_gateway_route_sync_failure_total` | counter | none |
+| `kavrynt_gateway_audit_events_total` | counter | none; with audit on |
+| `kavrynt_gateway_audit_overflow_total` | counter | `action` (`reject`, `drop`); with audit on |
+| `kavrynt_gateway_audit_queue_length` | gauge | none; with audit on |
+| `kavrynt_gateway_policy_decisions_total` | counter | `result` (`allow`, `deny`, `error`); with a policy |
+| `kavrynt_gateway_policy_load_failures_total` | counter | none; with a policy |
+| `kavrynt_gateway_policy_info` | gauge | `revision` (the active policy only, value 1); with a policy |
+| `kavrynt_gateway_policy_filtered_tools_total` | counter | `route`; with a policy |
+
+Each Gateway replica exports its own series; sum over `instance` for the
+whole Gateway. Example PromQL for custom panels:
+
+```promql
+# Error rate per MCP server
+sum by (route) (rate(kavrynt_gateway_mcp_requests_total{outcome!="ok"}[5m]))
+  / sum by (route) (rate(kavrynt_gateway_mcp_requests_total[5m]))
+
+# p95 latency per tool of one server
+histogram_quantile(0.95, sum by (tool, le) (rate(
+  kavrynt_gateway_mcp_request_duration_seconds_bucket{route="team-a.search", method="tools/call"}[5m])))
+
+# Tool calls per minute, by tool
+sum by (route, tool) (rate(kavrynt_gateway_mcp_requests_total{method="tools/call"}[5m])) * 60
+```
+
+Calls per client are not in metrics, which carry no identity. Count them
+from the audit events (`gateway.audit`), for example in your log pipeline
+grouped by `client_id` or `subject`.
 
 ## Flags
 

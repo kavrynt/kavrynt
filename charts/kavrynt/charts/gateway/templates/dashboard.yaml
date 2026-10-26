@@ -1,5 +1,5 @@
 {{- if .Values.metrics.dashboard.enabled }}
-# Grafana dashboard for MCP traffic. The Grafana dashboard sidecar (for
+# Grafana dashboards for MCP traffic. The Grafana dashboard sidecar (for
 # example kube-prometheus-stack) loads ConfigMaps carrying the configured label.
 apiVersion: v1
 kind: ConfigMap
@@ -14,4 +14,31 @@ metadata:
 data:
   kavrynt-mcp-traffic.json: |-
 {{ .Files.Get "dashboards/mcp-traffic.json" | indent 4 }}
+  kavrynt-mcp-server.json: |-
+{{ .Files.Get "dashboards/mcp-server.json" | indent 4 }}
+{{- /* Custom dashboards (SPEC-0023-R02), one ConfigMap each. */}}
+{{- range $file, $dashboard := .Values.metrics.dashboard.extra }}
+{{- $json := $dashboard }}
+{{- if kindIs "string" $dashboard }}
+{{- $parsed := fromJson $dashboard }}
+{{- if or (not $parsed) (hasKey $parsed "Error") }}
+{{- fail (printf "gateway.metrics.dashboard.extra.%s is not a JSON dashboard" $file) }}
+{{- end }}
+{{- $json = $parsed }}
+{{- end }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ include "gateway.fullname" $ }}-dashboard-{{ trimSuffix ".json" $file }}
+  {{- with $.Values.metrics.dashboard.namespace }}
+  namespace: {{ . }}
+  {{- end }}
+  labels:
+    {{- include "gateway.labels" $ | nindent 4 }}
+    {{- toYaml $.Values.metrics.dashboard.labels | nindent 4 }}
+data:
+  {{ $file }}: |-
+{{ toPrettyJson $json | indent 4 }}
+{{- end }}
 {{- end }}
