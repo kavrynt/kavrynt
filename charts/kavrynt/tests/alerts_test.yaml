@@ -120,11 +120,13 @@ tests:
       - equal:
           path: spec.groups[0].rules[0].labels
           value:
+            kavrynt_release: kavrynt
             severity: critical
             component: gateway
       - equal:
           path: spec.groups[0].rules[2].labels
           value:
+            kavrynt_release: kavrynt
             severity: warning
             component: mcp-server
       - equal:
@@ -172,6 +174,7 @@ tests:
       - equal:
           path: spec.groups[1].rules[0].labels
           value:
+            kavrynt_release: kavrynt
             severity: critical
             component: operator
             team: platform
@@ -209,6 +212,7 @@ tests:
       - equal:
           path: spec.groups[0].rules[4].labels
           value:
+            kavrynt_release: kavrynt
             severity: warning
             component: mcp-server
       - equal:
@@ -226,6 +230,7 @@ tests:
       - equal:
           path: spec.groups[1].rules[2].labels
           value:
+            kavrynt_release: kavrynt
             severity: warning
             component: mcp-server
       - equal:

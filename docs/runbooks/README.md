@@ -5,6 +5,8 @@ One runbook per alert in the chart's PrometheusRule
 [SPEC-0021](../../specs/0021-tool-and-discovery-alerts/spec.md)).
 Every alert's `runbook_url` points here at the chart's release tag, and
 `scripts/test-alerts.sh` fails when an alert and its runbook do not match.
+With `metrics.notifications` ([SPEC-0022](../../specs/0022-alert-notifications/spec.md))
+every Slack, email, and Teams message links its alert's runbook here.
 
 | Alert | Severity | Component |
 | --- | --- | --- |

@@ -1,0 +1,1 @@
+[{{ .Status | toUpper }}{{ if eq .Status "firing" }}:{{ .Alerts.Firing | len }}{{ end }}] {{ .GroupLabels.alertname }}{{ with .GroupLabels.route }} on {{ . }}{{ end }}{{ if .GroupLabels.name }} on {{ .GroupLabels.namespace }}/{{ .GroupLabels.name }}{{ end }}

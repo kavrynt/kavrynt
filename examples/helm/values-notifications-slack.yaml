@@ -1,0 +1,32 @@
+# Kavrynt alerts in a Slack channel (SPEC-0022). Create the webhook Secret in
+# the release namespace first:
+#
+#   kubectl -n kavrynt-system create secret generic kavrynt-alerts-slack \
+#     --from-literal=url=https://hooks.slack.com/services/...
+#
+# The Alertmanager must select AlertmanagerConfigs with the label below and
+# use alertmanagerConfigMatcherStrategy type None (chart README,
+# "Notifications"). Combine with your install values:
+#
+#   helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt ... \
+#     --values examples/helm/values-notifications-slack.yaml
+gateway:
+  metrics:
+    serviceMonitor:
+      enabled: true
+operator:
+  metrics:
+    serviceMonitor:
+      enabled: true
+metrics:
+  prometheusRule:
+    enabled: true
+  notifications:
+    enabled: true
+    labels:
+      alertmanagerConfig: kavrynt
+    slack:
+      webhookSecret:
+        name: kavrynt-alerts-slack
+        key: url
+      channel: "#mcp-alerts"
