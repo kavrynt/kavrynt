@@ -359,7 +359,8 @@ PodDisruptionBudget and soft spread across nodes and zones.
 `examples/helm/values-production.yaml` is the tested profile.
 
 Per replica, by design: recent traffic (`/v1/traffic`, which names the
-replica in `instance`) and the console login limiter (five failed logins a
+replica in `instance`), the traffic conditions of the console alerts
+(`/v1/alerts`), and the console login limiter (five failed logins a
 minute per client address, per replica). Use `/metrics` in Prometheus for the
 cluster-wide view.
 
@@ -374,6 +375,7 @@ cluster-wide view.
 | `GET /v1/routes` | Current route table: name, version, transport, and the endpoint without credentials, query, or fragment (no endpoint while MCP client authentication is on) |
 | `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, the `serverInfo` it reported, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
 | `GET /v1/traffic` | `instance` (this replica's name) and `requests`: the last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
+| `GET /v1/alerts` | `instance`, `evaluatedAt`, and `alerts`: the [console alerts](#console-alerts) that are active, then those resolved in the last hour: `name`, `severity`, `scope` (`route`, optional `tool`), `summary`, `since`, `resolvedAt`, `runbookURL`. Needs a console session when console login is on |
 | `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`) and `mcpAuth`, sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
 | `GET /.well-known/oauth-protected-resource/mcp/<route>` | Protected Resource Metadata of a route (RFC 9728), only with MCP client authentication |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
@@ -383,15 +385,15 @@ cluster-wide view.
 
 A read-only web console served by the Gateway itself, enabled by default
 (chart: `console.enabled`). It needs no extra RBAC and no external assets;
-everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
-`/version`.
+everything it shows comes from `/v1/servers`, `/v1/traffic`, `/v1/alerts`,
+`/readyz`, and `/version`.
 
 - **Overview** (the landing page): Gateway readiness and version, counts of
   servers, routed servers, and tools, and recent request volume, error rate,
   and p95 latency. **Needs attention** lists servers that are not routed,
   whose tool discovery failed, or whose recent requests mostly fail (at
-  least half of at least five), with the reason. **Failing tools** lists the
-  five tools with the most failed calls.
+  least half of at least five), with the reason, and links to the Alerts
+  page. **Failing tools** lists the five tools with the most failed calls.
 - **Servers**: every `MCPServer` with its health, recent request count and
   error rate, declared and reported version (marked when they differ),
   conditions, and discovered tools with input schemas. A connect
@@ -409,6 +411,10 @@ everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
   route, method, tool, and outcome, with per-tool calls, error rate, and
   p50/p95 latency, 100 rows at a time. **What do the outcomes mean?**
   explains each outcome (see below).
+- **Alerts**: the [console alerts](#console-alerts) that are active, critical
+  before warning and oldest first, then those resolved in the last hour,
+  each with when it started, a link to its server or tool, and its runbook.
+  The navigation shows the number of active alerts on every page.
 
 Filters are part of the URL, so a filtered view can be shared as a link.
 Polling stops while the browser tab is hidden. Traffic covers only the
@@ -420,6 +426,32 @@ kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 # open http://localhost:18080/ui/ and sign in as admin with:
 kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
+
+### Console alerts
+
+The Gateway evaluates five conditions every 15 seconds, with the same
+thresholds as the chart's Prometheus alerts, so teams without Prometheus see
+the same problems. The umbrella chart writes the thresholds from
+`metrics.prometheusRule` into the ConfigMap `<release>-console-alerts`, which
+the Gateway mounts and rereads when it changes (`--alerts-config`), whether
+or not the rules are installed.
+
+| Condition | Holds when | For | Runbook |
+| --- | --- | --- | --- |
+| `ServerNotReady` | The `MCPServer`'s `Ready` is not `True` | `notReadyFor` (10m) | `KavryntMCPServerNotReady` |
+| `DiscoveryFailing` | A `Ready` server's `ToolsDiscovered` is `False` with `DiscoveryFailed` or `CredentialUnavailable` | `discoveryFailingFor` (15m) | `KavryntMCPToolDiscoveryFailing` |
+| `UpstreamErrors` | Over `errorRatio` (5%) of a route's calls in the last 10 minutes ended in `upstream_error`, `upstream_unreachable`, or `timeout` | 5m | `KavryntMCPUpstreamErrorsHigh` |
+| `ToolErrors` | Over `toolErrorRatio` (20%) of a tool's `tools/call` requests in the last 10 minutes ended in `tool_error` or `rpc_error` | 10m | `KavryntMCPToolErrorsHigh` |
+| `SlowRoute` | A route's p95 latency in the last 10 minutes is over `latencyP95Seconds` (5s) | 15m | `KavryntMCPLatencyHigh` |
+
+Route conditions need `minRequestsPerSecond` (0.05, 30 calls in 10 minutes),
+tool conditions `minToolRequestsPerSecond` (0.02, 12 calls). Unlike
+`KavryntMCPLatencyHigh`, `SlowRoute` also needs that minimum. All are
+`warning`. Status conditions start at their condition's
+`lastTransitionTime`, so every replica reports them alike. Traffic
+conditions count this replica's own calls; Prometheus sums every replica.
+Resolved alerts are kept for an hour in memory; alerts about a deleted
+`MCPServer` are removed. They carry route and tool names and counts only.
 
 ### Console login
 
@@ -557,7 +589,7 @@ grouped by `client_id` or `subject`.
 | `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers |
 | `--allowed-origins` | none (chart: `config.allowedOrigins`) | Comma-separated browser origins accepted besides loopback (`KAVRYNT_ALLOWED_ORIGINS`) |
 | `--console` | `true` (chart: `console.enabled`) | Serve the web console at `/ui/` |
-| `--console-auth` | `true` (chart: `console.auth.enabled`) | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic` (with `--console`). MCP routes are not affected |
+| `--console-auth` | `true` (chart: `console.auth.enabled`) | Require the console admin login for the console, `/v1/servers`, `/v1/traffic`, and `/v1/alerts` (with `--console`). MCP routes are not affected |
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
@@ -574,7 +606,8 @@ grouped by `client_id` or `subject`.
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
 | `--strict-protocol` | `true` (chart: `config.strictProtocol`) | Refuse requests that are not well-formed MCP Streamable HTTP; `false` forwards them |
-| `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |
+| `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` and `/v1/alerts` |
+| `--alerts-config` | none: the defaults (chart: the mounted `<release>-console-alerts`) | JSON file with the console alert thresholds, reread when it changes (`KAVRYNT_ALERTS_CONFIG`) |
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`
 when run locally). The chart grants only `get`, `list`, `watch` on

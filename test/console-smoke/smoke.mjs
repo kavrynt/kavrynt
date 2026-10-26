@@ -144,10 +144,26 @@ await check("traffic shows 100 rows and offers the rest", async (page) => {
   assert.ok((await rows.count()) > 100, "Show all did not show the remaining requests");
 });
 
+// Verifies SPEC-0020-R06 and SPEC-0020-R07: the Alerts page renders its
+// sections, the navigation links it from every page, and the Overview links
+// to it.
+await check("alerts: page, navigation, and overview link", async (page) => {
+  await signIn(page);
+  await page.waitForSelector("a[data-nav='alerts']");
+  await page.click("a:has-text('Alerts →'), a:has-text('active alert')");
+  await page.waitForSelector("h1:text('Alerts')");
+  await page.waitForSelector("h2:text('Active')");
+  await page.waitForSelector("h2:text('Resolved in the last hour')");
+  for (const hash of ["#/servers", "#/traffic"]) {
+    await page.goto(base + "/ui/" + hash);
+    assert.equal(await page.isVisible("a[data-nav='alerts']"), true, hash + ": no Alerts navigation item");
+  }
+});
+
 // Verifies SPEC-0002-R15.
 await check("keyboard: every control is named, reachable, and visibly focused", async (page) => {
   await signIn(page);
-  for (const hash of ["#/overview", "#/servers", "#/tools", "#/traffic", "#/servers/" + route, "#/playground/" + route + "/" + tool]) {
+  for (const hash of ["#/overview", "#/servers", "#/tools", "#/traffic", "#/alerts", "#/servers/" + route, "#/playground/" + route + "/" + tool]) {
     await page.goto(base + "/ui/" + hash);
     await page.waitForTimeout(1200);
     const unnamed = await page.evaluate(() => [...document.querySelectorAll("a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])")]
@@ -183,7 +199,7 @@ await check("every view fits 360 px without page scrolling", async (page) => {
   await page.waitForSelector("form.login");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0, "login");
   await signIn(page);
-  for (const hash of ["#/overview", "#/servers", "#/tools", "#/traffic", "#/servers/" + route, "#/servers/" + route + "/traffic", "#/playground/" + route + "/" + tool]) {
+  for (const hash of ["#/overview", "#/servers", "#/tools", "#/traffic", "#/alerts", "#/servers/" + route, "#/servers/" + route + "/traffic", "#/playground/" + route + "/" + tool]) {
     await page.goto(base + "/ui/" + hash);
     await page.waitForTimeout(1200);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

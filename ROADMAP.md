@@ -17,7 +17,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   from the previous release on every change.
 - Alerting rules for the Gateway, the Operator, MCP servers, and their tools
   (calls that keep failing, tools the Operator cannot discover), each with a
-  runbook, tested with `promtool`.
+  runbook, tested with `promtool`, and the same MCP conditions on the
+  console's Alerts page without Prometheus.
 - A high-availability profile (several Gateway replicas with graceful drain,
   a standby Operator), tested with a rolling restart under load.
 - Static upstream credentials for MCP servers that need an API key, from a

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -44,16 +44,23 @@ the console what is wrong, since when, and how to fix it.
 
 - **SPEC-0020-R01** The Gateway MUST evaluate, at least every 30 seconds:
   `ServerNotReady` (an `MCPServer`'s `Ready` is not `True`), `DiscoveryFailing`
-  (`ToolsDiscovered` is `False` with a failure reason), `UpstreamErrors` (over
-  `errorRatio`, default 5%, of a route's calls in the last 10 minutes ended in
-  `upstream_error`, `upstream_unreachable`, or `timeout`, with at least 20
-  calls), `ToolErrors` (over `toolErrorRatio`, default 20%, of a tool's calls in
-  the last 10 minutes ended in `tool_error` or `rpc_error`, with at least 10
-  calls), and `SlowRoute` (p95 latency of a route over `latencyP95Seconds`,
-  default 5, in the last 10 minutes, with at least 20 calls).
+  (a `Ready` server's `ToolsDiscovered` is `False` with `DiscoveryFailed` or
+  `CredentialUnavailable`), `UpstreamErrors` (over `errorRatio`, default 5%,
+  of a route's calls in the last 10 minutes ended in `upstream_error`,
+  `upstream_unreachable`, or `timeout`), `ToolErrors` (over
+  `toolErrorRatio`, default 20%, of a tool's `tools/call` requests in the
+  last 10 minutes ended in `tool_error` or `rpc_error`), and `SlowRoute` (p95
+  latency of a route over `latencyP95Seconds`, default 5, in the last 10
+  minutes, from the same latency buckets as the Gateway's histogram).
+  Traffic conditions need at least `minRequestsPerSecond` (routes, default
+  0.05: 30 calls) or `minToolRequestsPerSecond` (tools, default 0.02: 12
+  calls) over the 10 minutes.
 - **SPEC-0020-R02** A condition MUST become active only after it has held for
-  its `for` duration (default 5 minutes; `ServerNotReady` 10 minutes), and MUST
-  resolve when it no longer holds.
+  the `for` duration of the matching Prometheus alert (`UpstreamErrors` 5
+  minutes, `ToolErrors` 10, `SlowRoute` 15, `ServerNotReady` `notReadyFor`,
+  `DiscoveryFailing` `discoveryFailingFor`), and MUST resolve when it no
+  longer holds. Status conditions start when their condition last changed
+  (`lastTransitionTime`).
 - **SPEC-0020-R03** Thresholds and durations MUST be Helm values shared with
   the Prometheus rules (`metrics.prometheusRule.*`), so both use the same
   numbers.
@@ -68,7 +75,9 @@ the console what is wrong, since when, and how to fix it.
   resolved in the last hour: name, severity, scope (`route`, optional
   `tool`), summary, `since`, `resolvedAt`, and `runbookURL`, behind the
   console login like `/v1/servers`. It MUST NOT contain tool arguments,
-  results, or credentials.
+  results, or credentials. The answer names the replica that evaluated it
+  (`instance`). An alert about a deleted `MCPServer` is removed, not
+  resolved.
 - **SPEC-0020-R06** The console MUST show an Alerts page listing active
   alerts first (critical before warning, then oldest first), then recently
   resolved ones, each with a link to the server or tool and to its runbook.
@@ -87,9 +96,9 @@ the console what is wrong, since when, and how to fix it.
 
 ## Acceptance criteria
 
-- Given a server whose tool fails 30% of 50 calls in 10 minutes, when 5
-  minutes pass, then the Alerts page shows `ToolErrors` for that tool with the
-  time it started and a runbook link (R01, R02, R06).
+- Given a server whose tool keeps failing 30% of its calls, when 10 minutes
+  pass, then the Alerts page shows `ToolErrors` for that tool with the time
+  it started and a runbook link (R01, R02, R06).
 - Given the failures stop, then the alert moves to "resolved" (R02, R05).
 - Given 3 active alerts, then the navigation shows 3 on every page (R07).
 
@@ -104,11 +113,17 @@ New endpoint, console page, and values (shared with SPEC-0010). Additive.
 
 ## Documentation
 
-Gateway component doc (alerts, endpoint), console section, runbooks for the
-new conditions, chart README.
+Gateway component doc (alerts, endpoint), console section, the runbooks
+README (which conditions link each runbook), chart README.
 
-## Open questions
+## Decisions
 
-- Should alerts be evaluated cluster-wide (one Gateway replica as leader, or
-  the Operator) instead of per replica for traffic conditions?
-- Should resolved alerts be kept longer than an hour?
+- Traffic conditions are evaluated per replica, as R04 says. Cluster-wide
+  evaluation would need leader election or shared state in the Gateway;
+  Prometheus alerts (SPEC-0010) already see every replica.
+- Resolved alerts are kept for an hour, in memory. Longer history belongs in
+  Alertmanager (SPEC-0022).
+- Each condition links the runbook of its Prometheus alert
+  (`KavryntMCPServerNotReady`, `KavryntMCPToolDiscoveryFailing`,
+  `KavryntMCPUpstreamErrorsHigh`, `KavryntMCPToolErrorsHigh`,
+  `KavryntMCPLatencyHigh`), so no new runbooks are needed.

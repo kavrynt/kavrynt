@@ -44,7 +44,9 @@ once on the top of a stack of branches rather than on each one.
    answers `/v1/servers` and `/v1/traffic` with `401` until it signs in with
    the generated console admin password, serves the console, lists the
    server and its tools at `/v1/servers`, records the tool call at
-   `/v1/traffic` without its arguments, runs the console browser smoke test
+   `/v1/traffic` without its arguments, lists an unreachable `MCPServer` as
+   `DiscoveryFailing` at `/v1/alerts` (with `discoveryFailingFor=30s`) until
+   it is deleted, runs the console browser smoke test
    (`test/console-smoke`, when installed; always in CI), and refuses
    an `MCPServer` whose endpoint is `169.254.169.254` (`502`, and
    `DiscoveryFailed` in the Operator).

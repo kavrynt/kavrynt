@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
+	"github.com/kavrynt/kavrynt/internal/gateway/alerts"
 	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
@@ -87,8 +88,12 @@ type Handler struct {
 	proxied          atomic.Uint64
 	strippedRequests atomic.Uint64
 
-	traffic        *trafficMetrics
-	recent         *recentTraffic
+	traffic *trafficMetrics
+	recent  *recentTraffic
+	// alertWindow holds the last ten minutes of calls for the console
+	// alerts, which alerts evaluates (SPEC-0020).
+	alertWindow    *alerts.Window
+	alerts         *alerts.Evaluator
 	registry       *prometheus.Registry
 	metricsHandler http.Handler
 
@@ -126,6 +131,7 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		requestTimeout: DefaultRequestTimeout,
 		strictProtocol: true,
 		recent:         newRecentTraffic(recentTrafficSize),
+		alertWindow:    alerts.NewWindow(durationBuckets),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
 	registry := h.newRegistry()
@@ -230,6 +236,14 @@ func (h *Handler) EnableAudit(w *audit.Writer) {
 	h.registry.MustRegister(w.Collectors()...)
 }
 
+// EnableAlerts evaluates the console alerts over this replica's calls with
+// the thresholds config returns, and serves them at /v1/alerts (SPEC-0020).
+// The caller runs the returned evaluator.
+func (h *Handler) EnableAlerts(config func() alerts.Config) *alerts.Evaluator {
+	h.alerts = alerts.NewEvaluator(h.alertWindow, config)
+	return h.alerts
+}
+
 // EnableConsole serves console under /ui/ and redirects / to it. The console
 // receives paths without the /ui prefix.
 func (h *Handler) EnableConsole(console http.Handler) {
@@ -272,6 +286,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/traffic":
 		if h.authorized(w, r) {
 			h.listTraffic(w, r)
+		}
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/alerts":
+		if h.authorized(w, r) {
+			h.listAlerts(w, r)
 		}
 	case r.URL.Path == "/v1/session":
 		h.session(w, r)
@@ -414,6 +432,26 @@ func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
 		Instance string          `json:"instance"`
 		Requests []TrafficRecord `json:"requests"`
 	}{h.instance, h.recent.list()})
+}
+
+// alertsView is the answer of /v1/alerts (SPEC-0020-R05).
+type alertsView struct {
+	// Instance is the replica whose calls the traffic alerts count.
+	Instance    string         `json:"instance"`
+	EvaluatedAt *time.Time     `json:"evaluatedAt,omitempty"`
+	Alerts      []alerts.Alert `json:"alerts"`
+}
+
+func (h *Handler) listAlerts(w http.ResponseWriter, _ *http.Request) {
+	view := alertsView{Instance: h.instance, Alerts: []alerts.Alert{}}
+	if h.alerts != nil {
+		list, evaluated := h.alerts.List()
+		view.Alerts = list
+		if !evaluated.IsZero() {
+			view.EvaluatedAt = &evaluated
+		}
+	}
+	writeJSON(w, http.StatusOK, view)
 }
 
 // originAllowed accepts requests without an Origin header, loopback origins
@@ -806,8 +844,9 @@ func writeRefusal(w http.ResponseWriter, refusal *clientauth.Refusal) {
 
 // observe records a proxied request in the metrics and the recent traffic.
 func (h *Handler) observe(route string, call mcpCall, outcome string, status int, elapsed time.Duration, bytesIn, bytesOut int64) {
-	h.traffic.observe(route, call, outcome, elapsed, bytesIn, bytesOut)
+	method, tool := h.traffic.observe(route, call, outcome, elapsed, bytesIn, bytesOut)
 	h.recent.add(route, call, outcome, status, elapsed, bytesIn, bytesOut)
+	h.alertWindow.Record(time.Now(), route, method, tool, outcome, elapsed)
 }
 
 func parseMCPPath(path string) (string, string, bool) {

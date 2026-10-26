@@ -369,6 +369,10 @@ type trafficMetrics struct {
 	tools    *labelLimiter
 }
 
+// durationBuckets are the latency buckets of the duration histogram, and of
+// the console alerts' latency (SPEC-0020-R01).
+var durationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
+
 func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 	labels := []string{"route", "method", "tool", "outcome"}
 	m := &trafficMetrics{
@@ -379,7 +383,7 @@ func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "kavrynt_gateway_mcp_request_duration_seconds",
 			Help:    "Time from receiving an MCP request to the end of the upstream response.",
-			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+			Buckets: durationBuckets,
 		}, labels),
 		bytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kavrynt_gateway_mcp_bytes_total",
@@ -392,13 +396,15 @@ func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 	return m
 }
 
-func (m *trafficMetrics) observe(route string, call mcpCall, outcome string, elapsed time.Duration, bytesIn, bytesOut int64) {
+// observe records a request and returns its bounded method and tool labels.
+func (m *trafficMetrics) observe(route string, call mcpCall, outcome string, elapsed time.Duration, bytesIn, bytesOut int64) (string, string) {
 	method := m.methods.admit(route, sanitizeLabel(call.method, maxMethodLength))
 	tool := m.tools.admit(route, sanitizeLabel(call.tool, maxToolLength))
 	m.requests.WithLabelValues(route, method, tool, outcome).Inc()
 	m.duration.WithLabelValues(route, method, tool, outcome).Observe(elapsed.Seconds())
 	m.bytes.WithLabelValues(route, "in").Add(float64(bytesIn))
 	m.bytes.WithLabelValues(route, "out").Add(float64(bytesOut))
+	return method, tool
 }
 
 // newRegistry returns a registry with the Gateway's operational metrics, Go

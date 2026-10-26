@@ -115,6 +115,7 @@ spec:
             {{- else }}
             - --console-auth=false
             {{- end }}
+            - --alerts-config=/etc/kavrynt/alerts/config.json
           env:
             # Names this replica in /v1/traffic (SPEC-0008-R06).
             - name: KAVRYNT_INSTANCE
@@ -136,10 +137,12 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
-          # The kubelet mounts these Secrets; the Gateway's service account has
-          # no RBAC on Secrets.
+          # The kubelet mounts these Secrets and ConfigMaps; the Gateway's
+          # service account has no RBAC on either.
           volumeMounts:
+            - name: console-alerts
+              mountPath: /etc/kavrynt/alerts
+              readOnly: true
             {{- if include "gateway.consoleAuthEnabled" . }}
             - name: console-auth
               mountPath: /etc/kavrynt/console-auth
@@ -160,9 +163,14 @@ spec:
               mountPath: /etc/kavrynt/token-exchange
               readOnly: true
             {{- end }}
-          {{- end }}
-      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
       volumes:
+        # Console alert thresholds, which the umbrella chart writes from
+        # metrics.prometheusRule (SPEC-0020-R03). Optional: without it the
+        # Gateway uses the defaults.
+        - name: console-alerts
+          configMap:
+            name: {{ .Release.Name }}-console-alerts
+            optional: true
         {{- if include "gateway.consoleAuthEnabled" . }}
         - name: console-auth
           secret:
@@ -195,7 +203,6 @@ spec:
             secretName: {{ $exchange | quote }}
             defaultMode: 0444
         {{- end }}
-      {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

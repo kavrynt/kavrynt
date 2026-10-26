@@ -296,6 +296,7 @@ helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --create-namespace \
   --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
   --set gateway.auth.enabled=false \
+  --set metrics.prometheusRule.discoveryFailingFor=30s \
   --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials \
   --set networkPolicy.mcpServers.enabled=true \
   --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
@@ -516,6 +517,41 @@ TRAFFIC_INSTANCE="$(printf '%s' "${TRAFFIC}" | jq -r '.instance')"
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get pod "${TRAFFIC_INSTANCE}" \
   --output jsonpath='{.metadata.labels.app\.kubernetes\.io/name}' 2>/dev/null | grep --fixed-strings --quiet gateway ||
   fail "/v1/traffic instance '${TRAFFIC_INSTANCE}' is not a Gateway pod"
+
+# Verifies SPEC-0020-R09: the Gateway lists an unreachable server's failing
+# discovery once discoveryFailingFor (30s here) has passed, and drops the
+# alert when the server is deleted.
+log "verifying console alerts"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: alerting-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://alerting-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+MANIFEST
+ALERTING_ID="${E2E_NAMESPACE}.alerting-mcp-server"
+ALERT_FILTER='.alerts | any(.name == "DiscoveryFailing" and .scope.route == $route and (.resolvedAt | not)
+  and (.runbookURL | endswith("/KavryntMCPToolDiscoveryFailing.md")))'
+alerts_match() {
+  curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/alerts" |
+    jq --exit-status --arg route "${ALERTING_ID}" "$1" >/dev/null
+}
+for _ in $(seq 1 60); do
+  alerts_match "${ALERT_FILTER}" && break
+  sleep 2
+done
+alerts_match "${ALERT_FILTER}" || fail "/v1/alerts does not list DiscoveryFailing for ${ALERTING_ID}"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  delete mcpserver/alerting-mcp-server --wait=true --timeout=60s >/dev/null
+for _ in $(seq 1 30); do
+  alerts_match '.alerts | any(.scope.route == $route) | not' && break
+  sleep 2
+done
+alerts_match '.alerts | any(.scope.route == $route) | not' ||
+  fail "/v1/alerts still lists ${ALERTING_ID} after it was deleted"
 
 # The console in a real browser: login, keyboard, layout, and traffic views.
 # test/console-smoke/smoke.mjs cites the requirements it verifies. CI sets

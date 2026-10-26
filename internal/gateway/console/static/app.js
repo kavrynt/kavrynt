@@ -1,5 +1,5 @@
 // Kavrynt Console: read-only views of the Gateway's JSON endpoints
-// (/v1/servers, /v1/traffic, /readyz, /version) and a playground that calls
+// (/v1/servers, /v1/traffic, /v1/alerts, /readyz, /version) and a playground that calls
 // MCP tools through the Gateway's own /mcp/ routes.
 //
 // Everything shown here that comes from MCP servers (tool names,
@@ -13,6 +13,7 @@
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
+    ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL,
   } = Kavrynt.stats;
   const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
@@ -29,6 +30,11 @@
     traffic: [],
     // Pod name of the Gateway replica whose recent traffic is shown.
     trafficInstance: "",
+    // /v1/alerts (SPEC-0020): the alerts and the replica that evaluated them.
+    alerts: [],
+    alertsInstance: "",
+    alertsLoaded: false,
+    alertsError: null,
     seenTrafficId: 0,
     freshIds: new Set(),
     trafficPaused: false,
@@ -75,6 +81,31 @@
     }
     state.serversLoaded = true;
     update("servers");
+  }
+
+  async function refreshAlerts() {
+    if (needsLogin()) return;
+    try {
+      const data = await getJSON("/v1/alerts");
+      state.alerts = Array.isArray(data.alerts) ? data.alerts : [];
+      state.alertsInstance = typeof data.instance === "string" ? data.instance : "";
+      state.alertsError = null;
+    } catch (err) {
+      state.alertsError = err.message;
+    }
+    state.alertsLoaded = true;
+    drawAlertCount();
+    update("alerts");
+  }
+
+  // drawAlertCount shows the number of active alerts in the navigation on
+  // every page (SPEC-0020-R07).
+  function drawAlertCount() {
+    const el = document.getElementById("alert-count");
+    const count = needsLogin() ? 0 : activeAlertCount(state.alerts);
+    el.textContent = String(count);
+    el.hidden = count === 0;
+    el.closest("a").setAttribute("aria-label", count ? "Alerts, " + count + " active" : "Alerts");
   }
 
   async function refreshTraffic() {
@@ -125,9 +156,11 @@
   function signedOut(message) {
     const wasSignedIn = state.auth.signedIn;
     Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
-    Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set() });
+    Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set(),
+      alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null });
     resetPlayground();
     drawUser();
+    drawAlertCount();
     render();
     if (wasSignedIn && message) toast(message);
   }
@@ -137,6 +170,7 @@
     render();
     refreshServers();
     refreshTraffic();
+    refreshAlerts();
   }
 
   async function logout() {
@@ -219,6 +253,7 @@
       state, refreshTraffic, rerender: render, isCurrent: () => parseHash(location.hash).page === "playground",
     }),
     traffic: (root, rest, params) => renderTraffic(root, params),
+    alerts: (root) => renderAlerts(root),
   };
 
   function render() {
@@ -392,8 +427,11 @@
         rateCell(row.rate),
         h("td", { class: "num", text: fmtMs(row.p95) })));
 
+      const alertCount = activeAlertCount(state.alerts);
       put(body,
-        panel("Needs attention", attentionBody, items.length ? badge(String(items.length), "warn") : badge("none", "ok")),
+        panel("Needs attention", attentionBody, h("span", { class: "panel-actions" },
+          items.length ? badge(String(items.length), "warn") : badge("none", "ok"),
+          h("a", { href: formatHash("alerts"), text: alertCount ? alertCount + (alertCount === 1 ? " active alert →" : " active alerts →") : "Alerts →" }))),
         h("section", { class: "panel" },
           h("header", {}, h("h2", { text: "Failing tools" }), h("a", { href: formatHash("traffic", [], { outcome: "errors" }), text: "All errors →" })),
           scopeNote(trafficScope(state.trafficInstance)),
@@ -404,6 +442,59 @@
 
     draw();
     return draw;
+  }
+
+  // ---------------------------------------------------------------- alerts
+
+  // renderAlerts lists active alerts, then those resolved in the last hour,
+  // each linking its server or tool and its runbook (SPEC-0020-R06).
+  function renderAlerts(root) {
+    const head = h("div", { class: "page-head" },
+      h("div", {}, h("h1", { text: "Alerts" }),
+        h("p", { text: "Problems the Gateway sees now, with the same conditions and thresholds as the Prometheus alerts." })));
+    const body = h("div");
+    put(root, head, body);
+
+    function alertRow(alert) {
+      const link = alertLink(alert);
+      const scope = alert.scope || {};
+      const definition = ALERTS[alert.name] ? ALERTS[alert.name].definition : undefined;
+      return h("li", { class: "alert-item" + (alert.resolvedAt ? " resolved" : "") },
+        h("div", { class: "alert-line" },
+          h("span", { class: "dot " + (alert.resolvedAt ? "ok" : alert.severity === "critical" ? "bad" : "warn") }),
+          h("strong", { text: alertTitle(alert), title: definition }),
+          badge(String(alert.severity || ""), alert.resolvedAt ? "" : alert.severity === "critical" ? "bad" : "warn"),
+          h("a", { class: "mono", href: formatHash(link.page, link.rest, link.params), text: String(scope.route || "") + (scope.tool ? " · " + scope.tool : "") })),
+        h("p", { text: String(alert.summary || "") }),
+        h("p", { class: "muted small" },
+          h("span", { text: "Since " + ago(alert.since), title: String(alert.since || "") }),
+          alert.resolvedAt ? h("span", { text: " · resolved " + ago(alert.resolvedAt), title: String(alert.resolvedAt) }) : null,
+          isRunbookURL(alert.runbookURL) ? [" · ", h("a", { href: alert.runbookURL, target: "_blank", rel: "noopener noreferrer", text: "Runbook" })] : null));
+    }
+
+    function draw() {
+      clear(body);
+      if (state.alertsError) {
+        put(body, emptyState("Cannot load alerts", state.alertsError));
+        return;
+      }
+      if (!state.alertsLoaded) {
+        put(body, emptyState("Loading…"));
+        return;
+      }
+      const { active, resolved } = sortAlerts(state.alerts);
+      const scope = "Server and discovery alerts come from MCPServer status and are the same on every replica. Traffic alerts count " +
+        (state.alertsInstance ? "Gateway replica " + state.alertsInstance : "this Gateway replica") + "'s calls only; Prometheus alerts sum every replica.";
+      put(body,
+        scopeNote(scope),
+        panel("Active", active.length ? h("ul", { class: "alert-list" }, active.map(alertRow)) :
+          h("p", { class: "body muted", text: "No active alerts." }), badge(String(active.length), active.length ? "warn" : "ok")),
+        panel("Resolved in the last hour", resolved.length ? h("ul", { class: "alert-list" }, resolved.map(alertRow)) :
+          h("p", { class: "body muted", text: "Nothing resolved in the last hour." })));
+    }
+
+    draw();
+    return (what) => { if (what === "alerts") draw(); };
   }
 
   // ---------------------------------------------------------------- servers
@@ -790,6 +881,7 @@
       { fn: refreshServers, ms: SERVER_POLL_MS },
       { fn: refreshStatus, ms: SERVER_POLL_MS },
       { fn: refreshTraffic, ms: TRAFFIC_POLL_MS },
+      { fn: refreshAlerts, ms: SERVER_POLL_MS },
     ]).start();
   }
 
