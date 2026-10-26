@@ -160,10 +160,40 @@ await check("alerts: page, navigation, and overview link", async (page) => {
   }
 });
 
+// Verifies SPEC-0024-R06, SPEC-0024-R07, SPEC-0024-R08, and SPEC-0024-R12:
+// the Dashboard page and a server's Dashboard tab draw their charts with
+// readable values and data tables, and keep range and scope in the URL.
+await check("dashboards: page and server tab", async (page) => {
+  await signIn(page);
+  await page.click("a[data-nav='dashboard']");
+  await page.waitForSelector("h1:text('Dashboard')");
+  await page.waitForSelector("svg.chart");
+  assert.ok((await page.locator("svg.chart").count()) >= 4, "the Dashboard page draws four charts");
+  await page.waitForSelector("h2:text('Busiest servers')");
+  await page.selectOption("select[aria-label='Range']", "6h");
+  await page.waitForFunction(() => location.hash.includes("range=6h"));
+  await page.selectOption("select[aria-label='Server']", route);
+  await page.waitForFunction((r) => location.hash.includes("route=" + encodeURIComponent(r)), route);
+  await page.waitForSelector("svg.chart");
+  const chart = page.locator("svg.chart").first();
+  await chart.focus();
+  await page.keyboard.press("ArrowLeft");
+  assert.match(await page.locator(".chart-readout").first().innerText(), /^\d\d:\d\d · ok /, "keyboard focus shows a point's values");
+  assert.ok((await page.locator(".sr-only table tbody tr").count()) > 0, "no data table for screen readers");
+
+  await page.goto(base + "/ui/#/servers/" + route + "/dashboard?range=1h");
+  await page.waitForSelector("svg.chart");
+  await page.waitForSelector("section:has(h2:text('Per tool')) a:text('" + tool + "')");
+  await page.click("section:has(h2:text('Per tool')) a:text('" + tool + "')");
+  await page.waitForFunction((t) => location.hash.includes("tool=" + t), tool);
+  await page.waitForSelector("svg.chart");
+  assert.equal(await page.locator("svg.chart").count(), 3, "a tool has no bytes chart");
+});
+
 // Verifies SPEC-0002-R15.
 await check("keyboard: every control is named, reachable, and visibly focused", async (page) => {
   await signIn(page);
-  for (const hash of ["#/overview", "#/servers", "#/tools", "#/traffic", "#/alerts", "#/servers/" + route, "#/playground/" + route + "/" + tool]) {
+  for (const hash of ["#/overview", "#/dashboard", "#/servers", "#/tools", "#/traffic", "#/alerts", "#/servers/" + route, "#/servers/" + route + "/dashboard", "#/playground/" + route + "/" + tool]) {
     await page.goto(base + "/ui/" + hash);
     await page.waitForTimeout(1200);
     const unnamed = await page.evaluate(() => [...document.querySelectorAll("a[href], button, input, select, textarea, [tabindex]:not([tabindex='-1'])")]
@@ -192,14 +222,16 @@ await check("keyboard: every control is named, reachable, and visibly focused", 
   assert.fail("the server card was not reachable with Tab");
 });
 
-// Verifies SPEC-0002-R17.
+// Verifies SPEC-0002-R17 and SPEC-0024-R12 (the dashboards at 360 px).
 await check("every view fits 360 px without page scrolling", async (page) => {
   await page.setViewportSize({ width: 360, height: 800 });
   await page.goto(base + "/ui/");
   await page.waitForSelector("form.login");
   assert.equal(await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth), 0, "login");
   await signIn(page);
-  for (const hash of ["#/overview", "#/servers", "#/tools", "#/traffic", "#/alerts", "#/servers/" + route, "#/servers/" + route + "/traffic", "#/playground/" + route + "/" + tool]) {
+  for (const hash of ["#/overview", "#/dashboard?range=24h", "#/servers", "#/tools", "#/traffic", "#/alerts", "#/servers/" + route,
+    "#/servers/" + route + "/traffic", "#/servers/" + route + "/dashboard", "#/servers/" + route + "/dashboard?tool=" + tool,
+    "#/playground/" + route + "/" + tool]) {
     await page.goto(base + "/ui/" + hash);
     await page.waitForTimeout(1200);
     const overflow = await page.evaluate(() => document.documentElement.scrollWidth - window.innerWidth);

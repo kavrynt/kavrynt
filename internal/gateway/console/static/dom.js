@@ -22,6 +22,21 @@
     return el;
   }
 
+  const SVG_NS = "http://www.w3.org/2000/svg";
+
+  // svg creates an SVG element like h() creates HTML ones: attributes are
+  // set one by one, listeners added, and children are elements or text
+  // nodes, never markup.
+  function svg(tag, attrs, ...children) {
+    const el = document.createElementNS(SVG_NS, tag);
+    for (const [key, value] of Object.entries(attrs || {})) {
+      if (value === undefined || value === null || value === false) continue;
+      if (key.startsWith("on") && typeof value === "function") el.addEventListener(key.slice(2), value);
+      else el.setAttribute(key, String(value));
+    }
+    return append(el, children);
+  }
+
   function append(el, children) {
     for (const child of children.flat(Infinity)) {
       if (child === null || child === undefined || child === false) continue;
@@ -94,5 +109,5 @@
     return h("p", { class: "scope-note", text });
   }
 
-  Kavrynt.dom = { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote };
+  Kavrynt.dom = { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote };
 })();

@@ -518,6 +518,31 @@ kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get pod "${TRAFFIC
   --output jsonpath='{.metadata.labels.app\.kubernetes\.io/name}' 2>/dev/null | grep --fixed-strings --quiet gateway ||
   fail "/v1/traffic instance '${TRAFFIC_INSTANCE}' is not a Gateway pod"
 
+# Verifies SPEC-0024-R04, SPEC-0024-R05, and SPEC-0024-R12: the echo call
+# appears in the dashboards' history for its route and tool within a
+# minute, without its arguments, and unknown ranges are refused.
+log "verifying console history"
+history_has_echo() {
+  HISTORY="$(curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" \
+    "${GATEWAY_URL}/v1/history?range=1h&route=${SERVER_ID}")" &&
+    printf '%s' "${HISTORY}" | jq --exit-status --arg route "${SERVER_ID}" '
+      .scope.route == $route and (.points | map(.ok) | add) >= 1 and
+      (.tools | any(.route == $route and .tool == "echo" and .calls >= 1))' >/dev/null &&
+    curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" \
+      "${GATEWAY_URL}/v1/history?range=24h&route=${SERVER_ID}&tool=echo" |
+    jq --exit-status '(.points | map(.ok + .toolError + .upstreamError + .other) | add) >= 1' >/dev/null
+}
+for _ in $(seq 1 30); do
+  history_has_echo && break
+  sleep 2
+done
+history_has_echo || fail "/v1/history does not record the echo tool call for ${SERVER_ID}"
+if grep --fixed-strings --quiet "secret-argument" <<<"${HISTORY}"; then
+  fail "/v1/history contains tool arguments"
+fi
+HISTORY_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/history?range=7d")"
+[ "${HISTORY_STATUS}" = "400" ] || fail "/v1/history?range=7d answered HTTP ${HISTORY_STATUS}, want 400"
+
 # Verifies SPEC-0020-R09: the Gateway lists an unreachable server's failing
 # discovery once discoveryFailingFor (30s here) has passed, and drops the
 # alert when the server is deleted.

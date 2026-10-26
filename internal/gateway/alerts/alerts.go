@@ -41,10 +41,12 @@ const (
 // EvaluationInterval is how often Run evaluates (SPEC-0020-R01).
 const EvaluationInterval = 15 * time.Second
 
-// ResolvedRetention is how long resolved alerts stay listed, and
-// maxResolved how many of them.
+// ResolvedRetention is how long List shows resolved alerts. The evaluator
+// keeps them for HistoryRetention, at most maxResolved, so the console
+// dashboards can mark them over their longest range (SPEC-0024-R09).
 const (
 	ResolvedRetention = time.Hour
+	HistoryRetention  = 24 * time.Hour
 	maxResolved       = 500
 )
 
@@ -226,7 +228,7 @@ func (e *Evaluator) Evaluate(now time.Time, servers []model.Server) {
 	}
 	kept := e.resolved[:0]
 	for _, alert := range e.resolved {
-		if now.Sub(*alert.ResolvedAt) <= ResolvedRetention && routes[alert.Scope.Route] {
+		if now.Sub(*alert.ResolvedAt) <= HistoryRetention && routes[alert.Scope.Route] {
 			kept = append(kept, alert)
 		}
 	}
@@ -267,8 +269,8 @@ func findCondition(server model.Server, conditionType string) *model.Condition {
 }
 
 // List returns the active alerts, critical before warning and then oldest
-// first, followed by the resolved ones, newest first, and when they were
-// last evaluated.
+// first, followed by those resolved in the ResolvedRetention before the last
+// evaluation, newest first, and when they were last evaluated.
 func (e *Evaluator) List() ([]Alert, time.Time) {
 	e.mu.Lock()
 	defer e.mu.Unlock()
@@ -287,9 +289,47 @@ func (e *Evaluator) List() ([]Alert, time.Time) {
 		return a.Name+a.Scope.Route+a.Scope.Tool < b.Name+b.Scope.Route+b.Scope.Tool
 	})
 	for i := len(e.resolved) - 1; i >= 0; i-- {
-		active = append(active, e.resolved[i])
+		if e.evaluated.Sub(*e.resolved[i].ResolvedAt) <= ResolvedRetention {
+			active = append(active, e.resolved[i])
+		}
 	}
 	return active, e.evaluated
+}
+
+// Within returns the alerts active at some time from from to to, oldest
+// first, about a scope: every alert for route "", the route's alerts for a
+// route, and the route's alerts without a tool or for tool for a tool
+// (SPEC-0024-R09).
+func (e *Evaluator) Within(from, to time.Time, route, tool string) []Alert {
+	e.mu.Lock()
+	defer e.mu.Unlock()
+	matches := func(alert Alert) bool {
+		if route != "" && alert.Scope.Route != route {
+			return false
+		}
+		if tool != "" && alert.Scope.Tool != "" && alert.Scope.Tool != tool {
+			return false
+		}
+		return !alert.Since.After(to) && (alert.ResolvedAt == nil || !alert.ResolvedAt.Before(from))
+	}
+	list := []Alert{}
+	for _, alert := range e.active {
+		if matches(*alert) {
+			list = append(list, *alert)
+		}
+	}
+	for _, alert := range e.resolved {
+		if matches(alert) {
+			list = append(list, alert)
+		}
+	}
+	sort.Slice(list, func(i, j int) bool {
+		if !list[i].Since.Equal(list[j].Since) {
+			return list[i].Since.Before(list[j].Since)
+		}
+		return list[i].Name+list[i].Scope.Route+list[i].Scope.Tool < list[j].Name+list[j].Scope.Route+list[j].Scope.Tool
+	})
+	return list
 }
 
 func percent(ratio float64) string {

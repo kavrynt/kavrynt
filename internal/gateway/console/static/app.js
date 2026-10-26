@@ -1,5 +1,5 @@
 // Kavrynt Console: read-only views of the Gateway's JSON endpoints
-// (/v1/servers, /v1/traffic, /v1/alerts, /readyz, /version) and a playground that calls
+// (/v1/servers, /v1/traffic, /v1/alerts, /v1/history, /readyz, /version) and a playground that calls
 // MCP tools through the Gateway's own /mcp/ routes.
 //
 // Everything shown here that comes from MCP servers (tool names,
@@ -8,19 +8,25 @@
 "use strict";
 
 (() => {
-  const { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
+  const { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
   const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
     ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL,
   } = Kavrynt.stats;
+  const {
+    RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
+    alertMarks, topLists, rangeSummary, toolRows, dashboardNote, grafanaLinks,
+  } = Kavrynt.charts;
   const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
   const TRAFFIC_POLL_MS = 2000;
   const TRAFFIC_PAGE = 100;
+  const HISTORY_POLL_MS = 30000;
+  const RESIZE_DELAY_MS = 150;
   const THEME_KEY = "kavrynt-theme";
 
   const state = {
@@ -35,6 +41,12 @@
     alertsInstance: "",
     alertsLoaded: false,
     alertsError: null,
+    // /v1/history (SPEC-0024): historyPath is the request of the dashboard
+    // on screen ("" polls nothing); history is the answer to historyFor.
+    history: null,
+    historyFor: "",
+    historyPath: "",
+    historyError: null,
     seenTrafficId: 0,
     freshIds: new Set(),
     trafficPaused: false,
@@ -108,6 +120,30 @@
     el.closest("a").setAttribute("aria-label", count ? "Alerts, " + count + " active" : "Alerts");
   }
 
+  // refreshHistory loads /v1/history for the dashboard on screen, if any
+  // (SPEC-0024-R06). An answer for a scope no longer shown is dropped.
+  async function refreshHistory() {
+    const path = state.historyPath;
+    if (!path || needsLogin()) return;
+    try {
+      const data = await getJSON(path);
+      if (path !== state.historyPath) return;
+      Object.assign(state, { history: data, historyFor: path, historyError: null });
+    } catch (err) {
+      if (path !== state.historyPath) return;
+      state.historyError = err.message;
+    }
+    update("history");
+  }
+
+  // showHistory points the history poll at path and loads it; a history of
+  // another range or scope is not shown meanwhile.
+  function showHistory(path) {
+    state.historyPath = path;
+    if (state.historyFor !== path) Object.assign(state, { history: null, historyFor: "", historyError: null });
+    refreshHistory();
+  }
+
   async function refreshTraffic() {
     if (state.trafficPaused || needsLogin()) return;
     try {
@@ -157,7 +193,7 @@
     const wasSignedIn = state.auth.signedIn;
     Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
     Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set(),
-      alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null });
+      alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null, history: null, historyFor: "", historyPath: "", historyError: null });
     resetPlayground();
     drawUser();
     drawAlertCount();
@@ -247,7 +283,8 @@
 
   const views = {
     overview: (root) => renderOverview(root),
-    servers: (root, rest, params) => (rest[0] ? renderServer(root, rest[0], rest[1] || "overview") : renderServers(root, params)),
+    dashboard: (root, rest, params) => renderDashboard(root, params),
+    servers: (root, rest, params) => (rest[0] ? renderServer(root, rest[0], rest[1] || "overview", params) : renderServers(root, params)),
     tools: (root, rest, params) => renderTools(root, params),
     playground: (root, rest) => renderPlayground(root, rest[0], rest[1], {
       state, refreshTraffic, rerender: render, isCurrent: () => parseHash(location.hash).page === "playground",
@@ -275,6 +312,8 @@
     });
     const root = clear(main());
     current = { page, update: null };
+    // Only a dashboard view polls history; it sets the path again.
+    state.historyPath = "";
     current.update = views[page](root, rest, params) || null;
     root.focus({ preventScroll: true });
   }
@@ -444,6 +483,246 @@
     return draw;
   }
 
+  // ---------------------------------------------------------------- dashboard
+
+  // renderDashboard charts this replica's calls over the last hour, 6
+  // hours, or day for all servers, one server, or one tool, with the
+  // busiest and most failing servers and tools (SPEC-0024-R06). The range
+  // and scope are in the URL.
+  function renderDashboard(root, params) {
+    const filters = { range: parseRange(params.range), route: params.route || "", tool: (params.route && params.tool) || "" };
+    const toolbar = h("div", { class: "toolbar" });
+    const body = h("div");
+    put(root,
+      h("div", { class: "page-head" },
+        h("div", {}, h("h1", { text: "Dashboard" }),
+          h("p", { text: "MCP traffic over time: requests, errors, latency, and bytes, with the console alerts marked." })),
+        toolbar),
+      body);
+    const dash = dashboard(body, () => filters, { extra: (history) => topPanels(history, filters.range) });
+    let toolbarKey = "";
+
+    function setFilter(key, value) {
+      filters[key] = value;
+      if (key === "route") filters.tool = "";
+      setParams(filters);
+      drawToolbar();
+      dash.load();
+    }
+
+    function drawToolbar() {
+      const routes = state.servers.filter((s) => s.routed).map((s) => s.route);
+      if (filters.route) routes.push(filters.route);
+      const server = state.servers.find((s) => s.route === filters.route);
+      const tools = (server ? server.tools.map((t) => t.name) : []).concat(filters.tool ? [filters.tool] : []);
+      const options = (values, all) => [{ value: "", label: all }].concat([...new Set(values)].sort().map((v) => ({ value: v, label: v })));
+      const key = JSON.stringify([routes, tools, filters]);
+      if (key === toolbarKey) return;
+      toolbarKey = key;
+      put(clear(toolbar),
+        select("Range", filters.range, Object.entries(RANGES).map(([value, r]) => ({ value, label: r.label })), (v) => setFilter("range", v)),
+        select("Server", filters.route, options(routes, "All servers"), (v) => setFilter("route", v)),
+        filters.route ? select("Tool", filters.tool, options(tools, "All tools"), (v) => setFilter("tool", v)) : null);
+    }
+
+    drawToolbar();
+    dash.load();
+    return (what) => {
+      if (what === "servers") drawToolbar();
+      dash.update(what);
+    };
+  }
+
+  // dashboard draws /v1/history for the scope get() returns into container:
+  // the replica note, totals, charts with alert marks, the alerts of the
+  // range, and opts.extra (SPEC-0024-R06 to R10).
+  function dashboard(container, get, opts) {
+    // Where each chart's cursor is, kept across polls and resizes.
+    const cursors = new Map();
+
+    function load() {
+      const { range, route, tool } = get();
+      showHistory(historyPath(range, route, tool));
+      draw();
+    }
+
+    function draw() {
+      clear(container);
+      const history = state.historyFor === state.historyPath ? state.history : null;
+      if (state.historyError && !history) {
+        put(container, emptyState("Cannot load history", state.historyError));
+        return;
+      }
+      if (!history) {
+        put(container, emptyState("Loading…"));
+        return;
+      }
+      const { range, route } = get();
+      const start = Date.parse(history.start);
+      const end = Date.parse(history.end);
+      const since = Date.parse(history.since);
+      const summary = rangeSummary(history);
+      const links = grafanaLinks(history.grafanaURL, route);
+      put(container,
+        h("p", { class: "scope-note" }, dashboardNote(history), " · cluster-wide history: ",
+          links ? links.map((link, i) => [i ? ", " : "", h("a", { href: link.href, target: "_blank", rel: "noopener noreferrer", text: link.title })]) :
+            "the " + GRAFANA.traffic.title + " and " + GRAFANA.server.title + " Grafana dashboards (gateway.metrics.dashboard.enabled)"),
+        h("div", { class: "tiles" },
+          tile("Calls", summary.calls, RANGES[range].label.toLowerCase()),
+          tile("Error rate", fmtPct(summary.errorRate), "calls not ok", summary.errorRate > 0 ? "warn" : ""),
+          tile("Tool errors", summary.toolError, "tool_error, rpc_error"),
+          tile("Upstream failures", summary.upstreamError, "upstream_error, unreachable, timeout", summary.upstreamError ? "bad" : "")));
+      const marks = alertMarks(history.alerts, start, end);
+      const grid = h("div", { class: "chart-grid" });
+      put(container, grid);
+      // Every panel is in the grid before any chart measures its width.
+      const hosts = chartSeries(history).map((chart) => {
+        const host = h("div", { class: "chart-host" });
+        put(grid, panel(chart.title, h("div", { class: "body" }, legend(chart), host)));
+        return { host, chart };
+      });
+      for (const { host, chart } of hosts) drawChart(host, chart, { start, end, since, stepSeconds: history.stepSeconds, marks }, cursors);
+      if (marks.length) put(container, rangeAlertsPanel(marks));
+      if (opts.extra) put(container, opts.extra(history));
+    }
+
+    return {
+      load,
+      update: (what) => { if (what === "history" || what === "resize") draw(); },
+    };
+  }
+
+  function legend(chart) {
+    return h("ul", { class: "legend", "aria-hidden": "true" }, chart.series.map((s) =>
+      h("li", {}, h("span", { class: "swatch c-" + s.cls }), s.label)));
+  }
+
+  // drawChart draws a chart as inline SVG at its host's width, with a
+  // cursor that follows the pointer and the arrow keys, a readout of the
+  // values under it, and a table of the same numbers for screen readers
+  // (SPEC-0024-R08). Alert starts and resolutions are dashed lines
+  // (SPEC-0024-R09).
+  function drawChart(host, chart, ctx, cursors) {
+    const geometry = chartGeometry(chart, { width: host.clientWidth || 320, height: 170, start: ctx.start, end: ctx.end, since: ctx.since, stepSeconds: ctx.stepSeconds });
+    const { plot } = geometry;
+    const count = geometry.pointX.length;
+    const out = h("p", { class: "chart-readout", "aria-live": "polite" });
+    const cursor = svg("line", { class: "cursor", x1: 0, x2: 0, y1: plot.y, y2: plot.y + plot.h, visibility: "hidden" });
+    let index = cursors.has(chart.id) ? Math.min(cursors.get(chart.id), count - 1) : -1;
+
+    function show(i) {
+      index = i;
+      cursors.set(chart.id, i);
+      if (i < 0) {
+        cursor.setAttribute("visibility", "hidden");
+        out.textContent = count ? "Hover over the chart or focus it and use the arrow keys to read values." : "No calls recorded in this range yet.";
+        return;
+      }
+      cursor.setAttribute("x1", geometry.pointX[i]);
+      cursor.setAttribute("x2", geometry.pointX[i]);
+      cursor.setAttribute("visibility", "visible");
+      out.textContent = readout(chart, i);
+    }
+
+    const el = svg("svg", {
+      class: "chart", width: geometry.width, height: geometry.height, viewBox: "0 0 " + geometry.width + " " + geometry.height,
+      role: "img", tabindex: "0", "aria-label": chart.title + " chart; arrow keys read its values",
+      onmousemove: (e) => {
+        const box = el.getBoundingClientRect();
+        show(nearestIndex(geometry, ((e.clientX - box.left) * geometry.width) / (box.width || geometry.width)));
+      },
+      onmouseleave: () => { if (document.activeElement !== el) show(-1); },
+      onfocus: () => show(index < 0 ? count - 1 : index),
+      onblur: () => show(-1),
+      onkeydown: (e) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key)) return;
+        e.preventDefault();
+        show(moveIndex(index, e.key, count));
+      },
+    },
+    geometry.before ? svg("rect", { class: "before-since", x: geometry.before.x, y: plot.y, width: geometry.before.w, height: plot.h },
+      svg("title", {}, "No history: before this replica started")) : null,
+    geometry.yTicks.map((t) => [
+      svg("line", { class: "grid", x1: plot.x, x2: plot.x + plot.w, y1: t.y, y2: t.y }),
+      svg("text", { class: "tick", x: plot.x - 6, y: t.y + 4, "text-anchor": "end" }, t.label)]),
+    geometry.xTicks.map((t) => svg("text", { class: "tick", x: t.x, y: geometry.height - 6, "text-anchor": "middle" }, clockLabel(t.t))),
+    geometry.bars.map((b) => svg("rect", { class: "column c-" + b.cls, x: b.x, y: b.y, width: b.w, height: b.h })),
+    geometry.lines.map((l) => svg("path", { class: "line c-" + l.cls, d: l.d })),
+    ctx.marks.map((m) => svg("line", { class: "mark mark-" + m.kind, x1: geometry.x(m.t), x2: geometry.x(m.t), y1: plot.y, y2: plot.y + plot.h },
+      svg("title", {}, alertTitle(m.alert) + (m.kind === "start" ? " started " : " resolved ") + clockLabel(m.t)))),
+    cursor);
+
+    // Tables ignore width and overflow, so the wrapper is what is hidden.
+    const table = h("div", { class: "sr-only" }, h("table", {},
+      h("caption", { text: chart.title }),
+      h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "Time" }), chart.series.map((s) => h("th", { scope: "col", text: s.label })))),
+      h("tbody", {}, tableRows(chart).map((row) => h("tr", {}, row.map((cell) => h("td", { text: cell })))))));
+    put(clear(host), el, out, table);
+    show(index);
+  }
+
+  // rangeAlertsPanel lists the alert starts and resolutions the charts mark.
+  function rangeAlertsPanel(marks) {
+    return panel("Alerts in this range", h("ul", { class: "alert-list" }, marks.map((m) => {
+      const scope = m.alert.scope || {};
+      const link = alertLink(m.alert);
+      return h("li", { class: "alert-item" + (m.kind === "resolved" ? " resolved" : "") },
+        h("div", { class: "alert-line" },
+          h("span", { class: "dot " + (m.kind === "resolved" ? "ok" : "warn") }),
+          h("strong", { text: alertTitle(m.alert) }),
+          h("span", { class: "muted", text: (m.kind === "start" ? "started " : "resolved ") + clockLabel(m.t) }),
+          h("a", { class: "mono", href: formatHash(link.page, link.rest, link.params), text: String(scope.route || "") + (scope.tool ? " · " + scope.tool : "") })));
+    })), h("a", { href: formatHash("alerts"), text: "Alerts →" }));
+  }
+
+  // topPanels are the busiest and most failing servers (for all servers)
+  // and tools (unless one tool is shown), linking to their server's or
+  // tool's dashboard (SPEC-0024-R06).
+  function topPanels(history, range) {
+    const scope = history.scope || {};
+    if (scope.tool) return null;
+    const panels = [];
+    if (!scope.route) {
+      const servers = topLists(history.routes);
+      panels.push(topPanel("Busiest servers", servers.busiest, range, "No calls in this range."),
+        topPanel("Highest error rate: servers", servers.failing, range, "No server with 20 calls or more had errors."));
+    }
+    const tools = topLists(history.tools);
+    panels.push(topPanel("Busiest tools", tools.busiest, range, "No tool calls in this range."),
+      topPanel("Highest error rate: tools", tools.failing, range, "No tool with 20 calls or more had errors."));
+    return h("div", { class: "top-grid" }, panels);
+  }
+
+  function topPanel(title, rows, range, empty) {
+    const withTools = rows.some((r) => r.tool);
+    const body = rows.map((r) => h("tr", {},
+      h("td", {}, h("a", { class: "mono", href: formatHash("servers", [r.route, "dashboard"], { range, tool: r.tool || "" }), text: r.tool || r.route })),
+      withTools ? h("td", { class: "mono muted", text: r.route }) : null,
+      h("td", { class: "num", text: String(r.calls) }),
+      rateCell(typeof r.errorRate === "number" ? r.errorRate : null),
+      h("td", { class: "num", text: fmtMs(r.p95Ms) })));
+    const headers = [withTools ? "Tool" : "Server", withTools ? "Server" : null, { label: "Calls", num: true }, "Error rate", { label: "p95", num: true }].filter(Boolean);
+    return panel(title, h("div", { class: "body flush" }, table(headers, body, empty)));
+  }
+
+  // serverDashboardExtra is the per-tool table of a server's Dashboard tab,
+  // or, with a tool shown, the way back to all tools (SPEC-0024-R07).
+  function serverDashboardExtra(history, route, filters) {
+    if (filters.tool) {
+      return h("p", {}, h("a", { href: formatHash("servers", [route, "dashboard"], { range: filters.range }), text: "← All tools of " + route }));
+    }
+    const server = state.servers.find((s) => s.route === route);
+    const rows = toolRows(history.tools, server ? server.tools.map((t) => t.name) : []).map((r) => h("tr", {},
+      h("td", {}, h("a", { class: "mono", href: formatHash("servers", [route, "dashboard"], { range: filters.range, tool: r.tool }), text: r.tool })),
+      h("td", { class: "num", text: String(r.calls) }),
+      h("td", { class: "num", text: String(r.errors) }),
+      rateCell(r.errorRate),
+      h("td", { class: "num", text: fmtMs(r.p95Ms) })));
+    return panel("Per tool", h("div", { class: "body flush" },
+      table(["Tool", { label: "Calls", num: true }, { label: "Errors", num: true }, "Error rate", { label: "p95", num: true }], rows, "No tools discovered and no tool calls in this range.")),
+    h("span", { class: "muted small", text: RANGES[filters.range].label }));
+  }
+
   // ---------------------------------------------------------------- alerts
 
   // renderAlerts lists active alerts, then those resolved in the last hour,
@@ -596,14 +875,39 @@
 
   // ---------------------------------------------------------------- server detail
 
-  function renderServer(root, routeName, tab) {
+  function renderServer(root, routeName, tab, params = {}) {
     const body = h("div");
     put(root, body);
     let limit = TRAFFIC_PAGE;
+    let shown = false;
+    // The Dashboard tab (SPEC-0024-R07) keeps its charts across redraws of
+    // the page head.
+    const filters = { range: parseRange(params.range), tool: params.tool || "" };
+    const dashToolbar = h("div", { class: "toolbar dash-toolbar" });
+    const dashBox = h("div");
+    const dash = tab === "dashboard" ? dashboard(dashBox, () => ({ range: filters.range, route: routeName, tool: filters.tool }), {
+      extra: (history) => serverDashboardExtra(history, routeName, filters),
+    }) : null;
+
+    function drawDashToolbar() {
+      const server = state.servers.find((s) => s.route === routeName);
+      const tools = [...new Set((server ? server.tools.map((t) => t.name) : []).concat(filters.tool ? [filters.tool] : []))].sort();
+      put(clear(dashToolbar),
+        select("Range", filters.range, Object.entries(RANGES).map(([value, r]) => ({ value, label: r.label })), (v) => setDashFilter("range", v)),
+        select("Tool", filters.tool, [{ value: "", label: "All tools" }].concat(tools.map((t) => ({ value: t, label: t }))), (v) => setDashFilter("tool", v)));
+    }
+
+    function setDashFilter(key, value) {
+      filters[key] = value;
+      setParams({ range: filters.range, tool: filters.tool });
+      drawDashToolbar();
+      dash.load();
+    }
 
     function draw() {
       const server = state.servers.find((s) => s.route === routeName);
       clear(body);
+      shown = Boolean(server);
       if (!server) {
         put(body, h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" })),
           emptyState(state.serversLoaded ? "Server not found" : "Loading…", state.serversLoaded ? "No MCPServer is named " + routeName + "." : ""));
@@ -621,9 +925,13 @@
             server.routed ? h("a", { class: "btn primary", href: formatHash("playground", [server.route]) }, "Open in playground") : null)),
         health.label === "Needs attention" ? h("div", { class: "callout " + health.cls, role: "note" }, h("strong", { text: "Needs attention. " }), health.detail) : null,
         h("div", { class: "tabs", role: "tablist" },
-          tabButton("overview", "Overview"), tabButton("tools", "Tools (" + server.tools.length + ")"), tabButton("traffic", "Traffic (" + health.stats.calls + ")")));
+          tabButton("overview", "Overview"), tabButton("dashboard", "Dashboard"), tabButton("tools", "Tools (" + server.tools.length + ")"),
+          tabButton("traffic", "Traffic (" + health.stats.calls + ")")));
 
-      if (tab === "tools") put(body, toolsPanel(server));
+      if (tab === "dashboard") {
+        drawDashToolbar();
+        put(body, dashToolbar, dashBox);
+      } else if (tab === "tools") put(body, toolsPanel(server));
       else if (tab === "traffic") {
         const records = state.traffic.filter((r) => r.route === server.route);
         put(body, scopeNote(trafficScope(state.trafficInstance)),
@@ -641,7 +949,19 @@
     }
 
     draw();
-    return (what) => { if (what === "servers" || (what === "traffic" && tab === "traffic")) draw(); };
+    if (dash) dash.load();
+    return (what) => {
+      if (dash) {
+        if (what === "servers" && !shown) {
+          draw();
+          // Charts drawn while the tab was detached had no width yet.
+          if (shown) dash.update("resize");
+        }
+        dash.update(what);
+        return;
+      }
+      if (what === "servers" || (what === "traffic" && tab === "traffic")) draw();
+    };
   }
 
   function serverOverview(server, health) {
@@ -873,6 +1193,11 @@
     initTheme();
     window.addEventListener("hashchange", render);
     window.addEventListener("pagehide", closePlayground);
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => update("resize"), RESIZE_DELAY_MS);
+    });
     render();
     loadVersion();
     await checkSession();
@@ -882,6 +1207,7 @@
       { fn: refreshStatus, ms: SERVER_POLL_MS },
       { fn: refreshTraffic, ms: TRAFFIC_POLL_MS },
       { fn: refreshAlerts, ms: SERVER_POLL_MS },
+      { fn: refreshHistory, ms: HISTORY_POLL_MS },
     ]).start();
   }
 

@@ -299,7 +299,9 @@ servers that are not routed, whose tool discovery failed, or whose calls are
 failing, and the tools that fail most. **Servers** and **Tools** list every
 `MCPServer` and every discovered tool; the **Playground** calls tools through
 the Gateway exactly as an agent would; **Traffic** shows recent calls with
-per-tool error rate and latency. Point your own agent at
+per-tool error rate and latency; the **Dashboard** charts requests, errors,
+latency, and bytes over the last hour, 6 hours, or day for all servers, a
+server, or a tool, with the console alerts marked. Point your own agent at
 `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls arrive.
 The login protects the console only: MCP routes stay open unless MCP client
 authentication (`gateway.auth`) is on.

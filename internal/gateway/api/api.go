@@ -24,6 +24,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/alerts"
 	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
+	"github.com/kavrynt/kavrynt/internal/gateway/history"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
@@ -92,8 +93,12 @@ type Handler struct {
 	recent  *recentTraffic
 	// alertWindow holds the last ten minutes of calls for the console
 	// alerts, which alerts evaluates (SPEC-0020).
-	alertWindow    *alerts.Window
-	alerts         *alerts.Evaluator
+	alertWindow *alerts.Window
+	alerts      *alerts.Evaluator
+	// history keeps 24 hours of calls for the console dashboards
+	// (SPEC-0024); grafanaURL is linked there for cluster-wide history.
+	history        *history.History
+	grafanaURL     string
 	registry       *prometheus.Registry
 	metricsHandler http.Handler
 
@@ -132,6 +137,7 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		strictProtocol: true,
 		recent:         newRecentTraffic(recentTrafficSize),
 		alertWindow:    alerts.NewWindow(durationBuckets),
+		history:        history.New(durationBuckets, history.DefaultMaxTools, time.Now()),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
 	registry := h.newRegistry()
@@ -296,6 +302,10 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case r.Method == http.MethodGet && r.URL.Path == "/v1/alerts":
 		if h.authorized(w, r) {
 			h.listAlerts(w, r)
+		}
+	case r.Method == http.MethodGet && r.URL.Path == "/v1/history":
+		if h.authorized(w, r) {
+			h.listHistory(w, r)
 		}
 	case r.URL.Path == "/v1/session":
 		h.session(w, r)
@@ -848,11 +858,14 @@ func writeRefusal(w http.ResponseWriter, refusal *clientauth.Refusal) {
 	writeError(w, refusal.Status, errors.New(refusal.Message))
 }
 
-// observe records a proxied request in the metrics and the recent traffic.
+// observe records a proxied request in the metrics, the recent traffic,
+// the console alerts' window, and the dashboards' history.
 func (h *Handler) observe(route string, call mcpCall, outcome string, status int, elapsed time.Duration, bytesIn, bytesOut int64) {
 	method, tool := h.traffic.observe(route, call, outcome, elapsed, bytesIn, bytesOut)
 	h.recent.add(route, call, outcome, status, elapsed, bytesIn, bytesOut)
-	h.alertWindow.Record(time.Now(), route, method, tool, outcome, elapsed)
+	now := time.Now()
+	h.alertWindow.Record(now, route, method, tool, outcome, elapsed)
+	h.history.Record(now, route, method, tool, outcome, elapsed, bytesIn, bytesOut)
 }
 
 func parseMCPPath(path string) (string, string, bool) {

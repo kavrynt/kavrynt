@@ -133,6 +133,11 @@ spec:
             - --console-auth=false
             {{- end }}
             - --alerts-config=/etc/kavrynt/alerts/config.json
+            {{- $console := .Values.console | default dict }}
+            - --history-max-tools={{ (($console.history | default dict).maxTools | default 500) | int }}
+            {{- with $console.grafanaURL }}
+            - --grafana-url={{ . }}
+            {{- end }}
           env:
             # Names this replica in /v1/traffic (SPEC-0008-R06).
             - name: KAVRYNT_INSTANCE

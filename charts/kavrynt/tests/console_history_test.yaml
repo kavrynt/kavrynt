@@ -1,0 +1,56 @@
+suite: console dashboards
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
+tests:
+  # Verifies SPEC-0024-R02 and SPEC-0024-R10: the tool cap defaults to 500
+  # and no Grafana link is configured.
+  - it: caps the dashboards at 500 tools and links no Grafana by default
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --history-max-tools=500
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --grafana-url=
+          any: true
+
+  # Verifies SPEC-0024-R02 and SPEC-0024-R10.
+  - it: passes the tool cap and the Grafana URL to the Gateway
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.console.history.maxTools: 2000
+      gateway.console.grafanaURL: https://grafana.example.com/grafana
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --history-max-tools=2000
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --grafana-url=https://grafana.example.com/grafana
+
+  # Verifies SPEC-0024-R10: only plain http or https Grafana URLs.
+  - it: rejects a Grafana URL that is not http or https
+    set:
+      gateway.console.grafanaURL: javascript:alert(1)
+    asserts:
+      - failedTemplate:
+          errorPattern: "grafanaURL"
+
+  - it: rejects a Grafana URL with credentials
+    set:
+      gateway.console.grafanaURL: https://admin:pw@grafana.example.com
+    asserts:
+      - failedTemplate:
+          errorPattern: "grafanaURL"
+
+  # Verifies SPEC-0024-R02.
+  - it: rejects a tool cap outside 1 to 10000
+    set:
+      gateway.console.history.maxTools: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: "maxTools"

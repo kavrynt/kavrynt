@@ -391,6 +391,21 @@
               "$ref": "#/definitions/duration"
             }
           }
+        },
+        "history": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "maxTools": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 10000
+            }
+          }
+        },
+        "grafanaURL": {
+          "type": "string",
+          "pattern": "^$|^https?://[^\\s/?#@]+(/[^\\s?#]*)?$"
         }
       }
     },

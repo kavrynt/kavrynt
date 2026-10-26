@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -24,6 +25,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/console"
+	"github.com/kavrynt/kavrynt/internal/gateway/history"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
@@ -63,6 +65,8 @@ func main() {
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
 	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic and /v1/alerts, normally the pod name")
+	historyMaxTools := flag.Int("history-max-tools", history.DefaultMaxTools, "Tools whose calls the console dashboards keep apart, across routes; further tools count as their route's other tool")
+	grafanaURL := flag.String("grafana-url", getenv("KAVRYNT_GRAFANA_URL", ""), "Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the dashboards instead")
 	alertsConfig := flag.String("alerts-config", getenv("KAVRYNT_ALERTS_CONFIG", ""), "JSON file with the console alert thresholds, reread when it changes; the chart writes it from metrics.prometheusRule (missing: the defaults)")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
@@ -73,6 +77,11 @@ func main() {
 	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL)
 	if err != nil {
 		slog.Error("configure console login", "error", err)
+		os.Exit(1)
+	}
+
+	if err := checkHistoryFlags(*historyMaxTools, *grafanaURL); err != nil {
+		slog.Error("configure console dashboards", "error", err)
 		os.Exit(1)
 	}
 
@@ -171,6 +180,8 @@ func main() {
 		alertConfig = alerts.FileConfig(*alertsConfig, alerts.DefaultConfig(build.Version), slog.Default())
 	}
 	go handler.EnableAlerts(alertConfig).Run(ctx, alerts.EvaluationInterval, table.Servers)
+	go handler.EnableHistory(*historyMaxTools).Run(ctx, history.PruneInterval, table.Servers)
+	handler.SetGrafanaURL(strings.TrimRight(*grafanaURL, "/"))
 	if auditShipper != nil {
 		go auditShipper.Run(ctx)
 	}
@@ -267,6 +278,25 @@ func newAuditShipper(auditEnabled bool, url, tokenFile string, buffer int, allow
 		Version:   build.Version,
 		Transport: egress.Transport(allowLoopback),
 	})
+}
+
+// maxHistoryTools bounds --history-max-tools: each tool keeps about 23 KiB.
+const maxHistoryTools = 10000
+
+// checkHistoryFlags refuses a tool cap outside 1 to maxHistoryTools and a
+// Grafana URL that is not a plain http or https URL (SPEC-0024-R10).
+func checkHistoryFlags(maxTools int, grafanaURL string) error {
+	if maxTools < 1 || maxTools > maxHistoryTools {
+		return fmt.Errorf("--history-max-tools must be 1 to %d, got %d", maxHistoryTools, maxTools)
+	}
+	if grafanaURL == "" {
+		return nil
+	}
+	u, err := url.Parse(grafanaURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("--grafana-url must be an http or https URL without credentials, query, or fragment, got %q", grafanaURL)
+	}
+	return nil
 }
 
 // newConsoleAuth returns the console admin login, or nil when the console or
