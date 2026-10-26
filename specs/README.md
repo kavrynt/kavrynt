@@ -148,3 +148,4 @@ against the assistant's summary of them.
 | [0021](0021-tool-and-discovery-alerts/spec.md) | Tool error and discovery alerts | Implemented |
 | [0022](0022-alert-notifications/spec.md) | Alert notifications | Implemented |
 | [0023](0023-custom-dashboards/spec.md) | Custom dashboards | Implemented |
+| [0024](0024-console-dashboards/spec.md) | Console dashboards | Implemented |

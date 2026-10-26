@@ -1,10 +1,11 @@
 package alerts
 
 import (
-	"math"
 	"sort"
 	"sync"
 	"time"
+
+	"github.com/kavrynt/kavrynt/internal/gateway/history"
 )
 
 // Window10m is how far back the traffic conditions look, like the [10m]
@@ -145,36 +146,6 @@ func (w *Window) Snapshot(now time.Time) (map[string]RouteStats, map[[2]string]T
 	return routes, tools
 }
 
-// quantile estimates a quantile from bucket counts the way Prometheus'
-// histogram_quantile does: linear interpolation inside the bucket that
-// holds the rank, the highest finite bound for the +Inf bucket.
-func quantile(q float64, bounds []float64, counts []uint64) float64 {
-	var total uint64
-	for _, n := range counts {
-		total += n
-	}
-	if total == 0 {
-		return math.NaN()
-	}
-	rank := q * float64(total)
-	var cumulative uint64
-	for i, n := range counts {
-		previous := cumulative
-		cumulative += n
-		if float64(cumulative) < rank {
-			continue
-		}
-		if i == len(bounds) {
-			return bounds[len(bounds)-1]
-		}
-		lower := 0.0
-		if i > 0 {
-			lower = bounds[i-1]
-		}
-		if n == 0 {
-			return bounds[i]
-		}
-		return lower + (bounds[i]-lower)*(rank-float64(previous))/float64(n)
-	}
-	return bounds[len(bounds)-1]
-}
+// quantile is histogram_quantile over the window's latency buckets; the
+// console dashboards compute their latencies the same way.
+var quantile = history.Quantile[uint64]

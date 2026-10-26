@@ -407,6 +407,7 @@ cluster-wide view.
 | `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, the `serverInfo` it reported, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
 | `GET /v1/traffic` | `instance` (this replica's name) and `requests`: the last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
 | `GET /v1/alerts` | `instance`, `evaluatedAt`, and `alerts`: the [console alerts](#console-alerts) that are active, then those resolved in the last hour: `name`, `severity`, `scope` (`route`, optional `tool`), `summary`, `since`, `resolvedAt`, `runbookURL`. Needs a console session when console login is on |
+| `GET /v1/history?range=1h\|6h\|24h[&route=<route>[&tool=<tool>]]` | The [dashboards'](#console-dashboards) history of this replica for all routes, a route, or a tool: `instance`, `scope`, `range`, `stepSeconds`, `start`, `end`, `since`, `points` (`time`, `ok`, `toolError`, `upstreamError`, `other`, `errorRate`, `p50Ms`, `p95Ms`, and outside a tool `bytesIn`, `bytesOut`), `routes` and `tools` totals (`calls`, `errors`, `errorRate`, `p95Ms`), the console `alerts` active in the range, and `grafanaURL`. `400` for another `range`, a route that is not routed, a tool without a route, or a malformed tool name. Needs a console session when console login is on |
 | `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`) and `mcpAuth`, sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
 | `GET /.well-known/oauth-protected-resource/mcp/<route>` | Protected Resource Metadata of a route (RFC 9728), only with MCP client authentication |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
@@ -417,7 +418,7 @@ cluster-wide view.
 A read-only web console served by the Gateway itself, enabled by default
 (chart: `console.enabled`). It needs no extra RBAC and no external assets;
 everything it shows comes from `/v1/servers`, `/v1/traffic`, `/v1/alerts`,
-`/readyz`, and `/version`.
+`/v1/history`, `/readyz`, and `/version`.
 
 - **Overview** (the landing page): Gateway readiness and version, counts of
   servers, routed servers, and tools, and recent request volume, error rate,
@@ -425,9 +426,14 @@ everything it shows comes from `/v1/servers`, `/v1/traffic`, `/v1/alerts`,
   whose tool discovery failed, or whose recent requests mostly fail (at
   least half of at least five), with the reason, and links to the Alerts
   page. **Failing tools** lists the five tools with the most failed calls.
+- **Dashboard**: charts of the last hour, 6 hours, or 24 hours for all
+  servers, one server, or one tool, with the busiest and most failing
+  servers and tools (see [Console dashboards](#console-dashboards)).
 - **Servers**: every `MCPServer` with its health, recent request count and
   error rate, declared and reported version (marked when they differ),
-  conditions, and discovered tools with input schemas. A connect
+  conditions, and discovered tools with input schemas. Its **Dashboard** tab
+  charts the server and lists each tool's calls, errors, error rate, and
+  p95 for the range; choosing a tool charts that tool. A connect
   panel gives the route URL and ready-to-paste MCP client, Python agent, and
   curl snippets. **Copy diagnostics** copies a metadata-only summary
   (conditions, tools, recent traffic; no tool inputs or results, and the
@@ -457,6 +463,42 @@ kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 # open http://localhost:18080/ui/ and sign in as admin with:
 kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
+
+### Console dashboards
+
+Each Gateway replica keeps its own calls of the last 24 hours in memory: per
+route, calls by outcome class, latency in the buckets of
+`kavrynt_gateway_mcp_request_duration_seconds`, and bytes in and out; per
+tool, `tools/call` requests by outcome class and latency. Points are one
+minute apart for the last hour and five minutes apart for 6 and 24 hours.
+The classes are `ok`, `toolError` (`tool_error`, `rpc_error`),
+`upstreamError` (`upstream_error`, `upstream_unreachable`, `timeout`), and
+`other` (every other outcome, such as calls the Gateway refused). The error
+rate is the share of calls that are not `ok`; p50 and p95 are computed like
+`histogram_quantile`.
+
+The Dashboard page and each server's Dashboard tab chart requests per
+minute by class, error rate, p50 and p95 latency, and bytes per second
+(not for a tool: bytes are counted per route, as in the metrics). The
+console alerts that started or resolved in the range are marked with
+dashed lines and listed under the charts; resolved alerts are kept for 24
+hours for this, while `/v1/alerts` lists only the last hour. Hovering a
+chart, or focusing it and using the arrow keys, shows its values; a table
+of the same numbers is there for screen readers. The range and scope are
+part of the URL.
+
+The numbers are this replica's since it started: a restart begins the
+history again, and replicas do not add up their calls. For cluster-wide
+or longer history, use the Grafana dashboards (chart:
+`metrics.dashboard.enabled`), which the page links when
+`console.grafanaURL` (`--grafana-url`) is set.
+
+Memory is fixed by the number of routes and tools: about 29 KiB per route
+and 23 KiB per tool. Tools are charted on their own up to
+`console.history.maxTools` (`--history-max-tools`, default 500) across
+routes; calls to further tools count as their route's `other` tool. With
+the default and 300 routes the history takes about 27 MiB. Routes of
+deleted `MCPServer`s are dropped within a minute.
 
 ### Console alerts
 
@@ -645,6 +687,8 @@ grouped by `client_id` or `subject`.
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
 | `--strict-protocol` | `true` (chart: `config.strictProtocol`) | Refuse requests that are not well-formed MCP Streamable HTTP; `false` forwards them |
 | `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` and `/v1/alerts` |
+| `--history-max-tools` | `500` (chart: `console.history.maxTools`) | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool |
+| `--grafana-url` | none (chart: `console.grafanaURL`) | Grafana base URL (http or https, no credentials, query, or fragment) the dashboards link for cluster-wide history (`KAVRYNT_GRAFANA_URL`) |
 | `--alerts-config` | none: the defaults (chart: the mounted `<release>-console-alerts`) | JSON file with the console alert thresholds, reread when it changes (`KAVRYNT_ALERTS_CONFIG`) |
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`

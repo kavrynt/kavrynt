@@ -301,8 +301,8 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 The end-to-end test installs it, restarts every Gateway replica while a
 client calls tools continuously (no call may fail), and deletes the Operator
 leader (the standby must reconcile new servers). Recent traffic in the
-console, the console's traffic alerts, and the console login limiter are
-per Gateway replica; use Prometheus for cluster-wide traffic.
+console, the console's dashboards and traffic alerts, and the console login
+limiter are per Gateway replica; use Prometheus for cluster-wide traffic.
 
 ## Backing up
 
@@ -594,6 +594,8 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
 | `gateway.console.auth.sessionTTL` | string | `12h` | Console session lifetime |
+| `gateway.console.history.maxTools` | int | `500` | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool. Each replica keeps 24 hours in memory: about 29 KiB per route and 23 KiB per tool |
+| `gateway.console.grafanaURL` | string | `""` | Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the Grafana dashboards instead |
 | `gateway.metrics.scrapeAnnotations` | bool | `true` | Add `prometheus.io/*` pod annotations |
 | `gateway.metrics.serviceMonitor.enabled` | bool | `false` | Create a Prometheus Operator `ServiceMonitor` (requires its CRDs) |
 | `gateway.metrics.serviceMonitor.interval` | string | `30s` | Scrape interval |

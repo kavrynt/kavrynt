@@ -148,3 +148,23 @@ func TestAuditShipperConfiguration(t *testing.T) {
 		t.Fatalf("delivery to a metadata address = %v, want refused by the egress guard", err)
 	}
 }
+
+// Verifies SPEC-0024-R10: the Grafana URL the dashboards link is a plain
+// http or https URL, and the tool cap is bounded.
+func TestHistoryFlags(t *testing.T) {
+	for _, ok := range []string{"", "https://grafana.example.com", "http://grafana.monitoring.svc:3000/grafana/"} {
+		if err := checkHistoryFlags(500, ok); err != nil {
+			t.Errorf("--grafana-url %q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"javascript:alert(1)", "grafana.example.com", "https://user:pw@grafana.example.com", "https://grafana.example.com/?orgId=1", "https://grafana.example.com/#x", "ftp://grafana.example.com"} {
+		if err := checkHistoryFlags(500, bad); err == nil {
+			t.Errorf("--grafana-url %q accepted", bad)
+		}
+	}
+	for _, n := range []int{0, -1, 10001} {
+		if err := checkHistoryFlags(n, ""); err == nil {
+			t.Errorf("--history-max-tools %d accepted", n)
+		}
+	}
+}

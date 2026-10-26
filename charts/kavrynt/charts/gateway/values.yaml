@@ -148,6 +148,17 @@ console:
     existingSecret: ""
     # Session lifetime; changing the password also ends every session.
     sessionTTL: 12h
+  # Dashboards (SPEC-0024): each replica keeps 24 hours of its own calls in
+  # memory, about 29 KiB per route and 23 KiB per tool (about 27 MiB for
+  # 300 routes with the default cap).
+  history:
+    # Tools charted on their own, across routes; further tools count as
+    # their route's "other" tool.
+    maxTools: 500
+  # Grafana base URL (http or https) the dashboards link for cluster-wide
+  # history, for example https://grafana.example.com. Empty names the
+  # Grafana dashboards (metrics.dashboard.enabled) instead.
+  grafanaURL: ""
 
 # MCP traffic metrics on /metrics: requests, outcomes, and latency per MCP
 # server, method, and tool. Metadata only; bodies are never recorded.

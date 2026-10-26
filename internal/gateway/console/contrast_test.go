@@ -74,7 +74,8 @@ func contrast(t *testing.T, a, b string) float64 {
 	return (la + 0.05) / (lb + 0.05)
 }
 
-// Verifies SPEC-0002-R16.
+// Verifies SPEC-0002-R16 and SPEC-0024-R08 (chart series, marks, and the
+// cursor are graphical objects: 3:1 against the panel).
 func TestThemeContrastMeetsWCAGAA(t *testing.T) {
 	// Text pairs need 4.5:1 (WCAG 2.2 1.4.3); focus indicators and state
 	// borders need 3:1 against what they sit on (1.4.11).
@@ -107,6 +108,13 @@ func TestThemeContrastMeetsWCAGAA(t *testing.T) {
 		{"--accent", "--bg", 3, "focus outline"},
 		{"--warn", "--surface", 3, "attention borders"},
 		{"--bad", "--surface", 3, "failing borders"},
+		{"--ok", "--surface", 3, "ok chart series, resolved alert marks"},
+		{"--warn", "--surface", 3, "tool error and p95 chart series"},
+		{"--bad", "--surface", 3, "upstream failure and error rate series, alert start marks"},
+		{"--info", "--surface", 3, "refused and bytes out chart series"},
+		{"--accent", "--surface", 3, "p50 and bytes in chart series"},
+		{"--text", "--surface", 3, "chart cursor"},
+		{"--muted", "--surface", 4.5, "chart axis labels"},
 	}
 	for name, tokens := range themes(t) {
 		for _, p := range pairs {

@@ -1,6 +1,7 @@
 package alerts
 
 import (
+	"fmt"
 	"math"
 	"testing"
 	"time"
@@ -341,5 +342,41 @@ func TestWindowForgetsOldCalls(t *testing.T) {
 	routes, tools = w.Snapshot(t0.Add(10 * time.Minute))
 	if routes["team-a.search"].Calls != 1 || tools[[2]string{"team-a.search", "lookup"}].Errors != 0 {
 		t.Fatalf("after 10 minutes: routes = %+v, tools = %+v", routes, tools)
+	}
+}
+
+// Verifies SPEC-0024-R09: resolved alerts are kept for 24 hours for the
+// dashboards while List still shows only the last hour, and Within returns
+// the alerts active inside a range about a scope.
+func TestWithinKeepsResolvedAlertsForADay(t *testing.T) {
+	e, w := newTestEvaluator()
+	minutes(e, w, 0, 13, calls{"tools/call", "lookup", "tool_error", 10, 3, time.Millisecond})
+	minutes(e, w, 13, 30, calls{"tools/call", "lookup", "ok", 10, 0, time.Millisecond})
+	assertAlerts(t, e, "ToolErrors/team-a.search/lookup/resolved")
+	other := model.Server{Namespace: "team-b", Name: "other", Route: "team-b.other", CreatedAt: t0,
+		Conditions: []model.Condition{*cond("Ready", "False", "EndpointRejected", t0.Add(-time.Hour))}}
+	servers := []model.Server{readyServer(), other}
+
+	later := t0.Add(3 * time.Hour)
+	e.Evaluate(later, servers)
+	assertAlerts(t, e, "ServerNotReady/team-b.other//active")
+
+	day := names(e.Within(later.Add(-24*time.Hour), later, "", ""))
+	if want := []string{"ServerNotReady/team-b.other//active", "ToolErrors/team-a.search/lookup/resolved"}; fmt.Sprint(day) != fmt.Sprint(want) {
+		t.Fatalf("Within the last day = %v, want %v", day, want)
+	}
+	if hour := names(e.Within(later.Add(-time.Hour), later, "", "")); fmt.Sprint(hour) != "[ServerNotReady/team-b.other//active]" {
+		t.Fatalf("Within the last hour = %v", hour)
+	}
+	if route := names(e.Within(later.Add(-24*time.Hour), later, "team-a.search", "")); fmt.Sprint(route) != "[ToolErrors/team-a.search/lookup/resolved]" {
+		t.Fatalf("Within team-a.search = %v", route)
+	}
+	if tool := names(e.Within(later.Add(-24*time.Hour), later, "team-a.search", "fetch")); len(tool) != 0 {
+		t.Fatalf("Within another tool = %v, want none", tool)
+	}
+
+	e.Evaluate(t0.Add(25*time.Hour), servers)
+	if len(e.Within(t0, t0.Add(25*time.Hour), "team-a.search", "")) != 0 {
+		t.Fatal("a resolved alert is kept longer than 24 hours")
 	}
 }

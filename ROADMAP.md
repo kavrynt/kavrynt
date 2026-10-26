@@ -11,7 +11,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   conditions, and tool discovery into `status.tools`.
 - Gateway HTTP routing at `/mcp/<namespace>.<name>`, credential header
   stripping, egress restrictions, and a read-only web console with an
-  overview of failing servers and tools and a single admin login.
+  overview of failing servers and tools, dashboards of the last 24 hours
+  kept by the Gateway itself, and a single admin login.
 - Signed multi-architecture images and an OCI Helm chart.
 - `helm upgrade` and `helm rollback` that carry the `MCPServer` CRD, tested
   from the previous release on every change.
