@@ -167,7 +167,38 @@ answers new MCP requests `503` without forwarding them, so no call is served
 without its record; `drop` serves them and counts the lost events. Metrics:
 `kavrynt_gateway_audit_events_total`, `kavrynt_gateway_audit_overflow_total{action}`,
 `kavrynt_gateway_audit_queue_length`. Queued events are written on graceful
-shutdown. Delivery to Kavrynt Cloud is not implemented.
+shutdown.
+
+**Delivery to Kavrynt Cloud** (SPEC-0017, opt-in). With `--audit-cloud-url`
+(chart: `gateway.audit.cloud`) the Gateway also sends every written event to
+Kavrynt Cloud, so the chains can be checked outside the cluster. Events
+leave the cluster with the caller's `subject`, `client_id`, and `issuer`
+(personal data); never arguments, results, or tokens. Standard output keeps
+every event either way.
+
+- `POST <url>/v1/sync/audit-events` with `Authorization: Bearer <cluster
+  token>` and `{"events": [...]}`: at most 500 events and 1 MiB per batch,
+  sent when a batch is full and at least every 10 seconds, in `seq` order.
+  The kavrynt-cloud ingestion service must serve this endpoint; until it
+  does, delivery fails and `KavryntAuditDeliveryStale` fires.
+- Only an answer `2xx` removes events. Anything else retries the same events
+  with exponential backoff and jitter (1 s up to 5 min), or `Retry-After` on
+  `429` and `503`, so Cloud can receive an event twice; `instance` and `seq`
+  identify it.
+- Undelivered events wait in a buffer of `--audit-cloud-buffer-size`
+  (100,000). When it is full the oldest are dropped from delivery and
+  counted; MCP requests are never delayed by delivery.
+- The token is read from `--audit-cloud-token-file` before every attempt
+  (a rotated Secret needs no restart) and never logged. Requests use HTTPS
+  only, follow no redirects, time out after 30 s, and refuse link-local,
+  cloud metadata, and loopback addresses like MCP traffic.
+- Metrics: `kavrynt_gateway_audit_delivery_total{result}` (`delivered`,
+  `throttled`, `rejected`, `server_error`, `network`, `token`),
+  `kavrynt_gateway_audit_delivery_buffer_length`,
+  `kavrynt_gateway_audit_delivery_dropped_total`, and
+  `kavrynt_gateway_audit_delivery_last_success_timestamp_seconds`.
+- At shutdown, after writing its queue, the Gateway makes one last delivery
+  attempt within `--shutdown-timeout`.
 
 ## Tool authorization policy
 
@@ -554,6 +585,10 @@ are in the [Operator reference](../operator/README.md#metrics-reference).
 | `kavrynt_gateway_audit_events_total` | counter | none; with audit on |
 | `kavrynt_gateway_audit_overflow_total` | counter | `action` (`reject`, `drop`); with audit on |
 | `kavrynt_gateway_audit_queue_length` | gauge | none; with audit on |
+| `kavrynt_gateway_audit_delivery_total` | counter | `result` (`delivered`, `throttled`, `rejected`, `server_error`, `network`, `token`); with audit delivery to Kavrynt Cloud |
+| `kavrynt_gateway_audit_delivery_buffer_length` | gauge | none; with audit delivery |
+| `kavrynt_gateway_audit_delivery_dropped_total` | counter | none; with audit delivery |
+| `kavrynt_gateway_audit_delivery_last_success_timestamp_seconds` | gauge | none; Unix time, the Gateway's start until the first accepted batch; with audit delivery |
 | `kavrynt_gateway_policy_decisions_total` | counter | `result` (`allow`, `deny`, `error`); with a policy |
 | `kavrynt_gateway_policy_load_failures_total` | counter | none; with a policy |
 | `kavrynt_gateway_policy_info` | gauge | `revision` (the active policy only, value 1); with a policy |
@@ -601,6 +636,9 @@ grouped by `client_id` or `subject`.
 | `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
 | `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |
 | `--audit-on-overflow` | `reject` (chart: `audit.onOverflow`) | With a full queue: `reject` new MCP requests (`503`) or `drop` their events |
+| `--audit-cloud-url` | none (chart: `audit.cloud.url` with `audit.cloud.enabled`) | Kavrynt Cloud base URL (https) to deliver audit events to; needs `--audit` (`KAVRYNT_AUDIT_CLOUD_URL`) |
+| `--audit-cloud-token-file` | `/etc/kavrynt/audit-cloud/token` (chart: the mounted `audit.cloud.tokenSecret`) | Cluster token file (`KAVRYNT_AUDIT_CLOUD_TOKEN_FILE`) |
+| `--audit-cloud-buffer-size` | `100000` (chart: `audit.cloud.bufferSize`) | Undelivered events kept; the oldest are dropped when full |
 | `--policy-dir` | none (chart: the mounted `gateway.policy.configMap`) | Directory of the tool authorization policy (`.rego` files); every MCP request is then decided by it (`KAVRYNT_POLICY_DIR`) |
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |

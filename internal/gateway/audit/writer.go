@@ -45,6 +45,23 @@ type Writer struct {
 	written  prometheus.Counter
 	overflow *prometheus.CounterVec
 	queued   prometheus.GaugeFunc
+
+	// sink receives each event after it is written (SPEC-0017).
+	sink atomic.Pointer[sinkHolder]
+}
+
+// Sink receives each written event as its JSON line, without the newline.
+// Add must not block: the writer calls it in output order.
+type Sink interface {
+	Add(line []byte)
+}
+
+type sinkHolder struct{ sink Sink }
+
+// SetSink passes every event written from now on to s, after standard
+// output (SPEC-0017-R02).
+func (w *Writer) SetSink(s Sink) {
+	w.sink.Store(&sinkHolder{s})
 }
 
 // New starts a Writer for instance writing to out. mode is Reject or Drop.
@@ -146,6 +163,9 @@ func (w *Writer) run() {
 		_, _ = w.out.Write(append(line, '\n'))
 		_ = w.out.Flush()
 		w.written.Inc()
+		if holder := w.sink.Load(); holder != nil {
+			holder.sink.Add(line[:len(line):len(line)])
+		}
 		<-w.slots
 	}
 }

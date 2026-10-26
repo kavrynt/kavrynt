@@ -7,6 +7,7 @@
 # docs/runbooks do not match one to one, or a runbook lacks a section.
 # Verifies SPEC-0021-R02, SPEC-0021-R03, and SPEC-0021-R04: the tool error and
 # discovery alerts fire and stay quiet, with their annotations and runbooks.
+# Verifies SPEC-0017-R05: KavryntAuditDeliveryStale fires and stays quiet.
 rule_files:
   - rules.yaml
 
@@ -211,6 +212,46 @@ tests:
     alert_rule_test:
       - eval_time: 20m
         alertname: KavryntCloudSyncStale
+        exp_alerts: []
+
+  # Verifies SPEC-0017-R05.
+  - name: KavryntAuditDeliveryStale fires when events wait and Cloud accepts nothing
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_gateway_audit_delivery_last_success_timestamp_seconds{job="kavrynt-gateway", instance="10.0.0.1:8080"}'
+        values: '60x30'
+      - series: 'kavrynt_gateway_audit_delivery_buffer_length{job="kavrynt-gateway", instance="10.0.0.1:8080"}'
+        values: '50+100x30'
+    alert_rule_test:
+      - eval_time: 15m
+        alertname: KavryntAuditDeliveryStale
+        exp_alerts: []
+      - eval_time: 20m
+        alertname: KavryntAuditDeliveryStale
+        exp_alerts:
+          - exp_labels: {kavrynt_release: kavrynt, severity: warning, component: gateway, job: kavrynt-gateway, instance: "10.0.0.1:8080"}
+            exp_annotations:
+              summary: Gateway 10.0.0.1:8080 cannot deliver audit events to Kavrynt Cloud.
+              description: Audit events are waiting and Kavrynt Cloud accepted no batch for 19m 0s. Standard output still has every event; the oldest undelivered events are dropped once the buffer is full.
+              runbook_url: https://runbooks.test/KavryntAuditDeliveryStale.md
+
+  # Verifies SPEC-0017-R05.
+  - name: KavryntAuditDeliveryStale stays quiet without waiting events or while batches are accepted
+    interval: 1m
+    input_series:
+      # Idle: nothing to deliver.
+      - series: 'kavrynt_gateway_audit_delivery_last_success_timestamp_seconds{job="kavrynt-gateway", instance="10.0.0.1:8080"}'
+        values: '60x30'
+      - series: 'kavrynt_gateway_audit_delivery_buffer_length{job="kavrynt-gateway", instance="10.0.0.1:8080"}'
+        values: '0x30'
+      # Busy and delivering.
+      - series: 'kavrynt_gateway_audit_delivery_last_success_timestamp_seconds{job="kavrynt-gateway", instance="10.0.0.2:8080"}'
+        values: '0+60x30'
+      - series: 'kavrynt_gateway_audit_delivery_buffer_length{job="kavrynt-gateway", instance="10.0.0.2:8080"}'
+        values: '200x30'
+    alert_rule_test:
+      - eval_time: 25m
+        alertname: KavryntAuditDeliveryStale
         exp_alerts: []
 
   - name: KavryntMCPToolErrorsHigh fires at 30% tool errors of 100 calls a minute

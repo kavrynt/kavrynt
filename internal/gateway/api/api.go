@@ -244,6 +244,12 @@ func (h *Handler) EnableAlerts(config func() alerts.Config) *alerts.Evaluator {
 	return h.alerts
 }
 
+// EnableAuditDelivery exports the metrics of the audit delivery to Kavrynt
+// Cloud (SPEC-0017-R05).
+func (h *Handler) EnableAuditDelivery(s *audit.Shipper) {
+	h.registry.MustRegister(s.Collectors()...)
+}
+
 // EnableConsole serves console under /ui/ and redirects / to it. The console
 // receives paths without the /ui prefix.
 func (h *Handler) EnableConsole(console http.Handler) {

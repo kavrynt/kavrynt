@@ -111,6 +111,30 @@ tests:
           path: spec.groups[1].rules[3].alert
           value: KavryntCloudSyncStale
 
+  # Verifies SPEC-0017-R05.
+  - it: adds the audit delivery alert when delivery is on
+    template: templates/prometheusrule.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.auditDeliveryStaleSeconds: 900
+      gateway.audit.enabled: true
+      gateway.audit.cloud.enabled: true
+      gateway.audit.cloud.url: https://cloud.example.com
+      gateway.audit.cloud.tokenSecret.name: kavrynt-cloud-token
+    asserts:
+      - lengthEqual:
+          path: spec.groups[0].rules
+          count: 6
+      - equal:
+          path: spec.groups[0].rules[5].alert
+          value: KavryntAuditDeliveryStale
+      - matchRegex:
+          path: spec.groups[0].rules[5].expr
+          pattern: '> 900\n'
+      - equal:
+          path: spec.groups[0].rules[5].annotations.runbook_url
+          value: https://github.com/kavrynt/kavrynt/blob/v1.2.3/docs/runbooks/KavryntAuditDeliveryStale.md
+
   # Verifies SPEC-0010-R04.
   - it: labels every alert and links its runbook at the chart's release tag
     template: templates/prometheusrule.yaml

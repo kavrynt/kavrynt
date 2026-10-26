@@ -38,8 +38,9 @@ and `operator` repositories are archived and must not receive new changes.
   design. Implemented: no token passthrough, MCP client authentication
   (SPEC-0006, on by default in the chart per SPEC-0014), static upstream
   credentials (SPEC-0011), tool authorization policy (SPEC-0012, opt-in),
-  audit events (SPEC-0013, opt-in, stdout only), and token exchange
-  (SPEC-0015). Not yet: approvals, audit delivery to Kavrynt Cloud.
+  audit events (SPEC-0013, opt-in), their delivery to Kavrynt Cloud
+  (SPEC-0017, opt-in; the Cloud ingestion endpoint lives in kavrynt-cloud),
+  and token exchange (SPEC-0015). Not yet: approvals.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -139,7 +140,13 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   sends only that, and caches it until shortly before expiry; failures
   answer `502`/`503` (`exchange_failed`). The Operator skips tool discovery
   for such servers (`CallerTokenRequired`).
-- Not implemented: approvals, audit delivery to Kavrynt Cloud.
+- Opt-in audit delivery (`gateway.audit.cloud`, SPEC-0017): the Gateway also
+  sends written audit events to Kavrynt Cloud `POST /v1/sync/audit-events`
+  in batches (500 events, 1 MiB, every 10 s) with the cluster token from a
+  mounted Secret, retries with backoff, buffers 100,000 events (oldest
+  dropped and counted), and alerts with `KavryntAuditDeliveryStale`. The
+  Cloud side of that endpoint is not in this repository.
+- Not implemented: approvals.
   Never claim them in code comments, docs, or release notes until they are
   implemented and tested.
 

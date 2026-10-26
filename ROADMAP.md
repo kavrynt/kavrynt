@@ -42,7 +42,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 1. Approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 2. The console signed in through the authorization server.
-3. Audit delivery to Kavrynt Cloud and usage events.
+3. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
+   Cloud ingestion service and an end-to-end test) and usage events.
 4. Protocol-aware routing beyond the request checks, such as sessions that
    follow a Gateway replica.
 5. Recovery workflows (restoring into a new cluster).

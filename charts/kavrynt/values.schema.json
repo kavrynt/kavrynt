@@ -63,6 +63,7 @@
             "minToolRequestsPerSecond": { "type": "number", "minimum": 0 },
             "discoveryFailingFor": { "type": "string", "pattern": "^[0-9]+[smh]$" },
             "cloudSyncStaleSeconds": { "type": "integer", "minimum": 60 },
+            "auditDeliveryStaleSeconds": { "type": "integer", "minimum": 60 },
             "runbookBaseURL": { "type": "string", "pattern": "^(https://\\S+)?$" }
           }
         },

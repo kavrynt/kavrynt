@@ -99,6 +99,21 @@ audit:
   # With a full queue: reject (refuse new MCP requests with 503; no call is
   # served without its record) or drop (serve them, count the lost events).
   onOverflow: reject
+  # Deliver the events to Kavrynt Cloud as well (SPEC-0017), in batches over
+  # HTTPS with the cluster token, so their chains can be checked outside the
+  # cluster. Events include the caller's subject and client ID. Standard
+  # output keeps every event. Use the same URL and Secret as operator.cloud.
+  cloud:
+    enabled: false
+    # Kavrynt Cloud base URL; https only.
+    url: ""
+    tokenSecret:
+      # Secret in the release namespace holding the cluster token.
+      name: ""
+      key: token
+    # Undelivered events kept while Cloud is unreachable; when full, the
+    # oldest are dropped and counted.
+    bufferSize: 100000
 
 # Tool authorization policy (SPEC-0012): every MCP request is allowed or
 # denied by Rego policy evaluated in the Gateway (Open Policy Agent). The

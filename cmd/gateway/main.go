@@ -52,6 +52,9 @@ func main() {
 	auditEnabled := flag.Bool("audit", false, "Write one audit event per MCP request as a JSON line on standard output")
 	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
 	auditOverflow := flag.String("audit-on-overflow", audit.Reject, "With a full audit queue: reject (refuse new MCP requests with 503) or drop (serve them, count the lost events)")
+	auditCloudURL := flag.String("audit-cloud-url", getenv("KAVRYNT_AUDIT_CLOUD_URL", ""), "Kavrynt Cloud base URL (https) to deliver audit events to, besides standard output; needs --audit")
+	auditCloudTokenFile := flag.String("audit-cloud-token-file", getenv("KAVRYNT_AUDIT_CLOUD_TOKEN_FILE", "/etc/kavrynt/audit-cloud/token"), "File with the Kavrynt Cloud cluster token, read before every delivery")
+	auditCloudBuffer := flag.Int("audit-cloud-buffer-size", audit.DefaultCloudBuffer, "Undelivered audit events kept for Kavrynt Cloud; when full, the oldest are dropped (standard output keeps them)")
 	policyDir := flag.String("policy-dir", getenv("KAVRYNT_POLICY_DIR", ""), "Directory of the mounted tool authorization policy (.rego files defining data.kavrynt.authz.decision); every MCP request is then allowed or denied by it")
 	policyFilterToolsList := flag.Bool("policy-filter-tools-list", false, "With --policy-dir, list in each tools/list answer only the tools the policy lets the caller call")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
@@ -128,6 +131,15 @@ func main() {
 		}
 		handler.EnableAudit(auditWriter)
 	}
+	auditShipper, err := newAuditShipper(*auditEnabled, *auditCloudURL, *auditCloudTokenFile, *auditCloudBuffer, *allowLoopback)
+	if err != nil {
+		slog.Error("configure audit delivery to Kavrynt Cloud", "error", err)
+		os.Exit(1)
+	}
+	if auditShipper != nil {
+		auditWriter.SetSink(auditShipper)
+		handler.EnableAuditDelivery(auditShipper)
+	}
 	handler.EnableUpstreamCredentials(upstreamcred.Store{Dir: *upstreamCredentialsDir})
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
@@ -159,6 +171,9 @@ func main() {
 		alertConfig = alerts.FileConfig(*alertsConfig, alerts.DefaultConfig(build.Version), slog.Default())
 	}
 	go handler.EnableAlerts(alertConfig).Run(ctx, alerts.EvaluationInterval, table.Servers)
+	if auditShipper != nil {
+		go auditShipper.Run(ctx)
+	}
 
 	errCh := make(chan error, 2)
 	go func() {
@@ -205,6 +220,14 @@ func main() {
 		}
 		cancelFlush()
 	}
+	if auditShipper != nil {
+		// One last delivery; standard output already has every event.
+		deliverCtx, cancelDeliver := context.WithTimeout(context.Background(), *shutdownTimeout)
+		if err := auditShipper.Flush(deliverCtx); err != nil {
+			slog.Warn("audit events not delivered to Kavrynt Cloud at shutdown", "error", err, "waiting", auditShipper.Len())
+		}
+		cancelDeliver()
+	}
 	slog.Info("gateway stopped")
 	os.Exit(exitCode)
 }
@@ -222,6 +245,28 @@ func shutdown(handler *api.Handler, server *http.Server, delay, timeout time.Dur
 	ctx, cancel := context.WithTimeout(context.Background(), timeout)
 	defer cancel()
 	return server.Shutdown(ctx)
+}
+
+// newAuditShipper returns the audit delivery to Kavrynt Cloud (SPEC-0017),
+// or nil without a Cloud URL. Its requests follow the egress guard
+// (SPEC-0017-R06).
+func newAuditShipper(auditEnabled bool, url, tokenFile string, buffer int, allowLoopback bool) (*audit.Shipper, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, nil
+	}
+	if !auditEnabled {
+		return nil, errors.New("--audit-cloud-url needs --audit: only written audit events are delivered")
+	}
+	if buffer <= 0 {
+		return nil, fmt.Errorf("--audit-cloud-buffer-size must be positive, got %d", buffer)
+	}
+	return audit.NewShipper(audit.CloudConfig{
+		URL:       url,
+		TokenFile: tokenFile,
+		Buffer:    buffer,
+		Version:   build.Version,
+		Transport: egress.Transport(allowLoopback),
+	})
 }
 
 // newConsoleAuth returns the console admin login, or nil when the console or
