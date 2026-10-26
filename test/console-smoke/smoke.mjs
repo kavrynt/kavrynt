@@ -174,6 +174,9 @@ await check("dashboards: page and server tab", async (page) => {
   await page.waitForFunction(() => location.hash.includes("range=6h"));
   await page.selectOption("select[aria-label='Server']", route);
   await page.waitForFunction((r) => location.hash.includes("route=" + encodeURIComponent(r)), route);
+  // The view redraws on hashchange, after the hash: wait for the
+  // all-servers lists to go, then for the server's charts.
+  await page.waitForSelector("h2:text('Busiest servers')", { state: "detached" });
   await page.waitForSelector("svg.chart");
   const chart = page.locator("svg.chart").first();
   await chart.focus();
@@ -186,6 +189,8 @@ await check("dashboards: page and server tab", async (page) => {
   await page.waitForSelector("section:has(h2:text('Per tool')) a:text('" + tool + "')");
   await page.click("section:has(h2:text('Per tool')) a:text('" + tool + "')");
   await page.waitForFunction((t) => location.hash.includes("tool=" + t), tool);
+  // A tool has no bytes chart: the server's must go before the tool's are counted.
+  await page.waitForSelector("h2:text('Bytes per second')", { state: "detached" });
   await page.waitForSelector("svg.chart");
   assert.equal(await page.locator("svg.chart").count(), 3, "a tool has no bytes chart");
 });
