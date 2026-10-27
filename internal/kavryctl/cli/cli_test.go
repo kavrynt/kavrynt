@@ -139,6 +139,23 @@ func TestValidateRejectsInvalidManifest(t *testing.T) {
 	}
 }
 
+// stdio manifests stay valid, but the Gateway never routes them, so
+// validate and register say so on stderr (issue #87).
+func TestStdioManifestsWarnThatTheyAreNotRouted(t *testing.T) {
+	useFakeClient(t, "team-a")
+	stdio := writeManifest(t, "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata:\n  name: files\nspec:\n  version: 0.1.0\n  transport: stdio\n  command: npx\n")
+	const warning = "warning: the Gateway does not proxy stdio servers"
+	for _, command := range []string{"validate", "register"} {
+		_, errOut, code := run(t, command, stdio)
+		if code != 0 || !strings.Contains(errOut, warning) {
+			t.Errorf("%s stdio: code=%d err=%q", command, code, errOut)
+		}
+		if _, errOut, _ := run(t, command, writeManifest(t, httpManifest)); strings.Contains(errOut, "warning") {
+			t.Errorf("%s http warned: %q", command, errOut)
+		}
+	}
+}
+
 func TestUnregisterMissingServerFails(t *testing.T) {
 	useFakeClient(t, "default")
 	_, errOut, code := run(t, "unregister", "missing")

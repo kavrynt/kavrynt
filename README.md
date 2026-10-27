@@ -138,7 +138,9 @@ The current MVP supports:
 - health, readiness, version, metrics, and route inspection endpoints.
 
 Manifests can describe `stdio` servers, but Gateway runtime proxying currently
-supports HTTP endpoints only.
+supports HTTP endpoints only. A `stdio` server can run behind a Streamable
+HTTP bridge and be registered with the bridge's endpoint:
+[examples/stdio-bridge](examples/stdio-bridge/filesystem.yaml).
 
 ## Install on Kubernetes
 

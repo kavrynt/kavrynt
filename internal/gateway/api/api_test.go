@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -185,5 +186,33 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 	handler.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(metrics.Body.String(), "kavrynt_gateway_stripped_credential_requests_total 1") {
 		t.Fatalf("metrics missing stripped count:\n%s", metrics.Body.String())
+	}
+}
+
+// A registered server the Gateway does not route says why, instead of
+// claiming it is not registered (issue #87).
+func TestProxyExplainsUnroutedServers(t *testing.T) {
+	handler, calls := demoHandler(t, okResponse)
+	handler.table.ReplaceServers([]model.Server{
+		{Namespace: "team-a", Name: "files", Route: "team-a.files", Transport: "stdio"},
+		{Namespace: "team-a", Name: "pending", Route: "team-a.pending", Transport: "http"},
+	})
+	for route, want := range map[string]string{
+		"team-a.files":   `MCP server "team-a.files" uses the stdio transport, which the Gateway does not proxy; run it behind a Streamable HTTP bridge and register the bridge's http endpoint`,
+		"team-a.pending": `MCP server "team-a.pending" is registered but not routed; check its Ready condition`,
+		"team-a.missing": `MCP server "team-a.missing" is not registered`,
+	} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/"+route, strings.NewReader(`{}`)))
+		var body errorResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if rr.Code != http.StatusNotFound || body.Error != want {
+			t.Errorf("%s: %d %q, want 404 %q", route, rr.Code, body.Error, want)
+		}
+	}
+	if *calls != 0 {
+		t.Fatalf("%d requests reached an MCP server", *calls)
 	}
 }
