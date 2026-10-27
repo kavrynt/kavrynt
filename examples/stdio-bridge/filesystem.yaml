@@ -1,0 +1,119 @@
+# A stdio-only MCP server behind the Gateway. The Gateway proxies MCP
+# Streamable HTTP only, so a server that speaks stdio runs behind a bridge in
+# its own pod: supergateway starts it as a child process and serves it at
+# /mcp, and the MCPServer registers that http endpoint.
+#
+# This runs the official filesystem server on a scratch volume:
+#
+#   kubectl apply -f filesystem.yaml
+#   kubectl -n kavrynt-try wait mcpserver/files --for=condition=ToolsDiscovered --timeout=3m
+#
+# For trying the pattern only: npx downloads both packages when the pod
+# starts. For real use, build an image with exact, reviewed versions of the
+# bridge and the server, and mount only the data the server should see.
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: kavrynt-try
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: files
+  namespace: kavrynt-try
+  labels:
+    app: files
+spec:
+  selector:
+    matchLabels:
+      app: files
+  template:
+    metadata:
+      labels:
+        app: files
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      initContainers:
+        - name: seed
+          image: node:22-slim
+          command: ["sh", "-c", "echo 'quarterly numbers: 42' > /data/report.txt"]
+          resources:
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+      containers:
+        - name: bridge
+          image: node:22-slim
+          # npx writes its cache under HOME; the root filesystem is read-only.
+          env:
+            - name: HOME
+              value: /tmp
+          command:
+            - npx
+            - -y
+            - supergateway@3
+            - --stdio
+            - npx -y @modelcontextprotocol/server-filesystem /data
+            - --outputTransport
+            - streamableHttp
+            - --port
+            - "8000"
+            - --streamableHttpPath
+            - /mcp
+          ports:
+            - containerPort: 8000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+          volumeMounts:
+            - name: data
+              mountPath: /data
+            - name: tmp
+              mountPath: /tmp
+      volumes:
+        - name: data
+          emptyDir: {}
+        - name: tmp
+          emptyDir: {}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: files
+  namespace: kavrynt-try
+spec:
+  selector:
+    app: files
+  ports:
+    - port: 8080
+      targetPort: 8000
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: files
+  namespace: kavrynt-try
+spec:
+  version: 1.0.0
+  transport: http
+  endpoint: http://files.kavrynt-try.svc.cluster.local:8080/mcp

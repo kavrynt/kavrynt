@@ -133,7 +133,15 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "valid MCPServer manifest: %s\n", server.Name)
+	warnNotRouted(stderr, server)
 	return 0
+}
+
+// warnNotRouted says when the Gateway will never route a valid server.
+func warnNotRouted(stderr io.Writer, server *kavryntv1alpha1.MCPServer) {
+	if server.Spec.Transport == "stdio" {
+		fmt.Fprintf(stderr, "warning: the Gateway does not proxy stdio servers, so %s will not be routed; run it behind a Streamable HTTP bridge and register the bridge's http endpoint (see examples/stdio-bridge)\n", server.Name)
+	}
 }
 
 // runAudit verifies Gateway audit event chains read from a file or standard
@@ -240,6 +248,7 @@ func runRegister(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintf(stdout, "%s MCPServer %s/%s@%s\n", action, server.Namespace, server.Name, server.Spec.Version)
+	warnNotRouted(stderr, server)
 	return 0
 }
 

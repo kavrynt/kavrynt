@@ -528,7 +528,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !exists {
-		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
+		writeError(w, http.StatusNotFound, h.unrouted(name))
 		return
 	}
 
@@ -892,6 +892,21 @@ func (h *Handler) observe(route string, call mcpCall, outcome string, status int
 	now := time.Now()
 	h.alertWindow.Record(now, route, method, tool, outcome, elapsed)
 	h.history.Record(now, route, method, tool, outcome, elapsed, bytesIn, bytesOut)
+}
+
+// unrouted says why a route is not served: the MCPServer is unknown, uses a
+// transport the Gateway does not proxy, or is not Ready.
+func (h *Handler) unrouted(name string) error {
+	for _, server := range h.table.Servers() {
+		if server.Route != name {
+			continue
+		}
+		if server.Transport != "http" {
+			return fmt.Errorf("MCP server %q uses the %s transport, which the Gateway does not proxy; run it behind a Streamable HTTP bridge and register the bridge's http endpoint", name, server.Transport)
+		}
+		return fmt.Errorf("MCP server %q is registered but not routed; check its Ready condition", name)
+	}
+	return fmt.Errorf("MCP server %q is not registered", name)
 }
 
 func parseMCPPath(path string) (string, string, bool) {

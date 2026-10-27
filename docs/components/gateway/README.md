@@ -8,6 +8,12 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - Watches `MCPServer` resources through a read-only informer cache
   (`internal/gateway/kube`). A server gets a route when the operator reports
   `Ready=True`, the spec passes validation, and the transport is `http`.
+  A request for a registered server without a route answers `404` saying
+  why: it uses the `stdio` transport, or it is not Ready. A `stdio` server
+  can run behind a Streamable HTTP bridge in its own pod and be registered
+  with the bridge's `http` endpoint
+  ([example](../../../examples/stdio-bridge/filesystem.yaml)); `kavryctl
+  validate` and `register` warn about `stdio` manifests.
 - Route path: `/mcp/<namespace>.<name>[/<suffix>]`. Suffix and query string are
   appended to the endpoint URL.
 - Endpoints are restricted to absolute `http`/`https` URLs without credentials
