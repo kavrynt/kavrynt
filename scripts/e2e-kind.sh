@@ -34,6 +34,22 @@ git_commit() {
   git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown'
 }
 
+# control_logs prints the whole logs of every pod in the control namespace
+# that matches a label selector. A Deployment's rollout is complete while
+# old pods still drain, so a pod listed here may be gone before its logs are
+# read; such a pod is skipped (its logs cannot be read any more), any other
+# error fails.
+control_logs() {
+  local pod
+  for pod in $(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get pods --selector "$1" --output name); do
+    if ! kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 "${pod}" 2>"${TEMP_DIR}/logs-error"; then
+      kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get "${pod}" >/dev/null 2>&1 &&
+        fail "cannot read the logs of ${pod}: $(cat "${TEMP_DIR}/logs-error")"
+      log "skipping the logs of ${pod}, which terminated while they were read" >&2
+    fi
+  done
+}
+
 diagnostics() {
   log "collecting failure diagnostics"
   kubectl --context "${KUBE_CONTEXT}" get nodes -o wide || true
@@ -316,8 +332,7 @@ done
 
 # Verifies SPEC-0014-R03. The logs are read first: grep --quiet would stop
 # reading early and fail the pipeline.
-GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+GATEWAY_LOGS="$(control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
 grep --fixed-strings --quiet "MCP client authentication is off" <<<"${GATEWAY_LOGS}" ||
   fail "the Gateway did not warn that MCP routes are unauthenticated"
 
@@ -380,8 +395,7 @@ done
   fail "Gateway must not read Secrets"
 
 log "verifying the Operator has the permissions it uses"
-if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=operator,app.kubernetes.io/instance=kavrynt |
+if control_logs app.kubernetes.io/name=operator,app.kubernetes.io/instance=kavrynt |
   grep --fixed-strings --quiet "forbidden"; then
   fail "Operator logged a forbidden API request; check its RBAC"
 fi
@@ -755,7 +769,7 @@ printf '%s' "${SERVERS_JSON}" | jq --exit-status --arg route "${SECURED_ID}" \
   fail "/v1/servers does not report the stored credential as available"
 for output in "${SERVERS_JSON}" "$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")" \
   "$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpservers -o yaml)" \
-  "$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 --selector app.kubernetes.io/instance=kavrynt)"; do
+  "$(control_logs app.kubernetes.io/instance=kavrynt)"; do
   if grep --fixed-strings --quiet "${UPSTREAM_SECRET_VALUE}" <<<"${output}"; then
     fail "the upstream credential appears in an API response, status, or log"
   fi
@@ -1000,8 +1014,7 @@ curl --silent "${GATEWAY_URL}/v1/session" | jq --exit-status '.mcpAuth == true' 
 curl --fail --silent --show-error "${GATEWAY_URL}/v1/routes" |
   jq --exit-status --arg route "${SERVER_ID}" '(.routes | map(.name) | index($route) != null) and all(.routes[]; has("endpoint") | not)' >/dev/null ||
   fail "/v1/routes lists endpoints while MCP client authentication is on"
-if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt | grep --fixed-strings --quiet "${TOKEN}"; then
+if control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt | grep --fixed-strings --quiet "${TOKEN}"; then
   fail "the Gateway logged an access token"
 fi
 
@@ -1042,8 +1055,7 @@ FORWARDED_CLAIMS="$(printf '%s' "${FORWARDED_TOKEN}" | cut -d. -f2 | tr '_-' '/+
 printf '%s' "${FORWARDED_CLAIMS}" | jq --exit-status --arg aud "${TICKETS_AUDIENCE}" \
   '.aud == $aud and .sub == "e2e-user" and .act.sub == "e2e-agent" and .scope == "tickets:read"' >/dev/null ||
   fail "the exchanged token does not carry the server's audience and the caller: ${FORWARDED_CLAIMS}"
-GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+GATEWAY_LOGS="$(control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
 for value in "${TICKETS_CALLER}" "${FORWARDED_TOKEN}" "${EXCHANGE_CLIENT_SECRET}"; do
   if grep --fixed-strings --quiet "${value}" <<<"${GATEWAY_LOGS}$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"; then
     fail "a token or the client secret appears in the Gateway logs or metrics"
@@ -1126,8 +1138,7 @@ log "verifying audit events and their chains"
 STATUS="$(mcp_status)"
 [ "${STATUS}" = "401" ] || fail "a call without a token answered HTTP ${STATUS}, want 401"
 sleep 2
-kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 --prefix=false \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
+control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
 grep '"type":"kavrynt.audit.v1"' "${TEMP_DIR}/gateway-audit.log" | jq --slurp --exit-status '
   any(.[]; .client_id == "e2e-agent" and .tool == "echo" and .decision == "allow" and .outcome == "ok" and .status == 200) and
   any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 403) and
