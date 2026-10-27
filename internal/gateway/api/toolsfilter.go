@@ -101,16 +101,7 @@ func (f *toolsFilter) emptyAnswer() []byte {
 
 // isAnswer reports whether message is the JSON-RPC response to the request.
 func (f *toolsFilter) isAnswer(message []byte) bool {
-	var envelope struct {
-		ID     json.RawMessage `json:"id"`
-		Result json.RawMessage `json:"result"`
-		Error  json.RawMessage `json:"error"`
-	}
-	if json.Unmarshal(message, &envelope) != nil || (envelope.Result == nil && envelope.Error == nil) {
-		return false
-	}
-	var got, want bytes.Buffer
-	return json.Compact(&got, envelope.ID) == nil && json.Compact(&want, f.id) == nil && got.String() == want.String()
+	return len(f.id) > 0 && isResponseTo(message, f.id)
 }
 
 // filterJSON reads a JSON answer within the inspection limit and returns it

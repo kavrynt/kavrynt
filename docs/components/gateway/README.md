@@ -596,7 +596,12 @@ tool arguments, and results are never recorded.
   `protocol_error` (`400`) when the request is not well-formed MCP
   Streamable HTTP; and `exchange_failed` (`502`/`503`) when the caller's
   token could not be exchanged for the server. JSON responses up
-  to 1 MiB are inspected; event streams are not.
+  to 1 MiB are inspected, and so are event-stream answers to a `POST`, event
+  by event (events up to 1 MiB), until the one that answers the request.
+  The answers the MCP specification gives for a feature a server does not
+  offer count as `ok`: `405` to the optional `GET` event stream or to a
+  `DELETE` that ends a session, and JSON-RPC "method not found"
+  (`-32601`) to the `server/discover` probe.
 
 The chart adds `prometheus.io/*` scrape annotations by default
 (`gateway.metrics.scrapeAnnotations`). Optional: a Prometheus Operator

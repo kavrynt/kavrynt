@@ -28,7 +28,7 @@
   const OUTCOMES = {
     ok: {
       cls: "ok",
-      definition: "The server answered without a JSON-RPC or tool error. Event-stream responses are not inspected and count as ok unless the HTTP status is an error.",
+      definition: "The server answered without a JSON-RPC or tool error, in JSON or in an event stream. Also the normal answers to a feature the server does not offer: 405 to the optional GET event stream or to ending a session, and method not found to server/discover.",
     },
     tool_error: {
       cls: "warn",
@@ -40,7 +40,7 @@
     },
     client_error: {
       cls: "warn",
-      definition: "The server answered with HTTP 4xx, for example 405 when a client opens the optional GET event stream and the server does not offer one.",
+      definition: "The server answered with HTTP 4xx, for example 404 when the endpoint path is wrong or 400 for a request it cannot read.",
     },
     upstream_error: {
       cls: "bad",

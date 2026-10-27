@@ -670,7 +670,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		if rec := auditRecordFrom(r); rec != nil {
 			rec.filteredTools = removed
 		}
-		outcome := classifyResponse(resp.StatusCode, nil)
+		outcome := classifyResponse(r, call, resp.StatusCode, nil)
 		if copyErr != nil {
 			outcome = outcomeIncomplete
 		}
@@ -683,9 +683,10 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	w.WriteHeader(resp.StatusCode)
 
 	// JSON responses are also captured (bounded) to detect JSON-RPC and tool
-	// errors; streamed responses (text/event-stream) are not inspected but
-	// flushed as they arrive.
+	// errors. Streamed responses (text/event-stream) are flushed as they
+	// arrive; those to a POST are read event by event for the same.
 	var captured *captureBuffer
+	var observer *streamObserver
 	var dst io.Writer = w
 	switch {
 	case isJSON(resp.Header.Get("Content-Type")):
@@ -693,9 +694,21 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		dst = io.MultiWriter(w, captured)
 	case stream:
 		dst = &flushWriter{w: w, controller: http.NewResponseController(w)}
+		if r.Method == http.MethodPost {
+			observer = &streamObserver{id: call.body.id}
+			dst = io.MultiWriter(dst, observer)
+		}
 	}
 	written, copyErr := io.Copy(dst, resp.Body)
-	outcome := classifyResponse(resp.StatusCode, captured)
+	var message []byte
+	switch {
+	case captured != nil && !captured.truncated:
+		message = captured.Bytes()
+	case observer != nil:
+		observer.finish()
+		message = observer.response
+	}
+	outcome := classifyResponse(r, call, resp.StatusCode, message)
 	if copyErr != nil {
 		outcome = outcomeIncomplete
 		if errors.Is(context.Cause(ctx), errRequestTimeout) {
