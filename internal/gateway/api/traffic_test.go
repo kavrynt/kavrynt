@@ -137,6 +137,191 @@ func TestTrafficMetricsClassifyCalls(t *testing.T) {
 	}
 }
 
+func eventStreamResponse(status int, body string) *http.Response {
+	return &http.Response{
+		StatusCode: status,
+		Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+		Body:       io.NopCloser(strings.NewReader(body)),
+	}
+}
+
+// The official MCP SDKs answer POST requests with an event stream, so its
+// response message is classified like a JSON answer.
+func TestTrafficMetricsClassifyEventStreams(t *testing.T) {
+	call := `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"refund"}}`
+	progress := "event: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"progress\":1}}\n\n"
+	tests := []struct {
+		name    string
+		body    string
+		stream  string
+		outcome string
+	}{
+		{
+			name:    "tool error after a notification",
+			body:    call,
+			stream:  progress + "event: message\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"isError\":true,\"content\":[]}}\n\n",
+			outcome: "tool_error",
+		},
+		{
+			name:    "json-rpc error",
+			body:    call,
+			stream:  "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32602,\"message\":\"bad params\"}}\n\n",
+			outcome: "rpc_error",
+		},
+		{
+			name:    "result",
+			body:    call,
+			stream:  progress + "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"content\":[]}}\n\n",
+			outcome: "ok",
+		},
+		{
+			name:    "message split over data lines with CRLF",
+			body:    call,
+			stream:  "id: 1\r\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\r\ndata: \"result\":{\"isError\":true}}\r\n\r\n",
+			outcome: "tool_error",
+		},
+		{
+			name:    "last event without a blank line",
+			body:    call,
+			stream:  "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"isError\":true}}",
+			outcome: "tool_error",
+		},
+		{
+			// A server request on the stream, such as sampling, carries its
+			// own id and is not the answer.
+			name:    "answer to another request is ignored",
+			body:    call,
+			stream:  "data: {\"jsonrpc\":\"2.0\",\"id\":99,\"error\":{\"code\":-1,\"message\":\"x\"}}\n\ndata: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{}}\n\n",
+			outcome: "ok",
+		},
+		{
+			name:    "event larger than the inspection limit",
+			body:    call,
+			stream:  "data: {\"jsonrpc\":\"2.0\",\"id\":7,\"result\":{\"isError\":true,\"content\":\"" + strings.Repeat("a", maxInspectBytes) + "\"}}\n\n",
+			outcome: "ok",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := trafficHandler(t, func(*http.Request) (*http.Response, error) {
+				return eventStreamResponse(http.StatusOK, tt.stream), nil
+			})
+			rr := post(h, tt.body, nil)
+			if rr.Body.String() != tt.stream {
+				t.Fatalf("client received %d bytes, want the %d upstream sent unchanged", rr.Body.Len(), len(tt.stream))
+			}
+			requireSeries(t, scrape(t, h), `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="`+tt.outcome+`",route="team-a.demo",tool="refund"} 1`)
+		})
+	}
+}
+
+func TestStreamObserverReadsEventsSplitAcrossWrites(t *testing.T) {
+	answer := `{"jsonrpc":"2.0","id":"a","result":{"isError":true}}`
+	stream := ": keep-alive\n\nevent: message\ndata: {\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\"}\n\ndata: " + answer + "\n\n"
+	s := &streamObserver{id: []byte(`"a"`)}
+	for i := range len(stream) {
+		if n, err := s.Write([]byte{stream[i]}); n != 1 || err != nil {
+			t.Fatalf("Write = %d, %v", n, err)
+		}
+	}
+	s.finish()
+	if string(s.response) != answer {
+		t.Fatalf("response = %q, want %q", s.response, answer)
+	}
+}
+
+// The rest of an event too large to inspect is not read as a new event.
+func TestStreamObserverSkipsOversizedEventToItsEnd(t *testing.T) {
+	stream := "data: " + strings.Repeat("a", maxInspectBytes) + "\n" +
+		`data: {"jsonrpc":"2.0","id":1,"result":{"isError":true}}` + "\n\n"
+	s := &streamObserver{id: []byte(`1`)}
+	if _, err := io.Copy(s, strings.NewReader(stream)); err != nil {
+		t.Fatal(err)
+	}
+	s.finish()
+	if s.response != nil {
+		t.Fatalf("read %q from the tail of an oversized event", s.response)
+	}
+}
+
+// Answers the MCP specification defines for a feature the server does not
+// offer are normal client behavior, not errors.
+func TestTrafficMetricsCountNormalProbesAsOK(t *testing.T) {
+	notFound := `{"jsonrpc":"2.0","id":1,"error":{"code":-32601,"message":"Method not found"}}`
+	tests := []struct {
+		name     string
+		method   string
+		body     string
+		response *http.Response
+		series   string
+	}{
+		{
+			name:     "optional GET stream not offered",
+			method:   http.MethodGet,
+			response: jsonResponse(http.StatusMethodNotAllowed, `{}`),
+			series:   `kavrynt_gateway_mcp_requests_total{method="http_get",outcome="ok",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "session termination not offered",
+			method:   http.MethodDelete,
+			response: jsonResponse(http.StatusMethodNotAllowed, `{}`),
+			series:   `kavrynt_gateway_mcp_requests_total{method="http_delete",outcome="ok",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "server/discover not offered",
+			method:   http.MethodPost,
+			body:     `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`,
+			response: jsonResponse(http.StatusOK, notFound),
+			series:   `kavrynt_gateway_mcp_requests_total{method="server/discover",outcome="ok",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "server/discover not offered on a stream",
+			method:   http.MethodPost,
+			body:     `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`,
+			response: eventStreamResponse(http.StatusOK, "data: "+notFound+"\n\n"),
+			series:   `kavrynt_gateway_mcp_requests_total{method="server/discover",outcome="ok",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "other methods not found are still errors",
+			method:   http.MethodPost,
+			body:     `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+			response: jsonResponse(http.StatusOK, notFound),
+			series:   `kavrynt_gateway_mcp_requests_total{method="tools/list",outcome="rpc_error",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "server/discover failing otherwise is still an error",
+			method:   http.MethodPost,
+			body:     `{"jsonrpc":"2.0","id":1,"method":"server/discover"}`,
+			response: jsonResponse(http.StatusOK, `{"jsonrpc":"2.0","id":1,"error":{"code":-32603,"message":"internal"}}`),
+			series:   `kavrynt_gateway_mcp_requests_total{method="server/discover",outcome="rpc_error",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "405 to a POST is still a client error",
+			method:   http.MethodPost,
+			body:     `{"jsonrpc":"2.0","id":1,"method":"tools/list"}`,
+			response: jsonResponse(http.StatusMethodNotAllowed, `{}`),
+			series:   `kavrynt_gateway_mcp_requests_total{method="tools/list",outcome="client_error",route="team-a.demo",tool="none"} 1`,
+		},
+		{
+			name:     "other 4xx to a GET is still a client error",
+			method:   http.MethodGet,
+			response: jsonResponse(http.StatusNotFound, `{}`),
+			series:   `kavrynt_gateway_mcp_requests_total{method="http_get",outcome="client_error",route="team-a.demo",tool="none"} 1`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			h := trafficHandler(t, func(*http.Request) (*http.Response, error) { return tt.response, nil })
+			var body io.Reader
+			if tt.body != "" {
+				body = strings.NewReader(tt.body)
+			}
+			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tt.method, "/mcp/team-a.demo", body))
+			requireSeries(t, scrape(t, h), tt.series)
+		})
+	}
+}
+
 func TestTrafficMetricsRecordLatencyAndBytes(t *testing.T) {
 	h := trafficHandler(t, func(req *http.Request) (*http.Response, error) {
 		// Bytes in are counted as the transport sends them upstream.

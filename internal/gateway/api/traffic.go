@@ -165,34 +165,145 @@ func inspectBody(prefix []byte) bodyInfo {
 	return info
 }
 
-// classifyResponse maps an upstream response to an outcome. body holds at
-// most maxInspectBytes of a JSON response; nil when not captured.
-func classifyResponse(status int, body *captureBuffer) string {
+// probeMethods are methods clients call to learn whether a server offers
+// them, so "method not found" is a normal answer and not an error.
+var probeMethods = map[string]bool{"server/discover": true}
+
+// jsonRPCMethodNotFound is the JSON-RPC error code of an unknown method.
+const jsonRPCMethodNotFound = -32601
+
+// classifyResponse maps an upstream response to an outcome. message is the
+// JSON-RPC response read from a JSON answer or event stream; nil when none
+// was read.
+func classifyResponse(r *http.Request, call mcpCall, status int, message []byte) string {
 	switch {
+	case status == http.StatusMethodNotAllowed && (r.Method == http.MethodGet || r.Method == http.MethodDelete):
+		// The MCP answer of a server that does not offer the optional GET
+		// stream or client-terminated sessions.
+		return outcomeOK
 	case status >= 500:
 		return outcomeUpstreamError
 	case status >= 400:
 		return outcomeClientError
 	}
-	if body == nil || body.truncated {
+	if message == nil {
 		return outcomeOK
 	}
-	var message struct {
+	var response struct {
 		Error  json.RawMessage `json:"error"`
 		Result struct {
 			IsError bool `json:"isError"`
 		} `json:"result"`
 	}
-	if json.Unmarshal(body.Bytes(), &message) != nil {
+	if json.Unmarshal(message, &response) != nil {
 		return outcomeOK
 	}
-	if len(message.Error) > 0 && string(message.Error) != "null" {
+	if len(response.Error) > 0 && string(response.Error) != "null" {
+		var rpcErr struct {
+			Code int `json:"code"`
+		}
+		if probeMethods[call.method] && json.Unmarshal(response.Error, &rpcErr) == nil && rpcErr.Code == jsonRPCMethodNotFound {
+			return outcomeOK
+		}
 		return outcomeRPCError
 	}
-	if message.Result.IsError {
+	if response.Result.IsError {
 		return outcomeToolError
 	}
 	return outcomeOK
+}
+
+// isResponseTo reports whether message is a JSON-RPC response to the request
+// with id; any response when id is unknown.
+func isResponseTo(message []byte, id json.RawMessage) bool {
+	var envelope struct {
+		ID     json.RawMessage `json:"id"`
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(message, &envelope) != nil || (envelope.Result == nil && envelope.Error == nil) {
+		return false
+	}
+	if len(id) == 0 {
+		return true
+	}
+	var got, want bytes.Buffer
+	return json.Compact(&got, envelope.ID) == nil && json.Compact(&want, id) == nil && got.String() == want.String()
+}
+
+// streamObserver reads a text/event-stream answer as it is copied to the
+// client and keeps the first event that carries the JSON-RPC response to the
+// request. It holds one event at a time; an event larger than
+// maxInspectBytes is skipped. Writes never fail, so it cannot interrupt a
+// response.
+type streamObserver struct {
+	id json.RawMessage
+	// line is the current line; lineLen counts its bytes even when skipped.
+	line    bytes.Buffer
+	lineLen int
+	// data is the current event's data, its lines joined by "\n".
+	data    bytes.Buffer
+	hasData bool
+	skip    bool
+	// response is the JSON-RPC response, once seen.
+	response []byte
+}
+
+func (s *streamObserver) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 && s.response == nil {
+		chunk, rest, complete := bytes.Cut(p, []byte("\n"))
+		s.lineLen += len(chunk)
+		if !s.skip {
+			if s.line.Len()+s.data.Len()+len(chunk) > maxInspectBytes {
+				s.skip = true
+				s.line.Reset()
+				s.data.Reset()
+			} else {
+				s.line.Write(chunk)
+			}
+		}
+		if !complete {
+			break
+		}
+		s.endLine()
+		p = rest
+	}
+	return n, nil
+}
+
+// finish ends a stream whose last event has no closing blank line.
+func (s *streamObserver) finish() {
+	if s.response == nil && s.lineLen > 0 {
+		s.endLine()
+	}
+	s.dispatch()
+}
+
+func (s *streamObserver) endLine() {
+	line := bytes.TrimSuffix(s.line.Bytes(), []byte("\r"))
+	switch {
+	case len(line) == 0 && s.lineLen <= 1:
+		s.dispatch()
+	case !s.skip:
+		if field, value, ok := bytes.Cut(line, []byte(":")); ok && string(field) == "data" {
+			if s.hasData {
+				s.data.WriteByte('\n')
+			}
+			s.data.Write(bytes.TrimPrefix(value, []byte(" ")))
+			s.hasData = true
+		}
+	}
+	s.line.Reset()
+	s.lineLen = 0
+}
+
+func (s *streamObserver) dispatch() {
+	if s.response == nil && !s.skip && s.hasData && isResponseTo(s.data.Bytes(), s.id) {
+		s.response = bytes.Clone(s.data.Bytes())
+	}
+	s.data.Reset()
+	s.hasData, s.skip = false, false
 }
 
 func classifyTransportError(err error) string {
