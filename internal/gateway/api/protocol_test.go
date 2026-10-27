@@ -79,6 +79,38 @@ func TestProtocolRefusesBatches(t *testing.T) {
 	}
 }
 
+// A refused POST answers with a JSON-RPC error object, so MCP clients show
+// the reason (issue #80). A batch has no single id, so its id is null.
+func TestProtocolRefusalsOfPostAreJSONRPCErrors(t *testing.T) {
+	handler, _ := demoHandler(t, okResponse)
+	for name, c := range map[string]struct {
+		body    string
+		headers map[string]string
+		id      string
+		message string
+	}{
+		"batch":           {`[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]`, nil, "null", "batches are not supported"},
+		"header mismatch": {`{"jsonrpc":"2.0","id":"req-7","method":"tools/list"}`, map[string]string{"Mcp-Method": "tools/call"}, `"req-7"`, "does not match the request body"},
+	} {
+		rr := rpc(handler, c.body, c.headers)
+		var answer struct {
+			JSONRPC string          `json:"jsonrpc"`
+			ID      json.RawMessage `json:"id"`
+			Error   struct {
+				Code    int    `json:"code"`
+				Message string `json:"message"`
+			} `json:"error"`
+		}
+		if err := json.Unmarshal(rr.Body.Bytes(), &answer); err != nil {
+			t.Fatalf("%s: %s is not a JSON-RPC error: %v", name, rr.Body.String(), err)
+		}
+		if rr.Code != http.StatusBadRequest || answer.JSONRPC != "2.0" || string(answer.ID) != c.id ||
+			answer.Error.Code != jsonRPCInvalidRequest || !strings.Contains(answer.Error.Message, c.message) {
+			t.Errorf("%s: %d %s", name, rr.Code, rr.Body.String())
+		}
+	}
+}
+
 // Verifies SPEC-0018-R04.
 func TestProtocolRefusesUnknownVersions(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)

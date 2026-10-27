@@ -22,3 +22,27 @@ tests:
     asserts:
       - notMatchRegexRaw:
           pattern: "WARNING"
+
+  # The notes say how to sign in to the console (issue #80).
+  - it: says how to get the generated console password
+    set:
+      gateway.auth.enabled: false
+    asserts:
+      - matchRegexRaw:
+          pattern: "Console login: user admin, password from\n  kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='\\{.data.password\\}' \\| base64 -d; echo"
+
+  - it: names an existing console Secret
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.existingSecret: my-console
+    asserts:
+      - matchRegexRaw:
+          pattern: "get secret my-console "
+
+  - it: has no console password without the console login
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.enabled: false
+    asserts:
+      - notMatchRegexRaw:
+          pattern: "Console login"

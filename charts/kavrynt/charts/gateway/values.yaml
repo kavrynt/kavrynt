@@ -137,8 +137,7 @@ console:
   # /v1/traffic), like Argo CD's initial admin password. Username: admin.
   # Password: kubectl -n <namespace> get secret <release>-gateway-console-admin
   #   -o jsonpath='{.data.password}' | base64 -d
-  # It does not protect MCP routes: anyone who can reach the Gateway can still
-  # call every routed tool (client authentication is not implemented yet).
+  # It does not protect MCP routes; MCP client authentication (auth) does.
   auth:
     enabled: true
     # Secret with keys "password" and "sessionKey" to use instead of the

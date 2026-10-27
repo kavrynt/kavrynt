@@ -168,11 +168,19 @@ func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if len(summary.Breaks) > 0 {
-		fmt.Fprintf(stdout, "%d events from %d instances: %d breaks\n", summary.Events, summary.Instances, len(summary.Breaks))
+		fmt.Fprintf(stdout, "%s from %s: %s\n", plural(summary.Events, "event"), plural(summary.Instances, "instance"), plural(len(summary.Breaks), "break"))
 		return 1
 	}
-	fmt.Fprintf(stdout, "%d events from %d instances: every chain verifies\n", summary.Events, summary.Instances)
+	fmt.Fprintf(stdout, "%s from %s: every chain verifies\n", plural(summary.Events, "event"), plural(summary.Instances, "instance"))
 	return 0
+}
+
+// plural returns n and noun, with an "s" unless n is 1.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func runRegister(args []string, stdout, stderr io.Writer) int {
