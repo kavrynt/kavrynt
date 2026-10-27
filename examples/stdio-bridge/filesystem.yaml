@@ -10,8 +10,7 @@
 #
 # For trying the pattern only: npx downloads both packages when the pod
 # starts. For real use, build an image with exact, reviewed versions of the
-# bridge and the server, run it as non-root with a read-only root
-# filesystem, and mount only the data the server should see.
+# bridge and the server, and mount only the data the server should see.
 apiVersion: v1
 kind: Namespace
 metadata:
@@ -34,16 +33,33 @@ spec:
         app: files
     spec:
       automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
       initContainers:
         - name: seed
           image: node:22-slim
           command: ["sh", "-c", "echo 'quarterly numbers: 42' > /data/report.txt"]
+          resources:
+            limits:
+              memory: 32Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: data
               mountPath: /data
       containers:
         - name: bridge
           image: node:22-slim
+          # npx writes its cache under HOME; the root filesystem is read-only.
+          env:
+            - name: HOME
+              value: /tmp
           command:
             - npx
             - -y
@@ -58,11 +74,26 @@ spec:
             - /mcp
           ports:
             - containerPort: 8000
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
           volumeMounts:
             - name: data
               mountPath: /data
+            - name: tmp
+              mountPath: /tmp
       volumes:
         - name: data
+          emptyDir: {}
+        - name: tmp
           emptyDir: {}
 ---
 apiVersion: v1
