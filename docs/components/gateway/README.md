@@ -355,7 +355,8 @@ issuer's tokens fail (`503`); `/readyz` is not affected.
 the route's resource URI. Authorization servers that support RFC 8707
 resource indicators do this from the client's `resource` parameter; others
 need an audience configured per route. Opaque tokens and token introspection
-are not supported.
+are not supported. [Setting up MCP client authentication](../../AUTH-SETUP.md)
+walks through Keycloak.
 
 **Effects elsewhere.** `/v1/routes` lists names, versions, and transports
 only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's
