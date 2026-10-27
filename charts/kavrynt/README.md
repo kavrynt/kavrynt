@@ -426,6 +426,9 @@ authentication instead, and the Gateway logs a warning at start and the
 console shows that MCP routes are open. Agents without a valid token get `401` with a
 `resource_metadata` URL that tells them where to get one. Token rules and
 answers: [Gateway: MCP client authentication](../../docs/components/gateway/README.md#mcp-client-authentication).
+A walkthrough with Keycloak, local testing with a plain-http port-forward,
+and agents that call several servers:
+[Setting up MCP client authentication](../../docs/AUTH-SETUP.md).
 
 ### Token exchange for servers that need the user
 
