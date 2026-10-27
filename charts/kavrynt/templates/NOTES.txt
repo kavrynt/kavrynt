@@ -2,6 +2,12 @@ Kavrynt {{ .Chart.AppVersion }} is installed in {{ .Release.Namespace }}.
 
 Console: kubectl -n {{ .Release.Namespace }} port-forward service/{{ .Values.gateway.fullnameOverride | default "kavrynt-gateway" }} 18080:8080
          then open http://localhost:18080/ui/
+{{- $console := .Values.gateway.console | default dict }}
+{{- $consoleAuth := $console.auth | default dict }}
+{{- if and $console.enabled $consoleAuth.enabled }}
+Console login: user admin, password from
+  kubectl -n {{ .Release.Namespace }} get secret {{ $consoleAuth.existingSecret | default (printf "%s-console-admin" (.Values.gateway.fullnameOverride | default "kavrynt-gateway")) }} -o jsonpath='{.data.password}' | base64 -d; echo
+{{- end }}
 {{- if not .Values.gateway.auth.enabled }}
 
 WARNING: MCP client authentication is off (gateway.auth.enabled=false).

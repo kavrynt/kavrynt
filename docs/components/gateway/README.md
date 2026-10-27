@@ -20,7 +20,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   requests return `502`.
 - Upstream redirects are passed to the client, never followed.
 - MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
-  `400` and outcome `protocol_error` before anything is forwarded: an
+  `400` and outcome `protocol_error` before anything is forwarded (for a
+  `POST`, as a JSON-RPC error with code `-32600` and the request's `id`,
+  `null` for a batch): an
   `MCP-Protocol-Version` other than `2024-11-05`, `2025-03-26`,
   `2025-06-18`, `2025-11-25`, or `2026-07-28` (the answer lists them); a
   JSON-RPC batch (an array body); an `Mcp-Method` header that names another
@@ -51,7 +53,8 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - No token passthrough: `Authorization`, `Cookie`, and `Proxy-Authorization`
   are always removed before forwarding, along with hop-by-hop headers and
   headers named in `Connection`. Upstream `Set-Cookie` is dropped because
-  every route shares the Gateway origin. Extra headers can be stripped with
+  every route shares the Gateway origin, and `Server` and `X-Powered-By`
+  because they disclose the upstream's software. Extra headers can be stripped with
   `--strip-request-headers`.
 - Upstream credentials: for a server that declares `spec.credential`, the
   Gateway sends the credential stored for it in the upstream credentials

@@ -78,7 +78,7 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 - Gateway watches `Ready` servers and proxies **HTTP only** at
   `/mcp/<namespace>.<name>`. `stdio` manifests validate but are not proxied.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
-  forwarding and drops upstream `Set-Cookie`.
+  forwarding and drops upstream `Set-Cookie`, `Server`, and `X-Powered-By`.
 - Gateway and Operator discovery refuse link-local, cloud metadata, and
   loopback addresses at dial time (`internal/egress`); the Gateway passes
   redirects to the client, rejects `..` path segments, cross-origin browser

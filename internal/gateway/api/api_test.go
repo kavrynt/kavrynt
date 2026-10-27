@@ -141,6 +141,8 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 			Header: http.Header{
 				"Content-Type": []string{"application/json"},
 				"Set-Cookie":   []string{"session=upstream"},
+				"Server":       []string{"uvicorn Python/3.12"},
+				"X-Powered-By": []string{"Express"},
 				"X-Upstream":   []string{"1"},
 			},
 			Body: io.NopCloser(strings.NewReader(`{}`)),
@@ -174,8 +176,12 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 			t.Errorf("upstream missing %s", name)
 		}
 	}
-	if rr.Header().Get("Set-Cookie") != "" {
-		t.Errorf("client received upstream Set-Cookie: %q", rr.Header().Get("Set-Cookie"))
+	// Set-Cookie would apply to the shared Gateway origin; Server and
+	// X-Powered-By disclose the upstream's software (issue #80).
+	for _, name := range []string{"Set-Cookie", "Server", "X-Powered-By"} {
+		if value := rr.Header().Get(name); value != "" {
+			t.Errorf("client received upstream %s: %q", name, value)
+		}
 	}
 	if rr.Header().Get("X-Upstream") != "1" {
 		t.Error("client missing X-Upstream response header")
