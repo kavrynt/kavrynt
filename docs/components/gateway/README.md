@@ -170,6 +170,22 @@ and reports each gap, reordering, or altered event. The chain is
 tamper-evident, not tamper-proof: ship events out of the cluster with your
 log pipeline (filter on `"type":"kavrynt.audit.v1"`).
 
+**What verify proves.** A chain that verifies has every event of each
+instance it shows, unaltered and in order, from `seq` 1 up to its last
+event. It cannot show:
+
+- events cut off the end of a chain: a log truncated after event N verifies
+  like one that ended there;
+- an instance whose events are all missing;
+- a chain rewritten by someone who can write the log: the hashes use no
+  key, so recomputing every hash after an edit gives a chain that verifies.
+
+These are limits of a hash chain without an anchor outside the log. Keep a
+copy where the Gateway's log writers cannot change it, soon after the
+events are written: your log pipeline, or audit delivery to Kavrynt Cloud
+(below). Then compare each instance's last `seq` in the copy with the
+events you verify, and verify the copy, not only the cluster's logs.
+
 **Back-pressure.** Up to `--audit-queue-size` (10,000) events wait to be
 written. When the queue is full, `--audit-on-overflow=reject` (default)
 answers new MCP requests `503` without forwarding them, so no call is served

@@ -409,7 +409,8 @@ Usage:
   kavryctl unregister [cluster flags] <name>
   kavryctl list       [cluster flags] [-A]
   kavryctl inspect    [cluster flags] <name>
-  kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin)
+  kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin);
+                    events cut off the end of a chain are not detected
   kavryctl upgrade  [cluster flags] --version V [--chart REF|DIR] [--values FILE] [--adopt-crd] [--dry-run]
   kavryctl rollback [cluster flags] [--revision N] [--dry-run]
                     Upgrade or roll back the Kavrynt release with helm, checking

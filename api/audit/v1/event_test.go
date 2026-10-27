@@ -80,3 +80,25 @@ func TestVerifyFindsBreaks(t *testing.T) {
 		t.Fatal("a chain without its first event verified")
 	}
 }
+
+// Pins the limits the docs state ("What verify proves", issue #86): a chain
+// cut off at its end, and one rewritten with every later hash recomputed,
+// both verify. If Verify learns to detect either, update the docs.
+func TestVerifyCannotDetectTruncationOrAFullRewrite(t *testing.T) {
+	a := chain("gw-a/1", 5)
+	if s, err := Verify(strings.NewReader(lines(a[:3]))); err != nil || len(s.Breaks) != 0 || s.Events != 3 {
+		t.Fatalf("truncated chain: %+v, %v", s, err)
+	}
+
+	rewritten := append([]Event{}, a...)
+	rewritten[2].Tool = "delete_all"
+	prev := rewritten[1].Hash
+	for i := 2; i < len(rewritten); i++ {
+		rewritten[i].PrevHash = prev
+		rewritten[i].Hash = ComputeHash(rewritten[i])
+		prev = rewritten[i].Hash
+	}
+	if s, err := Verify(strings.NewReader(lines(rewritten))); err != nil || len(s.Breaks) != 0 {
+		t.Fatalf("rewritten chain: %+v, %v", s, err)
+	}
+}
