@@ -138,7 +138,9 @@ The current MVP supports:
 - health, readiness, version, metrics, and route inspection endpoints.
 
 Manifests can describe `stdio` servers, but Gateway runtime proxying currently
-supports HTTP endpoints only.
+supports HTTP endpoints only. A `stdio` server can run behind a Streamable
+HTTP bridge and be registered with the bridge's endpoint:
+[examples/stdio-bridge](examples/stdio-bridge/filesystem.yaml).
 
 ## Install on Kubernetes
 
@@ -434,7 +436,8 @@ the current release is not production-security complete:
   out and leaves MCP routes open): each route accepts only tokens issued
   for it.
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
-  to MCP servers, and drops upstream `Set-Cookie`. MCP servers that need
+  to MCP servers, and drops upstream `Set-Cookie`, `Server`, and
+  `X-Powered-By`. MCP servers that need
   their own credential get it from a Secret the platform team manages,
   pinned to the server's endpoint. Servers that need the user instead get
   the caller's token exchanged for one with their own audience (RFC 8693);

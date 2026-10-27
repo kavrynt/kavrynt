@@ -139,6 +139,23 @@ func TestValidateRejectsInvalidManifest(t *testing.T) {
 	}
 }
 
+// stdio manifests stay valid, but the Gateway never routes them, so
+// validate and register say so on stderr (issue #87).
+func TestStdioManifestsWarnThatTheyAreNotRouted(t *testing.T) {
+	useFakeClient(t, "team-a")
+	stdio := writeManifest(t, "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata:\n  name: files\nspec:\n  version: 0.1.0\n  transport: stdio\n  command: npx\n")
+	const warning = "warning: the Gateway does not proxy stdio servers"
+	for _, command := range []string{"validate", "register"} {
+		_, errOut, code := run(t, command, stdio)
+		if code != 0 || !strings.Contains(errOut, warning) {
+			t.Errorf("%s stdio: code=%d err=%q", command, code, errOut)
+		}
+		if _, errOut, _ := run(t, command, writeManifest(t, httpManifest)); strings.Contains(errOut, "warning") {
+			t.Errorf("%s http warned: %q", command, errOut)
+		}
+	}
+}
+
 func TestUnregisterMissingServerFails(t *testing.T) {
 	useFakeClient(t, "default")
 	_, errOut, code := run(t, "unregister", "missing")
@@ -228,13 +245,13 @@ func TestAuditVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Execute([]string{"audit", "verify", good}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "3 events from 1 instances: every chain verifies") {
+	if code := Execute([]string{"audit", "verify", good}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "3 events from 1 instance: every chain verifies") {
 		t.Fatalf("good log: exit %d, %s %s", code, stdout.String(), stderr.String())
 	}
 
 	tampered := strings.Join([]string{lines[0], strings.Replace(lines[1], `"decision":"allow"`, `"decision":"deny"`, 1), lines[2]}, "\n")
 	stdout.Reset()
-	if code := runAudit([]string{"verify"}, strings.NewReader(tampered), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "BREAK instance gw/1 seq 2") {
+	if code := runAudit([]string{"verify"}, strings.NewReader(tampered), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "BREAK instance gw/1 seq 2") || !strings.Contains(stdout.String(), "3 events from 1 instance: 1 break\n") {
 		t.Fatalf("tampered log: exit %d, %s", code, stdout.String())
 	}
 	if code := runAudit([]string{"verify"}, strings.NewReader("no events here\n"), &stdout, &stderr); code != 1 {
