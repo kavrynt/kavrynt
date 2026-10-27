@@ -528,7 +528,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 	}
 	if !exists {
-		writeError(w, http.StatusNotFound, fmt.Errorf("MCP server %q is not registered", name))
+		writeError(w, http.StatusNotFound, h.unrouted(name))
 		return
 	}
 
@@ -548,7 +548,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			if rec := auditRecordFrom(r); rec != nil {
 				rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
 			}
-			writeError(w, http.StatusBadRequest, err)
+			if r.Method == http.MethodPost {
+				writeRPCError(w, http.StatusBadRequest, call.body.id, jsonRPCInvalidRequest, err.Error())
+			} else {
+				writeError(w, http.StatusBadRequest, err)
+			}
 			h.finish(r, route.Name, call, outcomeProtocolError, http.StatusBadRequest, time.Since(start), 0, 0)
 			return
 		}
@@ -769,16 +773,8 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 	if rec != nil {
 		rec.decision, rec.reason = auditv1.DecisionDeny, decision.Reason
 	}
-	id := call.body.id
-	if len(id) == 0 {
-		id = json.RawMessage("null")
-	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeJSON(w, http.StatusForbidden, map[string]any{
-		"jsonrpc": "2.0",
-		"id":      id,
-		"error":   map[string]any{"code": policyDeniedCode, "message": message},
-	})
+	writeRPCError(w, http.StatusForbidden, call.body.id, policyDeniedCode, message)
 	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
 	return false
 }
@@ -817,6 +813,23 @@ func policyInput(r *http.Request, routeName string) policy.Input {
 // policyDeniedCode is the JSON-RPC error code of a policy denial, in the
 // range JSON-RPC reserves for server errors.
 const policyDeniedCode = -32001
+
+// jsonRPCInvalidRequest is the JSON-RPC error code of a request that is not
+// a valid JSON-RPC request.
+const jsonRPCInvalidRequest = -32600
+
+// writeRPCError answers a JSON-RPC request with an error object; id is the
+// request's id, null when unknown.
+func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code int, message string) {
+	if len(id) == 0 {
+		id = json.RawMessage("null")
+	}
+	writeJSON(w, status, map[string]any{
+		"jsonrpc": "2.0",
+		"id":      id,
+		"error":   map[string]any{"code": code, "message": message},
+	})
+}
 
 // authenticate refuses tokens sent outside the Authorization header
 // (SPEC-0006-R04), then verifies the bearer token for the route.
@@ -879,6 +892,21 @@ func (h *Handler) observe(route string, call mcpCall, outcome string, status int
 	now := time.Now()
 	h.alertWindow.Record(now, route, method, tool, outcome, elapsed)
 	h.history.Record(now, route, method, tool, outcome, elapsed, bytesIn, bytesOut)
+}
+
+// unrouted says why a route is not served: the MCPServer is unknown, uses a
+// transport the Gateway does not proxy, or is not Ready.
+func (h *Handler) unrouted(name string) error {
+	for _, server := range h.table.Servers() {
+		if server.Route != name {
+			continue
+		}
+		if server.Transport != "http" {
+			return fmt.Errorf("MCP server %q uses the %s transport, which the Gateway does not proxy; run it behind a Streamable HTTP bridge and register the bridge's http endpoint", name, server.Transport)
+		}
+		return fmt.Errorf("MCP server %q is registered but not routed; check its Ready condition", name)
+	}
+	return fmt.Errorf("MCP server %q is not registered", name)
 }
 
 func parseMCPPath(path string) (string, string, bool) {
@@ -945,8 +973,8 @@ func (f *flushWriter) Write(p []byte) (int, error) {
 }
 
 // responseStrip keeps upstream cookies from being set on the Gateway origin,
-// which is shared by every route.
-var responseStrip = map[string]struct{}{"Set-Cookie": {}}
+// which is shared by every route, and hides the upstream's software.
+var responseStrip = map[string]struct{}{"Set-Cookie": {}, "Server": {}, "X-Powered-By": {}}
 
 // copyHeaders copies end-to-end headers from src to dst. It drops hop-by-hop
 // headers, headers named in Connection, and every header in strip. It reports

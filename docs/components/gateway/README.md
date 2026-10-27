@@ -8,6 +8,12 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - Watches `MCPServer` resources through a read-only informer cache
   (`internal/gateway/kube`). A server gets a route when the operator reports
   `Ready=True`, the spec passes validation, and the transport is `http`.
+  A request for a registered server without a route answers `404` saying
+  why: it uses the `stdio` transport, or it is not Ready. A `stdio` server
+  can run behind a Streamable HTTP bridge in its own pod and be registered
+  with the bridge's `http` endpoint
+  ([example](../../../examples/stdio-bridge/filesystem.yaml)); `kavryctl
+  validate` and `register` warn about `stdio` manifests.
 - Route path: `/mcp/<namespace>.<name>[/<suffix>]`. Suffix and query string are
   appended to the endpoint URL.
 - Endpoints are restricted to absolute `http`/`https` URLs without credentials
@@ -20,7 +26,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   requests return `502`.
 - Upstream redirects are passed to the client, never followed.
 - MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
-  `400` and outcome `protocol_error` before anything is forwarded: an
+  `400` and outcome `protocol_error` before anything is forwarded (for a
+  `POST`, as a JSON-RPC error with code `-32600` and the request's `id`,
+  `null` for a batch): an
   `MCP-Protocol-Version` other than `2024-11-05`, `2025-03-26`,
   `2025-06-18`, `2025-11-25`, or `2026-07-28` (the answer lists them); a
   JSON-RPC batch (an array body); an `Mcp-Method` header that names another
@@ -51,7 +59,8 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - No token passthrough: `Authorization`, `Cookie`, and `Proxy-Authorization`
   are always removed before forwarding, along with hop-by-hop headers and
   headers named in `Connection`. Upstream `Set-Cookie` is dropped because
-  every route shares the Gateway origin. Extra headers can be stripped with
+  every route shares the Gateway origin, and `Server` and `X-Powered-By`
+  because they disclose the upstream's software. Extra headers can be stripped with
   `--strip-request-headers`.
 - Upstream credentials: for a server that declares `spec.credential`, the
   Gateway sends the credential stored for it in the upstream credentials
@@ -161,6 +170,22 @@ and reports each gap, reordering, or altered event. The chain is
 tamper-evident, not tamper-proof: ship events out of the cluster with your
 log pipeline (filter on `"type":"kavrynt.audit.v1"`).
 
+**What verify proves.** A chain that verifies has every event of each
+instance it shows, unaltered and in order, from `seq` 1 up to its last
+event. It cannot show:
+
+- events cut off the end of a chain: a log truncated after event N verifies
+  like one that ended there;
+- an instance whose events are all missing;
+- a chain rewritten by someone who can write the log: the hashes use no
+  key, so recomputing every hash after an edit gives a chain that verifies.
+
+These are limits of a hash chain without an anchor outside the log. Keep a
+copy where the Gateway's log writers cannot change it, soon after the
+events are written: your log pipeline, or audit delivery to Kavrynt Cloud
+(below). Then compare each instance's last `seq` in the copy with the
+events you verify, and verify the copy, not only the cluster's logs.
+
 **Back-pressure.** Up to `--audit-queue-size` (10,000) events wait to be
 written. When the queue is full, `--audit-on-overflow=reject` (default)
 answers new MCP requests `503` without forwarding them, so no call is served
@@ -230,12 +255,30 @@ read (not a single JSON object, over 1 MiB, `tools/call` without a string
 gets `400`. None of these reach the MCP server.
 
 A policy that does not compile stops the Gateway at start, naming the file
-and line. Changes are picked up within about 10 seconds of the kubelet
-updating the mount; an update that does not compile is logged and counted in
+and line. An update that does not compile is logged and counted in
 `kavrynt_gateway_policy_load_failures_total`, and the previous policy stays in
 force. `kavrynt_gateway_policy_info{revision}` names the active revision (the
 SHA-256 of the files) on each replica, and
-`kavrynt_gateway_policy_decisions_total{result}` counts decisions. Policies
+`kavrynt_gateway_policy_decisions_total{result}` counts decisions.
+
+**How long a change takes.** A ConfigMap change is not in force at once.
+The kubelet updates the mounted files after up to its sync period (one
+minute by default) plus its cache delay, and the Gateway checks the files
+every 10 seconds, so expect one to two minutes; about 66 seconds was
+measured on Kind. Replicas switch independently. Until a replica switches,
+it decides with the previous policy, so a call the new policy denies can
+still succeed there: tightening a policy is not immediate. To check:
+
+```bash
+kubectl -n kavrynt-system logs deploy/kavrynt-gateway | grep 'policy loaded'
+```
+
+or compare `kavrynt_gateway_policy_info{revision}` across replicas with
+`sha256sum` of the policy files; each audit event's `policy_revision` names
+the policy that decided it. To apply a change at once, for example during
+an incident, restart the Gateway after editing the ConfigMap:
+`kubectl -n kavrynt-system rollout restart deploy/kavrynt-gateway`. New pods
+mount the current ConfigMap and load it before they are ready. Policies
 cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
@@ -312,7 +355,8 @@ issuer's tokens fail (`503`); `/readyz` is not affected.
 the route's resource URI. Authorization servers that support RFC 8707
 resource indicators do this from the client's `resource` parameter; others
 need an audience configured per route. Opaque tokens and token introspection
-are not supported.
+are not supported. [Setting up MCP client authentication](../../AUTH-SETUP.md)
+walks through Keycloak.
 
 **Effects elsewhere.** `/v1/routes` lists names, versions, and transports
 only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's

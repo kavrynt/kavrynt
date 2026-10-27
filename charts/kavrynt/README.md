@@ -399,7 +399,10 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 Anything the policy does not allow is denied. Use it with MCP client
 authentication so decisions can name the caller. Add
 `--set gateway.policy.filterToolsList=true` so each caller's `tools/list`
-shows only the tools it may call. Details:
+shows only the tools it may call. A change to the ConfigMap takes one to two
+minutes to apply (the kubelet's mount update, then the Gateway's 10-second
+check), and until then the previous policy decides; restart the Gateway to
+apply one at once. Details:
 [Gateway: Tool authorization policy](../../docs/components/gateway/README.md#tool-authorization-policy).
 
 ## Authenticating MCP clients
@@ -426,6 +429,9 @@ authentication instead, and the Gateway logs a warning at start and the
 console shows that MCP routes are open. Agents without a valid token get `401` with a
 `resource_metadata` URL that tells them where to get one. Token rules and
 answers: [Gateway: MCP client authentication](../../docs/components/gateway/README.md#mcp-client-authentication).
+A walkthrough with Keycloak, local testing with a plain-http port-forward,
+and agents that call several servers:
+[Setting up MCP client authentication](../../docs/AUTH-SETUP.md).
 
 ### Token exchange for servers that need the user
 

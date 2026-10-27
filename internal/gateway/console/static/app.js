@@ -9,7 +9,7 @@
 
 (() => {
   const { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
-  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
+  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, connectSnippets } = Kavrynt.format;
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
@@ -991,25 +991,7 @@
   }
 
   function connectPanel(server, url) {
-    const snippets = {
-      "MCP client": pretty({ mcpServers: { [server.name]: { type: "http", url } } }),
-      "Python agent": [
-        "# pip install mcp",
-        "import asyncio",
-        "from mcp import ClientSession",
-        "from mcp.client.streamable_http import streamablehttp_client",
-        "",
-        "async def main():",
-        "    async with streamablehttp_client(\"" + url + "\") as (read, write, _):",
-        "        async with ClientSession(read, write) as session:",
-        "            await session.initialize()",
-        "            tools = await session.list_tools()",
-        "            print([tool.name for tool in tools.tools])",
-        "",
-        "asyncio.run(main())",
-      ].join("\n"),
-      curl: "curl -s -X POST '" + url + "' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
-    };
+    const snippets = connectSnippets(server.name, url);
     const names = Object.keys(snippets);
     let active = names[0];
     const tabs = h("div", { class: "tabs", role: "tablist", style: "margin-bottom:10px" });

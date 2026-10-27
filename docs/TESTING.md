@@ -28,7 +28,9 @@ you do not need to build anything.
 ## 1. Get a cluster
 
 You need `kubectl` 1.29+ and [Helm](https://helm.sh/) 3.14+, and nodes that
-can pull images from `docker.io`. Check your tools:
+can pull images from `docker.io`. The chart comes from GHCR, like in the
+README; `oci://registry-1.docker.io/kavrynt/kavrynt` is a mirror of the same
+chart if your network blocks `ghcr.io`. Check your tools:
 
 ```bash
 kubectl version --client
@@ -58,7 +60,7 @@ kubectl auth can-i create customresourcedefinitions   # expect: yes
 ```bash
 export KAVRYNT_VERSION=1.0.0-beta.2
 
-helm upgrade --install kavrynt oci://registry-1.docker.io/kavrynt/kavrynt \
+helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
   --namespace kavrynt-system --create-namespace \
   --set gateway.auth.enabled=false \
@@ -83,7 +85,7 @@ run. The install should stop with a message that names the authorization
 server settings and the opt-out:
 
 ```bash
-helm template kavrynt oci://registry-1.docker.io/kavrynt/kavrynt --version "$KAVRYNT_VERSION" >/dev/null
+helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VERSION" >/dev/null
 ```
 
 ## 3. Register an MCP server
@@ -206,8 +208,11 @@ kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin \
 
 **Checks:**
 
-- **Overview:** the sample server is routed, and the console warns that MCP
-  routes are not authenticated.
+- **Overview:** the sample server is routed. The banner that warns that MCP
+  routes are not authenticated shows only when the console is opened from
+  another address than this machine, so it is hidden on `127.0.0.1`; the
+  Gateway logs the same warning at start:
+  `kubectl -n kavrynt-system logs deploy/kavrynt-gateway | grep -i unauthenticated`.
 - **Servers and Tools:** both tools appear with their input schemas.
 - **Playground:** call `echo` from the browser.
 - **Traffic:** your calls appear with method, tool, outcome, and latency, but
@@ -236,7 +241,7 @@ kubectl -n kavrynt-system create configmap kavrynt-policy --from-file=authz.rego
 Turn on the policy, the filtered tool list, and audit events:
 
 ```bash
-helm upgrade kavrynt oci://registry-1.docker.io/kavrynt/kavrynt --version "$KAVRYNT_VERSION" \
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VERSION" \
   -n kavrynt-system --reset-then-reuse-values \
   --set gateway.policy.enabled=true --set gateway.policy.configMap=kavrynt-policy \
   --set gateway.policy.filterToolsList=true --set gateway.audit.enabled=true \

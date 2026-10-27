@@ -20,7 +20,9 @@ The `Ready` condition's reason says why:
 
 - `InvalidSpec` (and `Accepted=False`): the spec failed validation; the
   message names the field.
-- `UnsupportedTransport`: `stdio` servers validate but are not routed.
+- `UnsupportedTransport`: `stdio` servers validate but are not routed. Run
+  the server behind a Streamable HTTP bridge and register the bridge's `http`
+  endpoint ([example](../../examples/stdio-bridge/filesystem.yaml)).
 - `NamespaceNotWatched`: the server is outside `global.watchNamespaces`.
 
 `ToolsDiscovered=False` alone never makes a server not Ready.

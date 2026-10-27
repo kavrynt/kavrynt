@@ -47,5 +47,29 @@
     return isNaN(d) ? "–" : d.toLocaleTimeString([], { hour12: false }) + "." + String(d.getMilliseconds()).padStart(3, "0");
   }
 
-  Object.assign(exports, { pretty, fmtBytes, fmtMs, fmtPct, ago, clock });
+  // connectSnippets returns, by tab name, the ways to connect an agent to a
+  // route. The Python snippet targets the MCP Python SDK 2.x.
+  function connectSnippets(name, url) {
+    return {
+      "MCP client": pretty({ mcpServers: { [name]: { type: "http", url } } }),
+      "Python agent": [
+        "# pip install \"mcp>=2\"",
+        "import asyncio",
+        "from mcp import ClientSession",
+        "from mcp.client.streamable_http import streamable_http_client",
+        "",
+        "async def main():",
+        "    async with streamable_http_client(" + JSON.stringify(url) + ") as (read, write):",
+        "        async with ClientSession(read, write) as session:",
+        "            await session.initialize()",
+        "            tools = await session.list_tools()",
+        "            print([tool.name for tool in tools.tools])",
+        "",
+        "asyncio.run(main())",
+      ].join("\n"),
+      curl: "curl -s -X POST '" + url + "' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
+    };
+  }
+
+  Object.assign(exports, { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, connectSnippets });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).format = {}));
