@@ -151,3 +151,4 @@ against the assistant's summary of them.
 | [0024](0024-console-dashboards/spec.md) | Console dashboards | Implemented |
 | [0025](0025-tool-call-approvals/spec.md) | Approvals for tool calls | Draft |
 | [0026](0026-mcp-session-affinity/spec.md) | MCP session affinity | Draft |
+| [0027](0027-discovery-diagnostics/spec.md) | Discovery diagnostics | Draft |
