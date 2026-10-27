@@ -230,12 +230,30 @@ read (not a single JSON object, over 1 MiB, `tools/call` without a string
 gets `400`. None of these reach the MCP server.
 
 A policy that does not compile stops the Gateway at start, naming the file
-and line. Changes are picked up within about 10 seconds of the kubelet
-updating the mount; an update that does not compile is logged and counted in
+and line. An update that does not compile is logged and counted in
 `kavrynt_gateway_policy_load_failures_total`, and the previous policy stays in
 force. `kavrynt_gateway_policy_info{revision}` names the active revision (the
 SHA-256 of the files) on each replica, and
-`kavrynt_gateway_policy_decisions_total{result}` counts decisions. Policies
+`kavrynt_gateway_policy_decisions_total{result}` counts decisions.
+
+**How long a change takes.** A ConfigMap change is not in force at once.
+The kubelet updates the mounted files after up to its sync period (one
+minute by default) plus its cache delay, and the Gateway checks the files
+every 10 seconds, so expect one to two minutes; about 66 seconds was
+measured on Kind. Replicas switch independently. Until a replica switches,
+it decides with the previous policy, so a call the new policy denies can
+still succeed there: tightening a policy is not immediate. To check:
+
+```bash
+kubectl -n kavrynt-system logs deploy/kavrynt-gateway | grep 'policy loaded'
+```
+
+or compare `kavrynt_gateway_policy_info{revision}` across replicas with
+`sha256sum` of the policy files; each audit event's `policy_revision` names
+the policy that decided it. To apply a change at once, for example during
+an incident, restart the Gateway after editing the ConfigMap:
+`kubectl -n kavrynt-system rollout restart deploy/kavrynt-gateway`. New pods
+mount the current ConfigMap and load it before they are ready. Policies
 cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:

@@ -399,7 +399,10 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 Anything the policy does not allow is denied. Use it with MCP client
 authentication so decisions can name the caller. Add
 `--set gateway.policy.filterToolsList=true` so each caller's `tools/list`
-shows only the tools it may call. Details:
+shows only the tools it may call. A change to the ConfigMap takes one to two
+minutes to apply (the kubelet's mount update, then the Gateway's 10-second
+check), and until then the previous policy decides; restart the Gateway to
+apply one at once. Details:
 [Gateway: Tool authorization policy](../../docs/components/gateway/README.md#tool-authorization-policy).
 
 ## Authenticating MCP clients
