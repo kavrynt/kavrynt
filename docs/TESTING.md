@@ -323,6 +323,12 @@ If `ToolsDiscovered` is `False`, the condition message says why. If the
 server needs an API key, see `spec.credential` in the
 [Gateway docs](components/gateway/README.md#upstream-credentials).
 
+If the server keeps MCP sessions in memory (most servers built with the
+official SDKs do) and runs more than one replica, add
+`sessionAffinity: MCPSession` to the spec, or calls fail with
+`session_not_found`. See
+[session affinity](components/gateway/README.md#session-affinity).
+
 ## 8. Clean up
 
 ```bash

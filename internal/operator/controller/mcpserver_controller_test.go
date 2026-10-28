@@ -16,6 +16,7 @@ import (
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -139,10 +140,12 @@ type fakeDiscoverer struct {
 	err        error
 	calls      int
 	header     http.Header
+	pod        netip.AddrPort
 }
 
-func (f *fakeDiscoverer) ListTools(_ context.Context, _ string, header http.Header) (discovery.Result, error) {
+func (f *fakeDiscoverer) ListTools(_ context.Context, _ string, pod netip.AddrPort, header http.Header) (discovery.Result, error) {
 	f.header = header
+	f.pod = pod
 	f.calls++
 	if f.err != nil {
 		return discovery.Result{}, f.err
@@ -533,5 +536,57 @@ func TestEveryDiscoveryFailureKeepsReasonAndReady(t *testing.T) {
 		if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
 			t.Errorf("%s: discovery failure changed Ready", name)
 		}
+	}
+}
+
+// fakePods are the ready pods of the Service demo.default.
+type fakePods []mcpsession.Endpoint
+
+func (p fakePods) Ready(_ context.Context, service kavryntv1alpha1.ServiceRef) ([]mcpsession.Endpoint, error) {
+	if service != (kavryntv1alpha1.ServiceRef{Namespace: "default", Name: "demo", Port: 8080}) {
+		return nil, errors.New("unexpected service")
+	}
+	return p, nil
+}
+
+// Verifies SPEC-0026-R09: with MCPSession, discovery talks to one ready pod;
+// without one it fails and leaves the server Ready.
+func TestDiscoveryUsesOnePodWithSessionAffinity(t *testing.T) {
+	spec := validSpec()
+	spec.SessionAffinity = kavryntv1alpha1.SessionAffinityMCPSession
+	k8sClient := newClient(t, newServer(spec))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	clock := &testClock{now: time.Now()}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+	pods := fakePods{
+		{Tag: mcpsession.TagOf("uid-a"), Addr: netip.MustParseAddrPort("10.0.0.1:8080")},
+		{Tag: mcpsession.TagOf("uid-b"), Addr: netip.MustParseAddrPort("10.0.0.2:8080")},
+	}
+	reconciler.SessionEndpoints = pods
+
+	reconcileWith(t, reconciler)
+	if discoverer.calls != 1 || discoverer.pod != pods[0].Addr {
+		t.Fatalf("discovery went to %v after %d calls, want %v", discoverer.pod, discoverer.calls, pods[0].Addr)
+	}
+
+	reconciler.SessionEndpoints = fakePods{}
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	reconcileWith(t, reconciler)
+	server := get(t, k8sClient)
+	discovered := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discoverer.calls != 1 || discovered == nil || discovered.Reason != kavryntv1alpha1.ReasonDiscoveryFailed || !strings.Contains(discovered.Message, "no ready pod") {
+		t.Fatalf("without ready pods: %d calls, ToolsDiscovered = %+v", discoverer.calls, discovered)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("a failed discovery made the server not Ready")
+	}
+
+	// Without affinity the endpoint is used as is.
+	spec.SessionAffinity = ""
+	plain := &fakeDiscoverer{}
+	reconciler = newDiscoveringReconciler(newClient(t, newServer(spec)), plain, clock)
+	reconcileWith(t, reconciler)
+	if plain.pod.IsValid() {
+		t.Fatalf("discovery without affinity went to pod %v", plain.pod)
 	}
 }

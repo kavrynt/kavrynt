@@ -96,3 +96,14 @@ func TestRefusalsNameTheAddressKind(t *testing.T) {
 		t.Fatalf("GET loopback error = %v, want a RefusedError of kind loopback", err)
 	}
 }
+
+// The check runs on the address the component dials. Through an HTTP proxy
+// that is the proxy's address, and the proxy would reach any endpoint, so
+// the transport never uses HTTP_PROXY, HTTPS_PROXY, or ALL_PROXY.
+func TestTransportIgnoresProxyEnvironment(t *testing.T) {
+	for _, allowLoopback := range []bool{false, true} {
+		if Transport(allowLoopback).Proxy != nil {
+			t.Fatalf("Transport(%v) uses a proxy, which would bypass the dial-time check", allowLoopback)
+		}
+	}
+}

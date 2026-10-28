@@ -29,6 +29,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -150,6 +151,7 @@ func main() {
 		handler.EnableAuditDelivery(auditShipper)
 	}
 	handler.EnableUpstreamCredentials(upstreamcred.Store{Dir: *upstreamCredentialsDir})
+	handler.EnableSessionAffinity(mcpsession.Endpoints{Reader: routeCache, AllowLoopback: *allowLoopback})
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
 	}

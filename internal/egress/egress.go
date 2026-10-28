@@ -90,6 +90,10 @@ func Control(allowLoopback bool) func(network, address string, _ syscall.RawConn
 // checked with Control.
 func Transport(allowLoopback bool) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Through a proxy the check would see only the proxy's address, and the
+	// proxy would reach any endpoint, so proxy environment variables are
+	// ignored.
+	transport.Proxy = nil
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,

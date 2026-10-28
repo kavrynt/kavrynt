@@ -4,7 +4,7 @@ release:
 values:
   - values/open-routes.yaml
 tests:
-  # Verifies SPEC-0003-R06.
+  # Verifies SPEC-0003-R06 and SPEC-0026-R12.
   - it: grants cluster-wide read-only access to MCPServers by default
     template: charts/gateway/templates/rbac.yaml
     asserts:
@@ -19,12 +19,15 @@ tests:
             - apiGroups: [kavrynt.io]
               resources: [mcpservers]
               verbs: [get, list, watch]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
+              verbs: [get, list, watch]
         documentIndex: 0
       - isKind:
           of: ClusterRoleBinding
         documentIndex: 1
 
-  # Verifies SPEC-0003-R06.
+  # Verifies SPEC-0003-R06 and SPEC-0026-R12.
   - it: grants per-namespace read-only access when namespaces are listed
     template: charts/gateway/templates/rbac.yaml
     set:
@@ -44,6 +47,9 @@ tests:
           value:
             - apiGroups: [kavrynt.io]
               resources: [mcpservers]
+              verbs: [get, list, watch]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
               verbs: [get, list, watch]
         documentIndex: 0
       - isKind:

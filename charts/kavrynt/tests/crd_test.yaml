@@ -91,3 +91,14 @@ tests:
             name: Discovery
             type: string
             jsonPath: .status.conditions[?(@.type=="ToolsDiscovered")].reason
+  # Verifies SPEC-0026-R01.
+  - it: accepts only None and MCPSession as session affinity, None by default
+    asserts:
+      - equal:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.sessionAffinity.enum
+          value:
+            - None
+            - MCPSession
+      - equal:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.sessionAffinity.default
+          value: None
