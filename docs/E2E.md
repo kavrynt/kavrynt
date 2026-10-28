@@ -32,8 +32,8 @@ once on the top of a stack of branches rather than on each one.
    the keep policy.
 3. Applies `test/e2e/manifests/mcp-server.yaml` and waits for `Ready`.
 4. Confirms the CRD rejects an endpoint with embedded credentials.
-5. Confirms Gateway RBAC: `get/list/watch` on `MCPServer` only; no writes, no
-   Secrets.
+5. Confirms Gateway RBAC: `get/list/watch` on `MCPServer` and EndpointSlices
+   only; no writes, no Secrets.
 6. Confirms the Operator records the sample server's `echo` tool and input
    schema in `status.tools`, and that a server it cannot reach stays `Ready`
    with `ToolsDiscovered=False` (`DiscoveryFailed`).
@@ -60,6 +60,11 @@ once on the top of a stack of branches rather than on each one.
     client pod calls `tools/list` through the Gateway Service throughout a
     rolling restart of every Gateway replica and no call may fail; deleting
     the Operator leader lets the standby reconcile a new server to `Ready`.
+    Session affinity: ten agents with twenty calls each, a new connection
+    per request, keep every session through the Gateway replicas to a
+    stateful three-replica server with `sessionAffinity: MCPSession`, whose
+    tools are discovered from one pod; without it, sessions are lost and
+    counted as `session_not_found`.
     Upstream credentials: a server that requires its own bearer token is
     discovered and routed with the stored credential from the pre-created
     Secret (the caller's token is replaced), a server whose credential is not

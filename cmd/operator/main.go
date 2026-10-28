@@ -9,6 +9,7 @@ import (
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/build"
 	"github.com/kavrynt/kavrynt/internal/operator/cloudsync"
 	"github.com/kavrynt/kavrynt/internal/operator/controller"
@@ -86,6 +87,7 @@ func main() {
 	}
 	if toolDiscovery {
 		reconciler.Discoverer = discovery.New(build.Version, egress.Transport(allowLoopback))
+		reconciler.SessionEndpoints = mcpsession.Endpoints{Reader: mgr.GetAPIReader(), AllowLoopback: allowLoopback}
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "error", err)

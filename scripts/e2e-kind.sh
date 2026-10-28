@@ -390,6 +390,15 @@ for verb in create update patch delete; do
   [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" mcpservers.kavrynt.io --as="${GATEWAY_SA}" -A)" = "no" ] ||
     fail "Gateway must not ${verb} MCPServers"
 done
+# Verifies SPEC-0026-R12: read-only EndpointSlices, for session affinity.
+for verb in get list watch; do
+  [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" endpointslices.discovery.k8s.io --as="${GATEWAY_SA}" -A)" = "yes" ] ||
+    fail "Gateway cannot ${verb} EndpointSlices"
+done
+for verb in create update patch delete; do
+  [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" endpointslices.discovery.k8s.io --as="${GATEWAY_SA}" -A)" = "no" ] ||
+    fail "Gateway must not ${verb} EndpointSlices"
+done
 # Verifies SPEC-0005-R13: the console admin Secret is mounted, not read.
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
   fail "Gateway must not read Secrets"
@@ -434,6 +443,15 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/unreachable-mcp-server \
   --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+# Verifies SPEC-0027-R01: kubectl get shows the failed discovery next to Ready.
+UNREACHABLE_GET="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/unreachable-mcp-server)"
+grep -q 'DISCOVERY' <<<"${UNREACHABLE_GET}" && grep -q 'DiscoveryFailed' <<<"${UNREACHABLE_GET}" ||
+  fail "kubectl get mcpserver does not show the Discovery column: ${UNREACHABLE_GET}"
+# Verifies SPEC-0027-R02: kavryctl list shows the reason in TOOLS.
+UNREACHABLE_TOOLS="$("${TEMP_DIR}/kavryctl" list --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" |
+  awk '$2 == "unreachable-mcp-server" { print $7 }')"
+[ "${UNREACHABLE_TOOLS}" = "DiscoveryFailed" ] ||
+  fail "kavryctl list TOOLS for a failed discovery is '${UNREACHABLE_TOOLS}', want DiscoveryFailed"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/unreachable-mcp-server --wait=true --timeout=60s >/dev/null
 
@@ -843,6 +861,145 @@ log "rolling restart: $(grep '^progress' <<<"${LOAD_LOG}" | tail -n 1)"
 stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_url "${GATEWAY_URL}/readyz"
+
+# Verifies SPEC-0026-R03, SPEC-0026-R04, SPEC-0026-R05, SPEC-0026-R09, and
+# SPEC-0026-R10: a stateful MCP server with three replicas keeps ten agent
+# sessions of twenty calls through the Gateway replicas with MCPSession;
+# without it, sessions are lost and recorded as session_not_found.
+log "verifying MCP session affinity with a stateful three-replica server"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stateful-mcp-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stateful-mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: stateful-mcp-server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp-server
+          image: ${SAMPLE_IMAGE}
+          imagePullPolicy: Never
+          env:
+            - name: STATEFUL
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateful-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: stateful-mcp-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: stateful-affinity
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://stateful-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  sessionAffinity: MCPSession
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: stateful-plain
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://stateful-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" rollout status deployment/stateful-mcp-server --timeout=120s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/stateful-affinity --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/stateful-affinity \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=Discovered --timeout=120s ||
+  fail "the Operator did not discover the tools of a stateful server with session affinity"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${E2E_NAMESPACE}.stateful-affinity\") != null"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${E2E_NAMESPACE}.stateful-plain\") != null"
+# Every replica must see the route before the agents start.
+sleep 5
+
+# run_sessions runs ten agents with twenty calls each against a route from
+# inside the cluster, a new connection per request, and prints the summary.
+run_sessions() {
+  local name="$1" route="$2"
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${name}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: sessions
+      image: ${SAMPLE_IMAGE}
+      imagePullPolicy: Never
+      args:
+        - sessions
+        - -url
+        - http://kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local:8080/mcp/${E2E_NAMESPACE}.${route}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+MANIFEST
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait "pod/${name}" \
+    --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s >/dev/null ||
+    fail "the session client ${name} did not finish: $(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" logs "pod/${name}" | tail -n 5)"
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" logs "pod/${name}"
+}
+AFFINITY_LOG="$(run_sessions sessions-affinity stateful-affinity)"
+grep --quiet '^done sessions=10 ok=200 failed=0$' <<<"${AFFINITY_LOG}" ||
+  fail "sessions failed with session affinity: $(grep -E '^(FAIL|done)' <<<"${AFFINITY_LOG}" | head -n 5)"
+log "session affinity: $(tail -n 1 <<<"${AFFINITY_LOG}")"
+PLAIN_LOG="$(run_sessions sessions-plain stateful-plain)"
+grep --quiet '^done .* failed=0$' <<<"${PLAIN_LOG}" &&
+  fail "a stateful three-replica server kept every session without session affinity; the test cannot tell affinity apart"
+log "without session affinity: $(tail -n 1 <<<"${PLAIN_LOG}")"
+# The port-forwarded replica served part of those requests.
+curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
+  grep --quiet "outcome=\"session_not_found\",route=\"${E2E_NAMESPACE}.stateful-plain\"" ||
+  fail "lost sessions were not recorded as session_not_found"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
+  mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
+  --wait=false >/dev/null
 
 # Verifies SPEC-0008-R08 and SPEC-0008-R11: deleting the Operator leader lets
 # the standby replica reconcile new servers.

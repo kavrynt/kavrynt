@@ -22,6 +22,9 @@ type Route struct {
 	// its recorded behavior hints, for the policy input (SPEC-0028). It is
 	// never modified after the route is built.
 	Tools map[string]map[string]bool `json:"-"`
+	// SessionAffinity sends every request of an MCP session to the pod of
+	// the endpoint's Service that started it (SPEC-0026).
+	SessionAffinity bool `json:"-"`
 }
 
 // ServerTokenExchange tells the console that a server gets per-caller
@@ -58,7 +61,9 @@ type Server struct {
 	Credential *ServerCredential `json:"credential,omitempty"`
 	// TokenExchange is set for servers that declare spec.tokenExchange.
 	TokenExchange *ServerTokenExchange `json:"tokenExchange,omitempty"`
-	CreatedAt     time.Time            `json:"createdAt"`
+	// SessionAffinity is None or MCPSession (SPEC-0026).
+	SessionAffinity string    `json:"sessionAffinity"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 // ServerInfo is an MCP server's reported name and version.

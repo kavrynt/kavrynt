@@ -17,6 +17,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"net/netip"
 	"regexp"
 	"strconv"
 	"strings"
@@ -114,13 +115,14 @@ func New(version string, transport http.RoundTripper) *Client {
 }
 
 // ListTools initializes an MCP session with endpoint and lists its tools.
-// header is sent with every request, for a server's stored credential
-// (SPEC-0011-R08); it may be nil.
-func (c *Client) ListTools(ctx context.Context, endpoint string, header http.Header) (Result, error) {
+// A valid pod sends every request of the session to that address, with the
+// endpoint's host in Host (SPEC-0026-R09). header is sent with every
+// request, for a server's stored credential (SPEC-0011-R08); it may be nil.
+func (c *Client) ListTools(ctx context.Context, endpoint string, pod netip.AddrPort, header http.Header) (Result, error) {
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
 
-	s := &session{client: c, endpoint: endpoint, header: header}
+	s := &session{client: c, endpoint: endpoint, pod: pod, header: header}
 	var initialized struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Capabilities    struct {
@@ -344,6 +346,7 @@ func CanonicalTools(tools []kavryntv1alpha1.MCPServerTool) []kavryntv1alpha1.MCP
 type session struct {
 	client          *Client
 	endpoint        string
+	pod             netip.AddrPort
 	header          http.Header
 	sessionID       string
 	protocolVersion string
@@ -426,6 +429,9 @@ func (s *session) send(ctx context.Context, method string, body []byte) (*http.R
 	req, err := http.NewRequestWithContext(ctx, method, s.endpoint, reader)
 	if err != nil {
 		return nil, err
+	}
+	if s.pod.IsValid() {
+		req.URL.Host = s.pod.String()
 	}
 	for name, values := range s.header {
 		req.Header[name] = append([]string(nil), values...)

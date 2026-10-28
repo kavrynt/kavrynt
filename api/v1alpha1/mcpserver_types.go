@@ -51,6 +51,24 @@ type MCPServerSpec struct {
 	// for one issued to this server (RFC 8693, SPEC-0015). It excludes
 	// Credential.
 	TokenExchange *MCPServerTokenExchange `json:"tokenExchange,omitempty"`
+	// SessionAffinity is None (or empty) or MCPSession, which sends every
+	// request of an MCP session to the pod that started it (SPEC-0026).
+	SessionAffinity string `json:"sessionAffinity,omitempty"`
+}
+
+const (
+	// SessionAffinityNone forwards every request to the endpoint as is.
+	SessionAffinityNone = "None"
+	// SessionAffinityMCPSession pins each Mcp-Session-Id to one pod of the
+	// endpoint's Service.
+	SessionAffinityMCPSession = "MCPSession"
+)
+
+// ServiceRef names a Service port by the Service's namespace and name.
+type ServiceRef struct {
+	Namespace string
+	Name      string
+	Port      int
 }
 
 // MCPServerTokenExchange names the token the Gateway asks the caller's

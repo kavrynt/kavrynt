@@ -150,7 +150,7 @@ against the assistant's summary of them.
 | [0023](0023-custom-dashboards/spec.md) | Custom dashboards | Implemented |
 | [0024](0024-console-dashboards/spec.md) | Console dashboards | Implemented |
 | [0025](0025-tool-call-approvals/spec.md) | Approvals for tool calls | Draft |
-| [0026](0026-mcp-session-affinity/spec.md) | MCP session affinity | Draft |
-| [0027](0027-discovery-diagnostics/spec.md) | Discovery diagnostics | Draft |
+| [0026](0026-mcp-session-affinity/spec.md) | MCP session affinity | Implemented |
+| [0027](0027-discovery-diagnostics/spec.md) | Discovery diagnostics | Accepted |
 | [0028](0028-tool-annotations-in-policy/spec.md) | Tool annotations in policy | Implemented |
 | [0031](0031-gateway-audience/spec.md) | Gateway audience | Draft |

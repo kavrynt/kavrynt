@@ -49,6 +49,11 @@ version in the `REPORTED` column.
   the server reports it as a JSON boolean; anything else, such as `title`,
   is dropped. They count toward the status bounds. They are self-reported
   and untrusted; the Gateway gives them to the tool authorization policy.
+- A server with `spec.sessionAffinity: MCPSession` keeps its sessions in
+  one pod, so the whole discovery session goes to the first ready pod of
+  the endpoint's Service, listed from its EndpointSlices (the Operator may
+  `list` them), with the Service host in `Host`. Without a ready pod the
+  discovery fails (`DiscoveryFailed`).
 - `serverInfo` is self-reported and untrusted. A name or version is kept only
   when it is a non-blank string of at most 128 printable characters. A failed
   discovery keeps the last value while the endpoint is unchanged; a changed

@@ -21,6 +21,7 @@ import (
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
+	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/gateway/alerts"
 	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
@@ -28,6 +29,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 )
 
@@ -58,6 +60,11 @@ type Handler struct {
 	table    *routing.Table
 	client   *http.Client
 	metadata Metadata
+
+	// sessionEndpoints lists the ready pods of MCPSession routes' Services,
+	// and nextSession spreads new sessions across them (SPEC-0026).
+	sessionEndpoints SessionEndpoints
+	nextSession      atomic.Uint64
 
 	// stripRequest holds canonical header names removed from proxied requests.
 	stripRequest map[string]struct{}
@@ -216,6 +223,18 @@ func (h *Handler) EnableClientAuth(a *clientauth.Authenticator) {
 // (SPEC-0011).
 func (h *Handler) EnableUpstreamCredentials(store upstreamcred.Store) {
 	h.credentials = store
+}
+
+// SessionEndpoints lists the ready pods of a Service (SPEC-0026).
+type SessionEndpoints interface {
+	Ready(ctx context.Context, service kavryntv1alpha1.ServiceRef) ([]mcpsession.Endpoint, error)
+}
+
+// EnableSessionAffinity sends the requests of each MCP session of an
+// MCPSession route to the pod that started it (SPEC-0026). Without it, such
+// routes answer 503.
+func (h *Handler) EnableSessionAffinity(endpoints SessionEndpoints) {
+	h.sessionEndpoints = endpoints
 }
 
 // EnablePolicy has engine decide every MCP request before it is forwarded,
@@ -638,6 +657,23 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		req.Header.Set("Authorization", "Bearer "+token)
 	}
 	req.Host = req.URL.Host
+	var podTag string
+	if route.SessionAffinity {
+		tag, status, err := h.pinSession(req, route)
+		if err != nil {
+			outcome, decision := outcomeGatewayError, auditv1.DecisionUnavailable
+			if status == http.StatusNotFound {
+				outcome, decision = outcomeSessionNotFound, auditv1.DecisionInvalid
+			}
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = decision, err.Error()
+			}
+			writeError(w, status, err)
+			h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
+			return
+		}
+		podTag = tag
+	}
 	req.Header.Set(routeHeader, route.Name)
 	req.Header.Set("X-Forwarded-Host", r.Host)
 
@@ -664,6 +700,10 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	copyHeaders(w.Header(), resp.Header, responseStrip)
+	if id := w.Header().Get(sessionHeader); podTag != "" && id != "" {
+		// The client keeps the pod's tag with the session (SPEC-0026-R04).
+		w.Header().Set(sessionHeader, mcpsession.Wrap(podTag, id))
+	}
 	// Every route shares the Gateway origin, which also serves the console.
 	// Responses render in a sandbox (an opaque origin, no scripts) so an
 	// upstream cannot run code as the Gateway origin.
@@ -778,6 +818,46 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, route model.
 	writeRPCError(w, http.StatusForbidden, call.body.id, policyDeniedCode, message)
 	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
 	return false
+}
+
+// sessionHeader carries the MCP session ID.
+const sessionHeader = "Mcp-Session-Id"
+
+// pinSession points req, for an MCPSession route, at one ready pod of the
+// endpoint's Service, keeping the Service host in Host: the pod named by
+// the session ID's tag, or the next pod for a new session. The server gets
+// its own session ID back. It returns the pod's tag, or the status and
+// fixed message to answer with instead (SPEC-0026-R03 to R07).
+func (h *Handler) pinSession(req *http.Request, route model.Route) (string, int, error) {
+	service, ok := kavryntv1alpha1.ServiceEndpoint(route.Endpoint)
+	if !ok || h.sessionEndpoints == nil {
+		return "", http.StatusServiceUnavailable, errors.New("session affinity is unavailable for this route")
+	}
+	pods, err := h.sessionEndpoints.Ready(req.Context(), service)
+	if err != nil {
+		slog.Error("list the ready pods of an MCPSession route failed", "route", route.Name, "error", err)
+		return "", http.StatusServiceUnavailable, errors.New("session affinity is unavailable for this route")
+	}
+	var pod mcpsession.Endpoint
+	if id := req.Header.Get(sessionHeader); id != "" {
+		tag, serverID, ok := mcpsession.Unwrap(id)
+		if ok {
+			pod, ok = mcpsession.Find(pods, tag)
+		}
+		if !ok {
+			// Another pod does not know the session either; the client
+			// starts a new one (SPEC-0026-R07).
+			return "", http.StatusNotFound, errors.New("session not found")
+		}
+		req.Header.Set(sessionHeader, serverID)
+	} else {
+		if len(pods) == 0 {
+			return "", http.StatusServiceUnavailable, errors.New("no ready pod for this route")
+		}
+		pod = pods[(h.nextSession.Add(1)-1)%uint64(len(pods))]
+	}
+	req.URL.Host = pod.Addr.String()
+	return pod.Tag, 0, nil
 }
 
 // exchangeToken returns the token for route in exchange for the caller's,

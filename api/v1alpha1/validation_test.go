@@ -177,3 +177,60 @@ func TestValidateTokenExchange(t *testing.T) {
 		t.Fatal("DeepCopyObject shares spec.tokenExchange.scopes")
 	}
 }
+
+// Verifies SPEC-0026-R01.
+func TestSessionAffinity(t *testing.T) {
+	for _, affinity := range []string{"", SessionAffinityNone, SessionAffinityMCPSession} {
+		s := server("search", MCPServerSpec{Version: "1", Transport: "http", Endpoint: "http://search.team-a.svc:8080/mcp", SessionAffinity: affinity})
+		if err := s.Validate(); err != nil {
+			t.Errorf("sessionAffinity %q rejected: %v", affinity, err)
+		}
+	}
+	s := server("search", MCPServerSpec{Version: "1", Transport: "http", Endpoint: "http://search.team-a.svc:8080/mcp", SessionAffinity: "ClientIP"})
+	if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "spec.sessionAffinity must be one of: None, MCPSession") {
+		t.Errorf("sessionAffinity ClientIP: err = %v", err)
+	}
+}
+
+// Verifies SPEC-0026-R02.
+func TestSessionAffinityNeedsAServiceEndpoint(t *testing.T) {
+	cases := map[string]ServiceRef{
+		"http://search.team-a.svc/mcp":                    {Namespace: "team-a", Name: "search", Port: 80},
+		"http://search.team-a.svc:8080/mcp":               {Namespace: "team-a", Name: "search", Port: 8080},
+		"http://search.team-a.svc.cluster.local:8080/mcp": {Namespace: "team-a", Name: "search", Port: 8080},
+		"http://search.team-a.svc.corp.example:9000":      {Namespace: "team-a", Name: "search", Port: 9000},
+		"http://SEARCH.team-a.svc:8080/mcp":               {Namespace: "team-a", Name: "search", Port: 8080},
+	}
+	for endpoint, want := range cases {
+		got, ok := ServiceEndpoint(endpoint)
+		if !ok || got != want {
+			t.Errorf("ServiceEndpoint(%q) = %+v, %v; want %+v", endpoint, got, ok, want)
+		}
+		s := server("search", MCPServerSpec{Version: "1", Transport: "http", Endpoint: endpoint, SessionAffinity: SessionAffinityMCPSession})
+		if err := s.Validate(); err != nil {
+			t.Errorf("%s rejected: %v", endpoint, err)
+		}
+	}
+	for _, endpoint := range []string{
+		"https://mcp.example.com/mcp",
+		"https://search.team-a.svc:8443/mcp",
+		"http://search.team-a:8080/mcp",
+		"http://search:8080/mcp",
+		"http://10.0.0.12:8080/mcp",
+		"http://search.team-a.pod:8080/mcp",
+		"http://search..svc:8080/mcp",
+		"http://-search.team-a.svc:8080/mcp",
+	} {
+		if _, ok := ServiceEndpoint(endpoint); ok {
+			t.Errorf("ServiceEndpoint(%q) accepted", endpoint)
+		}
+		s := server("search", MCPServerSpec{Version: "1", Transport: "http", Endpoint: endpoint, SessionAffinity: SessionAffinityMCPSession})
+		if err := s.Validate(); err == nil || !strings.Contains(err.Error(), "spec.endpoint must name a Kubernetes Service") {
+			t.Errorf("%s with MCPSession: err = %v", endpoint, err)
+		}
+		s.Spec.SessionAffinity = SessionAffinityNone
+		if strings.HasPrefix(endpoint, "http") && !strings.Contains(endpoint, "..") && s.Validate() != nil {
+			t.Errorf("%s without affinity rejected: %v", endpoint, s.Validate())
+		}
+	}
+}

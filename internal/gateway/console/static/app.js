@@ -13,7 +13,7 @@
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
-    ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL,
+    ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL, sessionLoss,
   } = Kavrynt.stats;
   const {
     RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
@@ -904,6 +904,8 @@
       dash.load();
     }
 
+    const lossSlot = h("div");
+
     function draw() {
       const server = state.servers.find((s) => s.route === routeName);
       clear(body);
@@ -914,6 +916,7 @@
         return;
       }
       const health = serverHealth(server, state.traffic);
+      drawLoss(server);
       put(body,
         h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" }), " / ", server.namespace, " / ", server.name),
         h("div", { class: "page-head" },
@@ -924,6 +927,7 @@
             h("button", { type: "button", class: "btn", onclick: () => copy(diagnostics(server, state.traffic, state.version && state.version.version), "Diagnostics copied: metadata only, no tool inputs or results") }, "Copy diagnostics"),
             server.routed ? h("a", { class: "btn primary", href: formatHash("playground", [server.route]) }, "Open in playground") : null)),
         health.label === "Needs attention" ? h("div", { class: "callout " + health.cls, role: "note" }, h("strong", { text: "Needs attention. " }), health.detail) : null,
+        lossSlot,
         h("div", { class: "tabs", role: "tablist" },
           tabButton("overview", "Overview"), tabButton("dashboard", "Dashboard"), tabButton("tools", "Tools (" + server.tools.length + ")"),
           tabButton("traffic", "Traffic (" + health.stats.calls + ")")));
@@ -941,6 +945,14 @@
       } else put(body, serverOverview(server, health));
     }
 
+    // The lost-sessions callout follows the recent traffic on every tab,
+    // without redrawing the page or its charts (SPEC-0026-R11).
+    function drawLoss(server) {
+      const lost = server ? sessionLoss(server, state.traffic) : null;
+      clear(lossSlot);
+      if (lost) put(lossSlot, h("div", { class: "callout", role: "note" }, h("strong", { text: "Sessions lost. " }), lost.message));
+    }
+
     function tabButton(id, label) {
       return h("button", {
         type: "button", role: "tab", class: tab === id ? "active" : "", "aria-selected": String(tab === id),
@@ -951,6 +963,7 @@
     draw();
     if (dash) dash.load();
     return (what) => {
+      if (what === "traffic") drawLoss(state.servers.find((s) => s.route === routeName));
       if (dash) {
         if (what === "servers" && !shown) {
           draw();
