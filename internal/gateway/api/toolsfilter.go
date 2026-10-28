@@ -16,6 +16,7 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 )
 
@@ -28,9 +29,11 @@ var errNotToolsList = errors.New("the answer is not a tools/list result")
 // toolsFilter removes the tools a policy denies from tools/list answers.
 type toolsFilter struct {
 	decide func(context.Context, policy.Input) policy.Decision
-	// input is the request's policy input; mcp_method and tool are set per
-	// tool.
+	// input is the request's policy input; mcp_method and the tool fields
+	// are set per tool.
 	input policy.Input
+	// route gives each tool's recorded hints (SPEC-0028-R06).
+	route model.Route
 	// id is the JSON-RPC id of the tools/list request.
 	id json.RawMessage
 }
@@ -67,8 +70,8 @@ func (f *toolsFilter) filter(ctx context.Context, message []byte) ([]byte, int, 
 			// A tool without a name cannot be called, so it is not listed.
 			continue
 		}
-		input := f.input
-		input.MCPMethod, input.Tool = "tools/call", *named.Name
+		input := toolInput(f.input, f.route, *named.Name)
+		input.MCPMethod = "tools/call"
 		decision := f.decide(ctx, input)
 		if ctx.Err() != nil {
 			return nil, len(tools), fmt.Errorf("the policy did not decide on %d tools within %s", len(tools), filterDeadline)

@@ -27,3 +27,14 @@ test("every snippet names the route URL", () => {
   }
   assert.deepEqual(JSON.parse(snippets["MCP client"]), { mcpServers: { incidents: { type: "http", url } } });
 });
+
+// Verifies SPEC-0028-R08: every recorded hint is shown, in a fixed order,
+// and absent hints are not.
+test("tool hints are labelled in a fixed order", () => {
+  assert.deepEqual(format.toolHints({ openWorldHint: false, destructiveHint: true, readOnlyHint: false, idempotentHint: true }),
+    ["not read-only", "destructive", "idempotent", "closed world"]);
+  assert.deepEqual(format.toolHints({ readOnlyHint: true, openWorldHint: true }), ["read-only", "open world"]);
+  assert.deepEqual(format.toolHints({}), []);
+  assert.deepEqual(format.toolHints(undefined), []);
+  assert.deepEqual(format.toolHints({ readOnlyHint: "yes", dangerous: true }), []);
+});

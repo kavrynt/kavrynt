@@ -222,6 +222,7 @@ func buildResult(raw []json.RawMessage) Result {
 			Name        string          `json:"name"`
 			Description string          `json:"description"`
 			InputSchema json.RawMessage `json:"inputSchema"`
+			Annotations json.RawMessage `json:"annotations"`
 		}
 		if json.Unmarshal(entry, &tool) != nil || !mcpmeta.ValidName(tool.Name, mcpmeta.MaxToolNameLength) || seen[tool.Name] {
 			result.Skipped++
@@ -239,6 +240,7 @@ func buildResult(raw []json.RawMessage) Result {
 		if schema, err := CanonicalJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' {
 			bounded.InputSchema = &runtime.RawExtension{Raw: schema}
 		}
+		bounded.Annotations = behaviorHints(tool.Annotations)
 		result.Tools = append(result.Tools, bounded)
 	}
 
@@ -255,12 +257,47 @@ func buildResult(raw []json.RawMessage) Result {
 	return result
 }
 
+// behaviorHints returns the four MCP behavior hints that raw reports as JSON
+// booleans under their exact names, and nil when there are none
+// (SPEC-0028-R01). Everything else in annotations, such as title, is dropped.
+func behaviorHints(raw json.RawMessage) *kavryntv1alpha1.MCPServerToolAnnotations {
+	var members map[string]json.RawMessage
+	if json.Unmarshal(raw, &members) != nil {
+		return nil
+	}
+	hint := func(name string) *bool {
+		switch string(bytes.TrimSpace(members[name])) {
+		case "true":
+			return new(true)
+		case "false":
+			return new(false)
+		}
+		return nil
+	}
+	annotations := &kavryntv1alpha1.MCPServerToolAnnotations{
+		ReadOnlyHint:    hint("readOnlyHint"),
+		DestructiveHint: hint("destructiveHint"),
+		IdempotentHint:  hint("idempotentHint"),
+		OpenWorldHint:   hint("openWorldHint"),
+	}
+	if len(annotations.Hints()) == 0 {
+		return nil
+	}
+	return annotations
+}
+
+// statusSize approximates the bytes tools take in status: names,
+// descriptions, schemas, and encoded annotations (SPEC-0028-R02).
 func statusSize(tools []kavryntv1alpha1.MCPServerTool) int {
 	size := 0
 	for _, tool := range tools {
 		size += len(tool.Name) + len(tool.Description)
 		if tool.InputSchema != nil {
 			size += len(tool.InputSchema.Raw)
+		}
+		if tool.Annotations != nil {
+			encoded, _ := json.Marshal(tool.Annotations)
+			size += len(encoded)
 		}
 	}
 	return size

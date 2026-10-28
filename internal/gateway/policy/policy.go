@@ -60,6 +60,13 @@ type Input struct {
 	MCPMethod string `json:"mcp_method"`
 	// Tool is params.name of tools/call, empty otherwise.
 	Tool string `json:"tool"`
+	// ToolAnnotations are the behavior hints the Operator recorded for Tool
+	// on this route, by MCP name, absent hints absent; {} otherwise. They
+	// are the MCP server's own claims (SPEC-0028-R03).
+	ToolAnnotations map[string]bool `json:"tool_annotations"`
+	// ToolDiscovered reports whether Tool is among the route's discovered
+	// tools (SPEC-0028-R04).
+	ToolDiscovered bool `json:"tool_discovered"`
 	// Time is the request time, RFC 3339 in UTC.
 	Time string `json:"time"`
 }

@@ -567,12 +567,12 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		gatewayError(http.StatusBadGateway, fmt.Errorf("transport %q is not supported by gateway MVP", route.Transport))
 		return
 	}
-	if h.policy != nil && !h.authorize(w, r, route.Name, call, start, upstreamBody) {
+	if h.policy != nil && !h.authorize(w, r, route, call, start, upstreamBody) {
 		return
 	}
 	var filter *toolsFilter
 	if h.policy != nil && h.filterToolsList && r.Method == http.MethodPost && call.body.classified && call.body.method == "tools/list" {
-		filter = &toolsFilter{decide: h.policy.Decide, input: policyInput(r, route.Name), id: call.body.id}
+		filter = &toolsFilter{decide: h.policy.Decide, input: policyInput(r, route.Name), route: route, id: call.body.id}
 	}
 
 	target, err := buildTargetURL(route.Endpoint, suffix, r.URL.RawQuery)
@@ -727,7 +727,8 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 
 // authorize asks the policy whether the request may reach the MCP server,
 // and answers it when not (SPEC-0012). It reports whether to forward.
-func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName string, call mcpCall, start time.Time, body *countingReader) bool {
+func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, route model.Route, call mcpCall, start time.Time, body *countingReader) bool {
+	routeName := route.Name
 	rec := auditRecordFrom(r)
 	if rec != nil {
 		rec.policyRevision = h.policy.Revision()
@@ -740,7 +741,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 		h.finish(r, routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
 		return false
 	}
-	input := policyInput(r, routeName)
+	input := policyInput(r, route.Name)
 	if r.Method == http.MethodPost {
 		// The policy decides on the body's JSON-RPC message, so a body it
 		// cannot read is refused (SPEC-0012-R09), and headers that name
@@ -758,7 +759,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, routeName st
 		}
 		input.MCPMethod = b.method
 		if b.method == "tools/call" {
-			input.Tool = b.tool
+			input = toolInput(input, route, b.tool)
 		}
 	}
 
@@ -802,10 +803,23 @@ func (h *Handler) exchangeToken(r *http.Request, route model.Route) (string, int
 // policyInput is the policy input of a request without its MCP method and
 // tool: the verified caller, the route, the HTTP method, and the time.
 func policyInput(r *http.Request, routeName string) policy.Input {
-	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339)}
+	input := policy.Input{HTTPMethod: r.Method, Time: time.Now().UTC().Format(time.RFC3339), ToolAnnotations: map[string]bool{}}
 	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
 	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
 		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
+	}
+	return input
+}
+
+// toolInput is input for a tools/call of tool on route. The tool's hints and
+// whether it was discovered come from the route, never from the request
+// (SPEC-0028-R05).
+func toolInput(input policy.Input, route model.Route, tool string) policy.Input {
+	input.Tool = tool
+	hints, discovered := route.Tools[tool]
+	input.ToolAnnotations, input.ToolDiscovered = map[string]bool{}, discovered
+	for name, hint := range hints {
+		input.ToolAnnotations[name] = hint
 	}
 	return input
 }

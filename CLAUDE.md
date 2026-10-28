@@ -69,8 +69,8 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   binary with checks before (release, chart version, CRD ownership;
   `--adopt-crd`) and after (every server routed before is routed again).
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
-  into `status.tools` with a `ToolsDiscovered` condition that never affects
-  `Ready`, and records the reported `serverInfo` name and version in
+  into `status.tools`, with their MCP behavior hints, and sets a
+  `ToolsDiscovered` condition that never affects `Ready`, and records the reported `serverInfo` name and version in
   `status.serverInfo`.
 - Opt-in Operator connector (`cloud.enabled`) sends full inventory snapshots
   (servers and tools) to Kavrynt Cloud `POST /v1/sync/mcpservers` with a
@@ -134,7 +134,9 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   ConfigMap before forwarding; anything but `{"allow": true}` denies. With
   `gateway.policy.filterToolsList` (SPEC-0016), `tools/list` answers list
   only the tools the policy lets that caller call, failing closed to an
-  empty list.
+  empty list. The input carries the called tool's recorded MCP behavior
+  hints (`tool_annotations`, self-reported) and `tool_discovered`
+  (SPEC-0028).
 - Opt-in audit events (`gateway.audit`, SPEC-0013): one JSON line per `/mcp/`
   request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
   chained per instance, verified by `kavryctl audit verify`; never arguments,
