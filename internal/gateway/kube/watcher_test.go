@@ -92,6 +92,13 @@ func TestRoutesCarryDiscoveredToolHints(t *testing.T) {
 		t.Fatalf("route tools = %v", tools)
 	}
 
+	// A changed spec (a new endpoint) is not yet discovered.
+	item.Generation = 2
+	if tools := Routes([]kavryntv1alpha1.MCPServer{item})[0].Tools; len(tools) != 0 {
+		t.Fatalf("route tools of an earlier generation = %v, want none", tools)
+	}
+	item.Status.Conditions[1].ObservedGeneration = 2
+
 	// A failed discovery keeps the last known tools in status, but they are
 	// not current.
 	item.Status.Conditions[1].Status, item.Status.Conditions[1].Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonDiscoveryFailed
