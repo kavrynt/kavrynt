@@ -258,8 +258,10 @@ server can call a destructive tool read-only, so decide on them only for
 servers whose code you trust. A hint the server did not report is absent,
 not `false`; MCP's defaults for absent hints are `readOnlyHint: false`,
 `destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true`. The
-policy sees the hints of the last discovery, and a tool the server added
-since then has `tool_discovered: false`. A denied request gets `403` with
+policy sees hints only once a discovery of the current spec has succeeded:
+after a failed discovery or a spec change, every tool has
+`tool_annotations: {}` and `tool_discovered: false`, and so does a tool the
+server added since the last discovery. A denied request gets `403` with
 a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
 policy's `reason` with control characters removed and at most 200
 characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
