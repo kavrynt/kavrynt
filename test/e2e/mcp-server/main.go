@@ -107,6 +107,12 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	if stateful {
+		// Every answer closes its connection, so each request the Gateway
+		// sends to the Service opens a new one and kube-proxy picks a pod
+		// for it. Pooled connections would otherwise keep one Gateway
+		// replica's requests on one pod by chance, and the test could not
+		// tell session affinity apart.
+		w.Header().Set("Connection", "close")
 		if input.Method == "initialize" {
 			w.Header().Set("Mcp-Session-Id", newSession())
 		} else if _, known := sessions.Load(r.Header.Get("Mcp-Session-Id")); !known {
