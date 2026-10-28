@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
 	"net/netip"
 	"os"
@@ -13,6 +15,7 @@ import (
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
 	"github.com/kavrynt/kavrynt/internal/scope"
@@ -511,6 +514,29 @@ func TestDiscoverySkipsTokenExchangeServers(t *testing.T) {
 	}
 	if discoverer.calls != 0 {
 		t.Fatalf("discovery ran %d times for a server that needs a caller's token", discoverer.calls)
+	}
+}
+
+// Verifies SPEC-0027-R03: whatever the cause, a failed discovery keeps the
+// reason DiscoveryFailed and leaves Ready alone.
+func TestEveryDiscoveryFailureKeepsReasonAndReady(t *testing.T) {
+	for name, err := range map[string]error{
+		"refused by egress": fmt.Errorf("initialize: %w", &egress.RefusedError{Kind: "cloud metadata", Addr: netip.MustParseAddr("169.254.169.254")}),
+		"host not found":    &net.DNSError{Err: "no such host", Name: "demo.default.svc", IsNotFound: true},
+		"timeout":           fmt.Errorf("initialize: %w", context.DeadlineExceeded),
+		"HTTP 404":          errors.New("initialize returned HTTP 404"),
+	} {
+		k8sClient := newClient(t, newServer(validSpec()))
+		reconciler := newDiscoveringReconciler(k8sClient, &fakeDiscoverer{err: err}, &testClock{now: time.Now()})
+		reconcileWith(t, reconciler)
+		updated := get(t, k8sClient)
+		discovered := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+		if discovered == nil || discovered.Reason != kavryntv1alpha1.ReasonDiscoveryFailed {
+			t.Errorf("%s: ToolsDiscovered = %+v, want reason DiscoveryFailed", name, discovered)
+		}
+		if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+			t.Errorf("%s: discovery failure changed Ready", name)
+		}
 	}
 }
 

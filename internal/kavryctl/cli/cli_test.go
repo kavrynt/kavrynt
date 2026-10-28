@@ -91,6 +91,16 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "team-b"},
 			Spec:       kavryntv1alpha1.MCPServerSpec{Version: "1", Transport: "stdio", Command: "b"},
 		},
+		&kavryntv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "team-c"},
+			Spec:       kavryntv1alpha1.MCPServerSpec{Version: "1", Transport: "http", Endpoint: "http://c"},
+			Status: kavryntv1alpha1.MCPServerStatus{
+				Conditions: []metav1.Condition{
+					{Type: kavryntv1alpha1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Routable", LastTransitionTime: metav1.Now()},
+					{Type: kavryntv1alpha1.ConditionToolsDiscovered, Status: metav1.ConditionFalse, Reason: kavryntv1alpha1.ReasonDiscoveryFailed, LastTransitionTime: metav1.Now()},
+				},
+			},
+		},
 	)
 
 	out, errOut, code := run(t, "list", "-A")
@@ -105,6 +115,8 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 	if strings.Contains(out, "/mcp/team-b.b") {
 		t.Fatalf("list -A shows a route for a server that is not Ready:\n%s", out)
 	}
+	// Verifies SPEC-0027-R02: TOOLS is the count when discovered, the reason
+	// when discovery failed, and - before discovery ran.
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		switch {
@@ -112,6 +124,8 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 			t.Fatalf("team-a TOOLS = %q, want 2:\n%s", fields[6], out)
 		case len(fields) > 0 && fields[0] == "team-b" && fields[6] != "-":
 			t.Fatalf("team-b TOOLS = %q, want - before discovery:\n%s", fields[6], out)
+		case len(fields) > 0 && fields[0] == "team-c" && fields[6] != kavryntv1alpha1.ReasonDiscoveryFailed:
+			t.Fatalf("team-c TOOLS = %q, want %s:\n%s", fields[6], kavryntv1alpha1.ReasonDiscoveryFailed, out)
 		}
 	}
 
