@@ -37,11 +37,14 @@ func TagOf(uid types.UID) string {
 	return hex.EncodeToString(sum[:])[:tagLength]
 }
 
-// Ready returns the ready pods of a Service from its EndpointSlices, sorted
-// by tag. A slice's port is its only one, or the one numbered port, the
-// endpoint URL's. Endpoints without a pod, not ready, or at an address the
-// egress policy refuses are left out (SPEC-0026-R08).
-func Ready(slices []discoveryv1.EndpointSlice, port int, allowLoopback bool) []Endpoint {
+// Ready returns the ready pods of a single-port Service from its
+// EndpointSlices, sorted by tag, at the slice's port (the target port).
+// Slices with more than one port are skipped: their ports are target ports,
+// which cannot be matched to the Service port the endpoint names without
+// reading the Service. Endpoints without a pod, not ready, not serving,
+// terminating, or at an address the egress policy refuses are left out
+// (SPEC-0026-R03, R08).
+func Ready(slices []discoveryv1.EndpointSlice, allowLoopback bool) []Endpoint {
 	seen := map[string]bool{}
 	var ready []Endpoint
 	for i := range slices {
@@ -49,12 +52,14 @@ func Ready(slices []discoveryv1.EndpointSlice, port int, allowLoopback bool) []E
 		if s.AddressType != discoveryv1.AddressTypeIPv4 && s.AddressType != discoveryv1.AddressTypeIPv6 {
 			continue
 		}
-		target, ok := slicePort(s.Ports, port)
-		if !ok {
+		if len(s.Ports) != 1 || s.Ports[0].Port == nil || *s.Ports[0].Port < 1 || *s.Ports[0].Port > 65535 {
 			continue
 		}
+		target := uint16(*s.Ports[0].Port) // #nosec G115 -- checked to be a port number.
 		for _, e := range s.Endpoints {
-			if e.Conditions.Ready != nil && !*e.Conditions.Ready {
+			// Absent conditions mean ready and serving, not terminating.
+			c := e.Conditions
+			if (c.Ready != nil && !*c.Ready) || (c.Serving != nil && !*c.Serving) || (c.Terminating != nil && *c.Terminating) {
 				continue
 			}
 			if e.TargetRef == nil || e.TargetRef.Kind != "Pod" || e.TargetRef.UID == "" || len(e.Addresses) == 0 {
@@ -74,19 +79,6 @@ func Ready(slices []discoveryv1.EndpointSlice, port int, allowLoopback bool) []E
 	}
 	sort.Slice(ready, func(i, j int) bool { return ready[i].Tag < ready[j].Tag })
 	return ready
-}
-
-func slicePort(ports []discoveryv1.EndpointPort, port int) (uint16, bool) {
-	valid := func(p discoveryv1.EndpointPort) bool { return p.Port != nil && *p.Port > 0 && *p.Port <= 65535 }
-	if len(ports) == 1 && valid(ports[0]) {
-		return uint16(*ports[0].Port), true // #nosec G115 -- checked to be a port number.
-	}
-	for _, p := range ports {
-		if valid(p) && int(*p.Port) == port {
-			return uint16(*p.Port), true // #nosec G115 -- checked to be a port number.
-		}
-	}
-	return 0, false
 }
 
 // Find returns the endpoint with tag.

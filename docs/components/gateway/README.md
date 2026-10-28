@@ -262,8 +262,10 @@ server can call a destructive tool read-only, so decide on them only for
 servers whose code you trust. A hint the server did not report is absent,
 not `false`; MCP's defaults for absent hints are `readOnlyHint: false`,
 `destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true`. The
-policy sees the hints of the last discovery, and a tool the server added
-since then has `tool_discovered: false`. A denied request gets `403` with
+policy sees hints only once a discovery of the current spec has succeeded:
+after a failed discovery or a spec change, every tool has
+`tool_annotations: {}` and `tool_discovered: false`, and so does a tool the
+server added since the last discovery. A denied request gets `403` with
 a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
 policy's `reason` with control characters removed and at most 200
 characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
@@ -494,9 +496,13 @@ spec:
   not issue, gets `404` without being forwarded, so the client starts a new
   session. A session is not moved to another pod.
 - New sessions with no ready pod, or a Service in a namespace the Gateway
-  does not watch, get `503`. Pod addresses pass the same egress checks as
-  any endpoint. The EndpointSlice port is the Service's only port, or the
-  one numbered like the endpoint's port.
+  does not watch, get `503`. Pods that are not ready, not serving, or
+  terminating are not used. Pod addresses pass the same egress checks as
+  any endpoint.
+- The Service must have one port. EndpointSlices list target ports, so with
+  several the Gateway cannot tell which one the endpoint's Service port
+  maps to without reading the Service; it uses none, and new sessions get
+  `503`.
 - The Operator lists such a server's tools from one ready pod.
 - The Gateway reads EndpointSlices (`get`, `list`, `watch`) in the
   namespaces it watches and keeps them in its cache; the Operator may

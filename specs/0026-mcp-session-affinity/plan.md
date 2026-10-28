@@ -5,6 +5,10 @@
 - `MCPSession` stays opt-in (open question 1, as recommended).
 - Servers that never return `Mcp-Session-Id` are not pinned (open
   question 2, as recommended): a request without a session ID spreads.
+- With `MCPSession` the Service must have one port: EndpointSlices list
+  target ports, and mapping the endpoint's Service port to one would need
+  read access to Services, which R12 rules out. Slices with several ports
+  are not used, so new sessions get `503`; the docs say so.
 - With `MCPSession` the endpoint must use `http`. The Gateway connects to a
   pod's address, so a TLS certificate issued for the Service name would not
   verify; TLS to pods is a later change (a mesh can add mTLS today). The
@@ -20,10 +24,11 @@
   `spec.endpoint must name a Kubernetes Service (http://<service>.<namespace>.svc[.<cluster-domain>]) when spec.sessionAffinity is MCPSession`.
 - **Package `internal/mcpsession`.** No Kubernetes clients, shared by the
   Gateway and the Operator:
-  - `Ready(slices, port)` returns the ready endpoints of a Service's
-    EndpointSlices: `conditions.ready` not `false`, a pod `targetRef` with a
-    UID, an address the egress policy allows (`egress.Allowed`, R08), and
-    the slice port that is the only one or has the endpoint's port number.
+  - `Ready(slices, allowLoopback)` returns the ready endpoints of a
+    Service's single-port EndpointSlices: `ready` and `serving` not
+    `false`, `terminating` not `true`, a pod `targetRef` with a UID, and an
+    address the egress policy allows (`egress.Allowed`, R08), at the
+    slice's port.
     Each has a `Tag`: the first 16 hex characters of SHA-256 of the pod UID,
     so it names neither the address nor the pod (R06). Sorted by tag.
   - `Wrap(tag, id)` returns `<tag>.<id>`; `Unwrap(id)` splits it and
@@ -75,7 +80,7 @@
 | R09 | `controller.TestDiscoveryUsesOnePodWithSessionAffinity`, `discovery.TestListToolsAtOneAddress` |
 | R10 | `api.TestLostSessionsAreNamed` |
 | R11 | `test/console/stats.test.mjs` |
-| R12 | `charts/kavrynt/tests/gateway_rbac_test.yaml` |
+| R12 | `charts/kavrynt/tests/gateway_test.yaml`, `scripts/e2e-kind.sh` |
 | E2E | `scripts/e2e-kind.sh`: a three-replica stateful server with `MCPSession` keeps ten sessions through two Gateway replicas |
 
 ## Rollout and risks

@@ -25,5 +25,5 @@ func (e Endpoints) Ready(ctx context.Context, service kavryntv1alpha1.ServiceRef
 	if err := e.Reader.List(ctx, &slices, client.InNamespace(service.Namespace), client.MatchingLabels{ServiceNameLabel: service.Name}); err != nil {
 		return nil, err
 	}
-	return Ready(slices.Items, service.Port, e.AllowLoopback), nil
+	return Ready(slices.Items, e.AllowLoopback), nil
 }

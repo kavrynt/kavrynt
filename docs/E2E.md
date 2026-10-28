@@ -32,8 +32,8 @@ once on the top of a stack of branches rather than on each one.
    the keep policy.
 3. Applies `test/e2e/manifests/mcp-server.yaml` and waits for `Ready`.
 4. Confirms the CRD rejects an endpoint with embedded credentials.
-5. Confirms Gateway RBAC: `get/list/watch` on `MCPServer` only; no writes, no
-   Secrets.
+5. Confirms Gateway RBAC: `get/list/watch` on `MCPServer` and EndpointSlices
+   only; no writes, no Secrets.
 6. Confirms the Operator records the sample server's `echo` tool and input
    schema in `status.tools`, and that a server it cannot reach stays `Ready`
    with `ToolsDiscovered=False` (`DiscoveryFailed`).

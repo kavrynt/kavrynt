@@ -26,39 +26,37 @@ func slice(addressType discoveryv1.AddressType, ports []int32, endpoints ...disc
 	return s
 }
 
-// Verifies SPEC-0026-R03: only ready pod endpoints, on the Service's port.
+// Verifies SPEC-0026-R03: only pods that are ready and serving, of a
+// single-port Service, on its target port.
 func TestReadySelectsReadyPodEndpoints(t *testing.T) {
+	notServing := endpoint("10.0.0.7", "search-g", "uid-g", new(true))
+	notServing.Conditions.Serving = new(false)
+	terminating := endpoint("10.0.0.8", "search-h", "uid-h", nil)
+	terminating.Conditions.Terminating = new(true)
 	slices := []discoveryv1.EndpointSlice{
 		slice(discoveryv1.AddressTypeIPv4, []int32{8080},
 			endpoint("10.0.0.1", "search-a", "uid-a", nil),
 			endpoint("10.0.0.2", "search-b", "uid-b", new(true)),
 			endpoint("10.0.0.3", "search-c", "uid-c", new(false)),
-			endpoint("10.0.0.4", "", "", nil)),
+			endpoint("10.0.0.4", "", "", nil),
+			notServing, terminating),
 		// One pod listed twice (dual-stack) counts once.
 		slice(discoveryv1.AddressTypeIPv6, []int32{8080}, endpoint("fd00::1", "search-a", "uid-a", nil)),
-		// More than one port: the one with the endpoint's number.
-		slice(discoveryv1.AddressTypeIPv4, []int32{9090, 3000}, endpoint("10.0.0.5", "search-d", "uid-d", nil)),
-		slice(discoveryv1.AddressTypeIPv4, []int32{9090, 9091}, endpoint("10.0.0.6", "search-e", "uid-e", nil)),
-		slice(discoveryv1.AddressTypeFQDN, []int32{3000}, endpoint("search.example.com", "search-f", "uid-f", nil)),
+		// A slice port is the target port, so with more than one the Service
+		// port the endpoint names cannot be told apart: none is used.
+		slice(discoveryv1.AddressTypeIPv4, []int32{9090, 80}, endpoint("10.0.0.5", "search-d", "uid-d", nil)),
+		slice(discoveryv1.AddressTypeFQDN, []int32{8080}, endpoint("search.example.com", "search-f", "uid-f", nil)),
 	}
-	got := map[string]netip.AddrPort{}
-	for _, e := range Ready(slices, 3000, false) {
-		got[e.Tag] = e.Addr
+	ready := Ready(slices, false)
+	want := []Endpoint{
+		{Tag: TagOf("uid-a"), Addr: netip.MustParseAddrPort("10.0.0.1:8080")},
+		{Tag: TagOf("uid-b"), Addr: netip.MustParseAddrPort("10.0.0.2:8080")},
 	}
-	want := map[string]netip.AddrPort{
-		TagOf("uid-d"): netip.MustParseAddrPort("10.0.0.5:3000"),
+	if want[0].Tag > want[1].Tag {
+		want[0], want[1] = want[1], want[0]
 	}
-	for _, uid := range []types.UID{"uid-a", "uid-b"} {
-		if _, ok := got[TagOf(uid)]; !ok {
-			t.Errorf("ready pod %s missing from %v", uid, got)
-		}
-		delete(got, TagOf(uid))
-	}
-	if len(got) != len(want) || got[TagOf("uid-d")] != want[TagOf("uid-d")] {
-		t.Fatalf("other endpoints = %v, want %v", got, want)
-	}
-	if ready := Ready(slices, 3000, false); ready[0].Tag > ready[1].Tag || ready[1].Tag > ready[2].Tag {
-		t.Fatalf("endpoints are not sorted by tag: %v", ready)
+	if len(ready) != 2 || ready[0] != want[0] || ready[1] != want[1] {
+		t.Fatalf("ready = %v, want %v sorted by tag", ready, want)
 	}
 }
 
@@ -68,10 +66,10 @@ func TestReadySkipsAddressesEgressRefuses(t *testing.T) {
 		endpoint("169.254.169.254", "metadata", "uid-m", nil),
 		endpoint("127.0.0.1", "loopback", "uid-l", nil),
 		endpoint("10.0.0.1", "search", "uid-s", nil))}
-	if ready := Ready(slices, 8080, false); len(ready) != 1 || ready[0].Tag != TagOf("uid-s") {
+	if ready := Ready(slices, false); len(ready) != 1 || ready[0].Tag != TagOf("uid-s") {
 		t.Fatalf("ready = %v, want only the pod at 10.0.0.1", ready)
 	}
-	if ready := Ready(slices, 8080, true); len(ready) != 2 {
+	if ready := Ready(slices, true); len(ready) != 2 {
 		t.Fatalf("ready with loopback allowed = %v, want loopback and 10.0.0.1", ready)
 	}
 }
@@ -85,7 +83,7 @@ func TestTagsNameNoPod(t *testing.T) {
 	if tag != TagOf("6c1f0c1e-2c2b-4f0e-9d8a-0a1b2c3d4e5f") || tag == TagOf("another-uid") {
 		t.Fatal("tags must be stable per pod and differ between pods")
 	}
-	ready := Ready([]discoveryv1.EndpointSlice{slice(discoveryv1.AddressTypeIPv4, []int32{8080}, endpoint("10.0.0.1", "search-7d9f", "uid-s", nil))}, 8080, false)
+	ready := Ready([]discoveryv1.EndpointSlice{slice(discoveryv1.AddressTypeIPv4, []int32{8080}, endpoint("10.0.0.1", "search-7d9f", "uid-s", nil))}, false)
 	if wrapped := Wrap(ready[0].Tag, "server-session"); strings.Contains(wrapped, "10.0.0.1") || strings.Contains(wrapped, "search-7d9f") || strings.Contains(wrapped, "uid-s") {
 		t.Fatalf("session ID %q reveals the pod", wrapped)
 	}
