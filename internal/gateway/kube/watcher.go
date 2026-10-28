@@ -15,6 +15,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
+	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
 	"k8s.io/client-go/rest"
 	toolscache "k8s.io/client-go/tools/cache"
@@ -150,9 +151,11 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 		}
 		route.TokenExchange = server.Spec.TokenExchange.Copy()
 		route.SessionAffinity = server.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession
-		// Tools kept from before a failed discovery are not current
+		// Tools kept from before a failed discovery, or discovered for an
+		// earlier spec such as another endpoint, are not current
 		// (SPEC-0028-R04).
-		if apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) {
+		if discovered := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered); discovered != nil &&
+			discovered.Status == metav1.ConditionTrue && discovered.ObservedGeneration == server.Generation {
 			route.Tools = make(map[string]map[string]bool, len(server.Status.Tools))
 			for _, tool := range server.Status.Tools {
 				route.Tools[tool.Name] = tool.Annotations.Hints()

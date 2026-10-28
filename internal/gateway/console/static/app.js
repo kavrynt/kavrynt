@@ -1071,7 +1071,7 @@
     draw();
     return (what) => {
       if (what !== "servers") return;
-      const key = JSON.stringify(catalog(state.servers).map((e) => [e.tool, e.route, e.routed]));
+      const key = JSON.stringify(catalog(state.servers).map((e) => [e.tool, e.route, e.routed, toolHints(e.annotations)]));
       if (key !== lastKey) { lastKey = key; draw(); }
     };
   }

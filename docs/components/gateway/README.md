@@ -248,7 +248,7 @@ Input:
 | `mcp_method` | JSON-RPC method of a `POST`; empty for other methods and for JSON-RPC responses |
 | `tool` | `params.name` of `tools/call`; empty otherwise |
 | `tool_annotations` | For `tools/call`, the behavior hints the Operator recorded for `tool` on this route (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), absent hints left out; `{}` otherwise |
-| `tool_discovered` | `true` when `tool` is among the route's tools and its last discovery succeeded (`ToolsDiscovered` is `True`); `false` otherwise |
+| `tool_discovered` | `true` when `tool` is among the route's tools and the discovery of the current spec succeeded (`ToolsDiscovered` is `True` for the `MCPServer`'s generation); `false` otherwise |
 | `time` | Request time, RFC 3339, UTC |
 
 Tool arguments are never part of the input. `tool_annotations` and

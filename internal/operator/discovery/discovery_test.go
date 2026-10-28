@@ -456,6 +456,30 @@ func TestListToolsRecordsBehaviorHints(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0028-R02: tools that fit MaxStatusBytes without their hints
+// are truncated once the hints count.
+func TestListToolsCountsAnnotationsTowardStatusSize(t *testing.T) {
+	description := strings.Repeat("é", 630) // 1260 bytes
+	hints := map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+	var tools []any
+	for i := 0; i < mcpmeta.MaxToolsPerServer; i++ {
+		tools = append(tools, map[string]any{"name": fmt.Sprintf("tool-%03d", i), "description": description, "annotations": hints})
+	}
+	if bare := mcpmeta.MaxToolsPerServer * (len("tool-000") + len(description)); bare > MaxStatusBytes {
+		t.Fatalf("the tools take %d bytes without hints; the test needs them to fit %d", bare, MaxStatusBytes)
+	}
+	result, err := listTools(t, newFakeServer(tools...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Truncated || len(result.Tools) == mcpmeta.MaxToolsPerServer || statusSize(result.Tools) > MaxStatusBytes {
+		t.Fatalf("truncated %v, tools %d, size %d; the hints must count toward %d", result.Truncated, len(result.Tools), statusSize(result.Tools), MaxStatusBytes)
+	}
+	if result.Tools[0].Annotations == nil {
+		t.Fatal("the kept tools lost their hints")
+	}
+}
+
 // Verifies SPEC-0028-R02.
 func TestStatusSizeCountsAnnotations(t *testing.T) {
 	bare := []kavryntv1alpha1.MCPServerTool{{Name: "search"}}
