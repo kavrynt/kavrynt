@@ -13,6 +13,7 @@ import (
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -21,14 +22,18 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/cache"
 )
 
-// NewCache returns an informer cache for MCPServer resources, limited to the
-// given namespaces when any are set.
+// NewCache returns an informer cache for MCPServer resources and, for
+// session affinity, EndpointSlices (SPEC-0026), limited to the given
+// namespaces when any are set. Managed fields are dropped to save memory.
 func NewCache(cfg *rest.Config, namespaces []string) (cache.Cache, error) {
 	scheme := runtime.NewScheme()
 	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
 		return nil, err
 	}
-	opts := cache.Options{Scheme: scheme}
+	if err := discoveryv1.AddToScheme(scheme); err != nil {
+		return nil, err
+	}
+	opts := cache.Options{Scheme: scheme, DefaultTransform: cache.TransformStripManagedFields()}
 	if len(namespaces) > 0 {
 		opts.DefaultNamespaces = make(map[string]cache.Config, len(namespaces))
 		for _, namespace := range namespaces {
@@ -49,6 +54,11 @@ type Watcher struct {
 func (w *Watcher) Run(ctx context.Context) error {
 	informer, err := w.Cache.GetInformer(ctx, &kavryntv1alpha1.MCPServer{})
 	if err != nil {
+		return err
+	}
+	// Started with the cache, so the Gateway is ready only once the pods
+	// of MCPSession routes are known (SPEC-0026).
+	if _, err := w.Cache.GetInformer(ctx, &discoveryv1.EndpointSlice{}); err != nil {
 		return err
 	}
 
@@ -78,7 +88,7 @@ func (w *Watcher) Run(ctx context.Context) error {
 			}
 		default:
 		}
-		return errors.New("MCPServer cache did not sync")
+		return errors.New("MCPServer and EndpointSlice cache did not sync")
 	}
 	w.sync(ctx)
 
@@ -140,6 +150,7 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 			route.Credential = &credential
 		}
 		route.TokenExchange = server.Spec.TokenExchange.Copy()
+		route.SessionAffinity = server.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession
 		// Tools kept from before a failed discovery, or discovered for an
 		// earlier spec such as another endpoint, are not current
 		// (SPEC-0028-R04).
@@ -166,17 +177,21 @@ func Servers(items []kavryntv1alpha1.MCPServer) []model.Server {
 	for i := range items {
 		item := &items[i]
 		server := model.Server{
-			Namespace:   item.Namespace,
-			Name:        item.Name,
-			Route:       item.RouteName(),
-			Description: item.Annotations[kavryntv1alpha1.DescriptionAnnotation],
-			Version:     item.Spec.Version,
-			Transport:   item.Spec.Transport,
-			Endpoint:    redactEndpoint(item.Spec.Endpoint),
-			Routed:      routed[item.RouteName()],
-			Conditions:  make([]model.Condition, 0, len(item.Status.Conditions)),
-			Tools:       make([]model.Tool, 0, len(item.Status.Tools)),
-			CreatedAt:   item.CreationTimestamp.Time,
+			Namespace:       item.Namespace,
+			Name:            item.Name,
+			Route:           item.RouteName(),
+			Description:     item.Annotations[kavryntv1alpha1.DescriptionAnnotation],
+			Version:         item.Spec.Version,
+			Transport:       item.Spec.Transport,
+			Endpoint:        redactEndpoint(item.Spec.Endpoint),
+			Routed:          routed[item.RouteName()],
+			SessionAffinity: kavryntv1alpha1.SessionAffinityNone,
+			Conditions:      make([]model.Condition, 0, len(item.Status.Conditions)),
+			Tools:           make([]model.Tool, 0, len(item.Status.Tools)),
+			CreatedAt:       item.CreationTimestamp.Time,
+		}
+		if item.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession {
+			server.SessionAffinity = kavryntv1alpha1.SessionAffinityMCPSession
 		}
 		if info := item.Status.ServerInfo; info != nil {
 			server.ServerInfo = &model.ServerInfo{Name: info.Name, Version: info.Version}

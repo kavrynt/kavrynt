@@ -70,6 +70,10 @@ const (
 	// The caller's token could not be exchanged for one for the server
 	// (SPEC-0015-R06).
 	outcomeExchangeFailed = "exchange_failed"
+
+	// An MCP session the server, or with session affinity the Gateway, does
+	// not know (SPEC-0026-R10).
+	outcomeSessionNotFound = "session_not_found"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.
@@ -183,6 +187,8 @@ func classifyResponse(r *http.Request, call mcpCall, status int, message []byte)
 		return outcomeOK
 	case status >= 500:
 		return outcomeUpstreamError
+	case status == http.StatusNotFound && r.Header.Get(sessionHeader) != "":
+		return outcomeSessionNotFound
 	case status >= 400:
 		return outcomeClientError
 	}

@@ -1,0 +1,20 @@
+suite: operator EndpointSlice access
+templates:
+  - charts/operator/templates/rbac.yaml
+release:
+  namespace: kavrynt-system
+tests:
+  # Verifies SPEC-0026-R09: the Operator may list EndpointSlices, to discover
+  # the tools of a server with session affinity from one pod, and nothing more
+  # on them.
+  - it: lets the Operator list EndpointSlices
+    documentIndex: 0
+    asserts:
+      - isKind:
+          of: ClusterRole
+      - contains:
+          path: rules
+          content:
+            apiGroups: [discovery.k8s.io]
+            resources: [endpointslices]
+            verbs: [list]

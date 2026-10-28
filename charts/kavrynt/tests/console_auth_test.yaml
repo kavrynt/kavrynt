@@ -110,6 +110,9 @@ tests:
             - apiGroups: [kavrynt.io]
               resources: [mcpservers]
               verbs: [get, list, watch]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
+              verbs: [get, list, watch]
         documentIndex: 0
 
   # Verifies SPEC-0005-R03.

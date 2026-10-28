@@ -86,6 +86,10 @@
       cls: "bad",
       definition: "The server gets per-caller tokens by token exchange, and the caller's authorization server did not issue one (502), could not be reached (503), or MCP client authentication is off (503). The server was not called.",
     },
+    session_not_found: {
+      cls: "warn",
+      definition: "The request named an MCP session the server does not know (404), or, with session affinity, a pod that is no longer ready. The client starts a new session. Often a server with session state and more than one replica: set spec.sessionAffinity: MCPSession or run one replica.",
+    },
     auth_unavailable: {
       cls: "bad",
       definition: "The Gateway could not load the signing keys of the token's authorization server and refused the call (503). Check the issuer's metadata and key URLs.",
@@ -240,6 +244,20 @@
       .map((server) => ({ server, health: serverHealth(server, traffic) }))
       .filter((item) => item.health.attention)
       .sort((a, b) => rank[a.health.cls] - rank[b.health.cls] || a.server.route.localeCompare(b.server.route));
+  }
+
+  // sessionLoss reports a server without session affinity whose recent
+  // requests named sessions the server did not know, with the fixes
+  // (SPEC-0026-R11), or null.
+  function sessionLoss(server, traffic) {
+    if (server.sessionAffinity === "MCPSession") return null;
+    const count = (traffic || []).filter((r) => r.route === server.route && r.outcome === "session_not_found").length;
+    if (!count) return null;
+    return {
+      count,
+      message: "Its MCP sessions are being lost: " + count + (count === 1 ? " recent request" : " recent requests") +
+        " named a session the server did not know. A server that keeps session state needs every request of a session on one pod: set spec.sessionAffinity: MCPSession, or run one replica.",
+    };
   }
 
   // overview returns the Overview tiles (SPEC-0002-R01).
@@ -460,5 +478,5 @@
     return typeof value === "string" && /^https:\/\/[^\s]+$/.test(value);
   }
 
-  Object.assign(exports, { ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL, TRAFFIC_WINDOW, SCOPE_NOTE, scopeNote, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
+  Object.assign(exports, { ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL, sessionLoss, TRAFFIC_WINDOW, SCOPE_NOTE, scopeNote, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).stats = {}));
