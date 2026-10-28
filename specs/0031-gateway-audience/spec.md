@@ -48,14 +48,17 @@ issue one audience per token cannot serve such an agent at all.
 ### Accepting the Gateway audience
 
 - **SPEC-0031-R01** The chart value `gateway.auth.gatewayAudience.enabled`
-  MUST default to `false`, which keeps SPEC-0006-R09 unchanged.
+  MUST default to `false`, which keeps SPEC-0006-R09 unchanged. The chart
+  MUST refuse to render with it `true` while `gateway.auth.enabled` is
+  `false`, since routes then take no tokens at all (SPEC-0006-R01).
 - **SPEC-0031-R02** When enabled, a token whose `aud` contains
   `gateway.auth.resourceURL` exactly, and that passes every other check of
   SPEC-0006-R08, MUST be accepted for a route listed in
   `gateway.auth.gatewayAudience.routes`, and refused (SPEC-0006-R05) for
   every other route. The list holds route names and `<namespace>.*`
-  patterns; it MUST NOT be empty when enabled, and `*` alone MUST be
-  refused by the chart.
+  patterns; the chart MUST refuse an empty list and the entry `*` when
+  enabled. A list that names every route, one by one or by namespace, is
+  the operator's explicit choice.
 - **SPEC-0031-R03** A token whose `aud` contains the route's own URI MUST be
   accepted as today, whether or not the Gateway audience is enabled.
 
@@ -79,7 +82,16 @@ issue one audience per token cannot serve such an agent at all.
 - Given the same values, when a token for
   `https://mcp.example.com/mcp/team-b.billing` calls that route, then it is
   accepted with `audience: route` (R03).
-- Given `routes: ["*"]`, then the chart refuses to render (R02).
+- Given `routes: ["*"]`, or `routes: []`, with the Gateway audience
+  enabled, then the chart refuses to render (R02).
+- Given `gatewayAudience.enabled: true` and `gateway.auth.enabled: false`,
+  then the chart refuses to render (R01).
+- Given a call accepted for the Gateway audience, then its audit event
+  records `audience: gateway`, and one accepted for the route's own URI
+  records `audience: route` (R05).
+- Given the Gateway audience is enabled for `team-a.*`, then the Gateway
+  logs at start that it is enabled and for which routes, and the console
+  shows the same (R06).
 
 ## Security and privacy
 
@@ -88,11 +100,14 @@ specification rely on: a token for the Gateway audience reaches every
 listed route, so a server behind one of them that receives the caller's
 token could replay it at the others. The Gateway never forwards caller
 tokens (SPEC-0006-R13), so a server cannot get one through it, but a
-token leaked elsewhere reaches more routes. The value is therefore off by
-default, scoped to a route list that cannot be everything, visible in
-policy and audit, and warned about at start and in the console. Policies
-that want per-route consent can deny `audience: gateway` for sensitive
-routes.
+token leaked elsewhere reaches more routes: every route the list matches.
+The chart refuses only the obvious "everything" (`*`); a list that names
+every route or every namespace reaches all of them, and the operator who
+writes it accepts that a leaked token reaches every route. The value is
+therefore off by default, needs an explicit route list, is visible in
+policy and audit, and is warned about at start and in the console, naming
+the routes. Policies that want per-route consent can deny
+`audience: gateway` for sensitive routes.
 
 ## Compatibility
 
