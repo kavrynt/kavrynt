@@ -75,3 +75,19 @@ tests:
           content:
             rule: "!has(self.tokenExchange) || self.transport == 'http'"
             message: spec.tokenExchange is only supported with spec.transport http
+
+  # Verifies SPEC-0027-R01.
+  - it: shows the tool discovery reason next to Ready
+    asserts:
+      - equal:
+          path: spec.versions[0].additionalPrinterColumns[3]
+          value:
+            name: Ready
+            type: string
+            jsonPath: .status.conditions[?(@.type=="Ready")].status
+      - equal:
+          path: spec.versions[0].additionalPrinterColumns[4]
+          value:
+            name: Discovery
+            type: string
+            jsonPath: .status.conditions[?(@.type=="ToolsDiscovered")].reason

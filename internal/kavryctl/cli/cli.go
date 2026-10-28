@@ -333,10 +333,15 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		if ready == string(metav1.ConditionTrue) {
 			route = "/mcp/" + server.RouteName()
 		}
-		// Tools are known once the Operator has listed them.
+		// Tools are known once the Operator has listed them; until then the
+		// reason says why not, so a failed discovery is not mistaken for one
+		// that has not run (SPEC-0027-R02).
 		tools := "-"
-		if apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) {
-			tools = strconv.Itoa(len(server.Status.Tools))
+		if condition := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered); condition != nil {
+			tools = condition.Reason
+			if condition.Status == metav1.ConditionTrue {
+				tools = strconv.Itoa(len(server.Status.Tools))
+			}
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			server.Namespace,

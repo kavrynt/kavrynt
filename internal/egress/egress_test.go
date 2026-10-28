@@ -2,6 +2,7 @@ package egress
 
 import (
 	"context"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -60,4 +61,38 @@ func TestTransportRefusesLoopbackAtDialTime(t *testing.T) {
 		t.Fatalf("GET with loopback allowed: %v", err)
 	}
 	_ = resp.Body.Close()
+}
+
+// Verifies SPEC-0027-R07: a refusal names the kind of address, so discovery
+// can say why without the address itself.
+func TestRefusalsNameTheAddressKind(t *testing.T) {
+	control := Control(false)
+	for addr, kind := range map[string]string{
+		"169.254.169.254:80":    "cloud metadata",
+		"[fd00:ec2::254]:80":    "cloud metadata",
+		"100.100.100.200:80":    "cloud metadata",
+		"169.254.170.2:80":      "link-local",
+		"[fe80::1]:80":          "link-local",
+		"127.0.0.1:80":          "loopback",
+		"[::1]:80":              "loopback",
+		"0.0.0.0:80":            "unspecified",
+		"224.0.0.1:80":          "multicast",
+		"[::ffff:127.0.0.1]:80": "loopback",
+	} {
+		var refused *RefusedError
+		if err := control("tcp", addr, nil); !errors.As(err, &refused) || refused.Kind != kind {
+			t.Errorf("Control(%s) = %v, want a RefusedError of kind %q", addr, err, kind)
+		}
+	}
+	if err := control("tcp", "10.96.0.15:80", nil); err != nil {
+		t.Errorf("Control(10.96.0.15) = %v, want allowed", err)
+	}
+
+	// The kind survives the HTTP client's wrapping.
+	req, _ := http.NewRequestWithContext(context.Background(), http.MethodGet, "http://127.0.0.1:1/", nil)
+	_, err := (&http.Client{Transport: Transport(false)}).Do(req)
+	var refused *RefusedError
+	if !errors.As(err, &refused) || refused.Kind != "loopback" {
+		t.Fatalf("GET loopback error = %v, want a RefusedError of kind loopback", err)
+	}
 }
