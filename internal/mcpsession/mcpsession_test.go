@@ -105,3 +105,16 @@ func TestWrapAndUnwrap(t *testing.T) {
 		}
 	}
 }
+
+// Verifies SPEC-0026-R03: only TCP ports, or ports without a protocol, are
+// used; the Gateway speaks HTTP over TCP.
+func TestReadyUsesOnlyTCPPorts(t *testing.T) {
+	udp := slice(discoveryv1.AddressTypeIPv4, []int32{8080}, endpoint("10.0.0.1", "search-a", "uid-a", nil))
+	udp.Ports[0].Protocol = new(corev1.ProtocolUDP)
+	tcp := slice(discoveryv1.AddressTypeIPv4, []int32{8080}, endpoint("10.0.0.2", "search-b", "uid-b", nil))
+	tcp.Ports[0].Protocol = new(corev1.ProtocolTCP)
+	ready := Ready([]discoveryv1.EndpointSlice{udp, tcp}, false)
+	if len(ready) != 1 || ready[0].Tag != TagOf("uid-b") {
+		t.Fatalf("ready = %v, want only the TCP endpoint", ready)
+	}
+}

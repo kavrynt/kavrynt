@@ -852,7 +852,8 @@ grouped by `client_id` or `subject`.
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`
 when run locally). The chart grants only `get`, `list`, `watch` on
-`mcpservers.kavrynt.io`.
+`mcpservers.kavrynt.io` and, for session affinity,
+`endpointslices.discovery.k8s.io`.
 
 ## Run locally
 

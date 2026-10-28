@@ -629,3 +629,28 @@ func TestNamespaceLookupFailureIsRetried(t *testing.T) {
 		t.Fatal("a server whose endpoint namespace is unknown is Ready")
 	}
 }
+
+// Verifies SPEC-0029-R04: an endpoint allowed because its namespace does
+// not exist is checked again, and refused once the namespace exists.
+func TestEndpointsAreRecheckedForNewNamespaces(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	exists := false
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{
+		NamespaceExists: func(context.Context, string) (bool, error) { return exists, nil },
+	}}
+	result := reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an external two-label name is not Ready")
+	}
+	if result.RequeueAfter <= 0 || result.RequeueAfter > 10*time.Minute {
+		t.Fatalf("RequeueAfter = %s, want a recheck within ten minutes", result.RequeueAfter)
+	}
+	exists = true
+	reconcileWith(t, reconciler)
+	ready := apimeta.FindStatusCondition(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != kavryntv1alpha1.ReasonEndpointNotAllowed {
+		t.Fatalf("Ready after the namespace appeared = %+v, want EndpointNotAllowed", ready)
+	}
+}

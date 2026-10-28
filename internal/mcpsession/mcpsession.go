@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"github.com/kavrynt/kavrynt/internal/egress"
+	corev1 "k8s.io/api/core/v1"
 	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/types"
 )
@@ -53,6 +54,10 @@ func Ready(slices []discoveryv1.EndpointSlice, allowLoopback bool) []Endpoint {
 			continue
 		}
 		if len(s.Ports) != 1 || s.Ports[0].Port == nil || *s.Ports[0].Port < 1 || *s.Ports[0].Port > 65535 {
+			continue
+		}
+		// HTTP needs TCP; an absent protocol means TCP.
+		if protocol := s.Ports[0].Protocol; protocol != nil && *protocol != corev1.ProtocolTCP {
 			continue
 		}
 		target := uint16(*s.Ports[0].Port) // #nosec G115 -- checked to be a port number.

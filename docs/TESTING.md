@@ -324,9 +324,11 @@ server needs an API key, see `spec.credential` in the
 [Gateway docs](components/gateway/README.md#upstream-credentials).
 
 If the server keeps MCP sessions in memory (most servers built with the
-official SDKs do) and runs more than one replica, add
-`sessionAffinity: MCPSession` to the spec, or calls fail with
-`session_not_found`. See
+official SDKs do) and runs more than one replica, calls fail with
+`session_not_found`. Run one replica, or, when the endpoint is an `http`
+Service name and the Service has one port, add
+`sessionAffinity: MCPSession` to the spec; it is not valid for `https`
+endpoints, and multi-port Services get `503`. See
 [session affinity](components/gateway/README.md#session-affinity).
 
 ## 8. Clean up

@@ -176,3 +176,20 @@ func TestParsePrefix(t *testing.T) {
 		}
 	}
 }
+
+// Verifies SPEC-0029-R04: names that are external only because a namespace
+// does not exist yet are flagged for another check.
+func TestDependsOnNamespace(t *testing.T) {
+	for endpoint, want := range map[string]bool{
+		"https://example.com/mcp":                    true,
+		"http://pod-0.search.team-b/mcp":             true,
+		"https://mcp.api.example.com/mcp":            false,
+		"http://search.team-b.svc.cluster.local/mcp": false,
+		"http://search:8080/mcp":                     false,
+		"http://10.0.0.1:8080/mcp":                   false,
+	} {
+		if got := DependsOnNamespace(endpoint); got != want {
+			t.Errorf("DependsOnNamespace(%q) = %v, want %v", endpoint, got, want)
+		}
+	}
+}

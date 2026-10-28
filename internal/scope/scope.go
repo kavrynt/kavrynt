@@ -72,6 +72,31 @@ func (p Policy) Endpoint(ctx context.Context, namespace, endpoint string) error 
 	return fmt.Errorf("spec.endpoint reaches namespace %q, and MCPServers in namespace %q may use endpoints only in their own namespace unless global.endpoints.crossNamespace allows it", target, namespace)
 }
 
+// DependsOnNamespace reports whether Endpoint's answer for endpoint depends
+// on whether a namespace exists: a two- or three-label name without svc or
+// pod labels, which is external only while no namespace of its last label
+// exists. Such endpoints are checked again, since the namespace may appear.
+func DependsOnNamespace(endpoint string) bool {
+	parsed, err := url.Parse(endpoint)
+	if err != nil {
+		return false
+	}
+	host := strings.TrimSuffix(strings.ToLower(parsed.Hostname()), ".")
+	if _, err := netip.ParseAddr(host); err == nil {
+		return false
+	}
+	labels := strings.Split(host, ".")
+	if len(labels) != 2 && len(labels) != 3 {
+		return false
+	}
+	for _, label := range labels[1:] {
+		if label == "svc" || label == "pod" {
+			return false
+		}
+	}
+	return true
+}
+
 // address refuses cluster addresses, which belong to some namespace the
 // Operator cannot name.
 func (p Policy) address(addr netip.Addr) error {

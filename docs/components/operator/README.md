@@ -41,7 +41,7 @@ host the way cluster DNS resolves it from the Gateway's pod:
 | Host | Namespace |
 | --- | --- |
 | `<service>.<namespace>.svc[.<cluster-domain>]`, and headless `<pod>.<service>.<namespace>.svc[...]` | `<namespace>` |
-| `<service>.<namespace>`, and `<pod>.<service>.<namespace>` | the last label when that namespace exists (the Operator may `get` namespaces), since the search path resolves them to a Service or a headless Service's pod; otherwise an external name. A namespace that cannot be read refuses the endpoint and is checked again after 30 s |
+| `<service>.<namespace>`, and `<pod>.<service>.<namespace>` | the last label when that namespace exists (the Operator may `get` namespaces), since the search path resolves them to a Service or a headless Service's pod; otherwise an external name, checked again every 5 minutes in case the namespace is created. A namespace that cannot be read refuses the endpoint and is checked again after 30 s |
 | `<service>` | the Gateway's namespace (`--gateway-namespace`, the release namespace) |
 | An IP address, or a pod name `<a-b-c-d>.<namespace>.pod[...]` | refused when inside `global.endpoints.clusterCIDRs`, since the Operator cannot tell its namespace; not checked when that is empty |
 | Any other name | external, under the egress guard only |
@@ -213,7 +213,7 @@ The Gateway's metrics are in the
 
 ```bash
 kubectl apply -f config/crd/bases/kavrynt.io_mcpservers.yaml
-go run ./cmd/operator   # uses your current kubeconfig context
+go run ./cmd/operator --gateway-namespace=kavrynt-system   # uses your current kubeconfig context
 kubectl apply -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
 kubectl get mcpservers
 ```

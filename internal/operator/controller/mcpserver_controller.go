@@ -363,8 +363,12 @@ func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavrynt
 }
 
 // scopeRetryDelay is when an endpoint whose namespace could not be read is
-// checked again.
-const scopeRetryDelay = 30 * time.Second
+// checked again; scopeRecheckInterval is when one allowed only because its
+// namespace does not exist is, in case the namespace is created.
+const (
+	scopeRetryDelay      = 30 * time.Second
+	scopeRecheckInterval = 5 * time.Minute
+)
 
 // checkScope makes ready False when the server's endpoint or token exchange
 // audience is not allowed for its namespace (SPEC-0029-R04, R08). It
@@ -381,6 +385,9 @@ func (r *MCPServerReconciler) checkScope(ctx context.Context, server *kavryntv1a
 	if exchange := server.Spec.TokenExchange; exchange != nil && !r.Scope.Audiences.Allowed(server.Namespace, exchange.Audience) {
 		ready.Status, ready.Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonAudienceNotAllowed
 		ready.Message = fmt.Sprintf("spec.tokenExchange.audience %q is not allowed for namespace %q; add it to global.tokenExchangeAudiences", exchange.Audience, server.Namespace)
+	}
+	if scope.DependsOnNamespace(server.Spec.Endpoint) {
+		return scopeRecheckInterval
 	}
 	return 0
 }
