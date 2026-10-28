@@ -61,3 +61,14 @@ func TestTransportRefusesLoopbackAtDialTime(t *testing.T) {
 	}
 	_ = resp.Body.Close()
 }
+
+// The check runs on the address the component dials. Through an HTTP proxy
+// that is the proxy's address, and the proxy would reach any endpoint, so
+// the transport never uses HTTP_PROXY, HTTPS_PROXY, or ALL_PROXY.
+func TestTransportIgnoresProxyEnvironment(t *testing.T) {
+	for _, allowLoopback := range []bool{false, true} {
+		if Transport(allowLoopback).Proxy != nil {
+			t.Fatalf("Transport(%v) uses a proxy, which would bypass the dial-time check", allowLoopback)
+		}
+	}
+}
