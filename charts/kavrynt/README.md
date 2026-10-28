@@ -329,8 +329,8 @@ Operator; it does not need to be restored.
   `/v1/servers`, `/v1/traffic`, `/v1/alerts`, not MCP routes. With `helm template` or GitOps,
   set `gateway.console.auth.existingSecret`, because a render without cluster
   access generates a new password each time.
-- The Gateway has read-only access to `MCPServer` resources and no Secret
-  access. Containers run as non-root with a read-only root filesystem.
+- The Gateway has read-only access to `MCPServer` resources and, for
+  session affinity, EndpointSlices, and no Secret access. Containers run as non-root with a read-only root filesystem.
 
 See [SECURITY.md](../../SECURITY.md) for known limitations.
 
@@ -578,7 +578,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.imagePullSecrets` | list | `[]` | Image pull secrets |
 | `gateway.serviceAccount.create` | bool | `true` | Create the Gateway service account |
 | `gateway.serviceAccount.name` | string | `""` | Service account name; generated when empty |
-| `gateway.rbac.create` | bool | `true` | Create read-only (`get`, `list`, `watch`) `MCPServer` RBAC |
+| `gateway.rbac.create` | bool | `true` | Create read-only (`get`, `list`, `watch`) RBAC on `MCPServer` resources and EndpointSlices (for session affinity) |
 | `gateway.service.type` | string | `ClusterIP` | Service type. Keep `ClusterIP` unless MCP client authentication is on. |
 | `gateway.service.port` | int | `8080` | Service port |
 | `gateway.config.addr` | string | `":8080"` | Listen address |

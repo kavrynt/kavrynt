@@ -35,6 +35,13 @@ func main() {
 	if len(os.Args) > 1 && os.Args[1] == "issuer" {
 		os.Exit(runIssuer())
 	}
+	if len(os.Args) > 1 && os.Args[1] == "sessions" {
+		os.Exit(runSessions(os.Args[2:]))
+	}
+	// STATEFUL makes the server keep MCP sessions in memory, like servers
+	// built with the official SDKs: it answers 404 to a session it did not
+	// start (SPEC-0026 end-to-end test).
+	stateful = os.Getenv("STATEFUL") == "true"
 	logger := slog.New(slog.NewJSONHandler(os.Stdout, nil))
 	mux := http.NewServeMux()
 	mux.HandleFunc("GET /healthz", func(w http.ResponseWriter, _ *http.Request) {
@@ -97,6 +104,19 @@ func handleMCP(w http.ResponseWriter, r *http.Request) {
 			Error:   &responseError{Code: -32600, Message: "jsonrpc 2.0 and id are required"},
 		})
 		return
+	}
+
+	if stateful {
+		if input.Method == "initialize" {
+			w.Header().Set("Mcp-Session-Id", newSession())
+		} else if _, known := sessions.Load(r.Header.Get("Mcp-Session-Id")); !known {
+			writeResponse(w, http.StatusNotFound, response{
+				JSONRPC: "2.0",
+				ID:      input.ID,
+				Error:   &responseError{Code: -32001, Message: "Session not found"},
+			})
+			return
+		}
 	}
 
 	result, ok := resultFor(input.Method, input.Params)

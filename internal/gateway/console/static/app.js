@@ -13,7 +13,7 @@
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
-    ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL,
+    ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL, sessionLoss,
   } = Kavrynt.stats;
   const {
     RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
@@ -914,6 +914,7 @@
         return;
       }
       const health = serverHealth(server, state.traffic);
+      const lostSessions = sessionLoss(server, state.traffic);
       put(body,
         h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" }), " / ", server.namespace, " / ", server.name),
         h("div", { class: "page-head" },
@@ -924,6 +925,7 @@
             h("button", { type: "button", class: "btn", onclick: () => copy(diagnostics(server, state.traffic, state.version && state.version.version), "Diagnostics copied: metadata only, no tool inputs or results") }, "Copy diagnostics"),
             server.routed ? h("a", { class: "btn primary", href: formatHash("playground", [server.route]) }, "Open in playground") : null)),
         health.label === "Needs attention" ? h("div", { class: "callout " + health.cls, role: "note" }, h("strong", { text: "Needs attention. " }), health.detail) : null,
+        lostSessions ? h("div", { class: "callout", role: "note" }, h("strong", { text: "Sessions lost. " }), lostSessions.message) : null,
         h("div", { class: "tabs", role: "tablist" },
           tabButton("overview", "Overview"), tabButton("dashboard", "Dashboard"), tabButton("tools", "Tools (" + server.tools.length + ")"),
           tabButton("traffic", "Traffic (" + health.stats.calls + ")")));

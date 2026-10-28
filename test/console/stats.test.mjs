@@ -287,3 +287,24 @@ test("alerts link their server or tool and their runbook", () => {
     assert.equal(isRunbookURL(bad), false, String(bad));
   }
 });
+
+// Verifies SPEC-0026-R11: a server without session affinity whose recent
+// calls lose their session says so and names the fixes.
+test("lost sessions are reported for servers without session affinity", () => {
+  const server = { route: "team-a.tickets", sessionAffinity: "None" };
+  const traffic = [
+    { route: "team-a.tickets", outcome: "session_not_found" },
+    { route: "team-a.tickets", outcome: "session_not_found" },
+    { route: "team-a.tickets", outcome: "ok" },
+    { route: "team-b.other", outcome: "session_not_found" },
+  ];
+  const loss = stats.sessionLoss(server, traffic);
+  assert.equal(loss.count, 2);
+  assert.match(loss.message, /sessions are being lost/);
+  assert.match(loss.message, /spec\.sessionAffinity: MCPSession/);
+  assert.match(loss.message, /one replica/);
+
+  assert.equal(stats.sessionLoss({ ...server, sessionAffinity: "MCPSession" }, traffic), null);
+  assert.equal(stats.sessionLoss(server, traffic.slice(2)), null);
+  assert.equal(stats.sessionLoss({ route: "team-a.tickets" }, traffic).count, 2);
+});

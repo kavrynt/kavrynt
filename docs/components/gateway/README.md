@@ -85,6 +85,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - Every `/mcp/` response carries `X-Request-Id`.
 - Token exchange (see below): servers that declare `spec.tokenExchange` get
   the caller's token exchanged for one with their own audience.
+- Session affinity (opt-in per server, see below): servers that declare
+  `spec.sessionAffinity: MCPSession` get every request of an MCP session on
+  the pod that started it.
 - Not implemented: approvals. See ADR-0003.
 
 ## Upstream credentials
@@ -436,6 +439,52 @@ or responses. The Operator does not list the tools of such a server (it has
 no caller): `ToolsDiscovered=False` with reason `CallerTokenRequired`, and
 `Ready` is unaffected. `/v1/servers` shows `tokenExchange: {audience}`.
 
+## Session affinity
+
+MCP Streamable HTTP lets a server start a session in its `initialize`
+answer (`Mcp-Session-Id`), and servers built with the official SDKs keep
+that session in memory. Behind a Service with several replicas, the
+requests of one session then land on different pods, which answer `404`
+(`session_not_found`). `sessionAffinity: ClientIP` on the Service does not
+help, since every request comes from a Gateway pod. Declare
+`spec.sessionAffinity: MCPSession` (SPEC-0026):
+
+```yaml
+spec:
+  transport: http
+  endpoint: http://search.team-a.svc.cluster.local:8080/mcp
+  sessionAffinity: MCPSession
+```
+
+- The endpoint must be `http` and name a Service by its cluster DNS name
+  (`<service>.<namespace>.svc[.<cluster-domain>]`); otherwise the server is
+  not `Accepted` (`InvalidSpec`). The Gateway connects to a pod's address,
+  so a certificate for the Service name would not verify; use a mesh for
+  TLS between the Gateway and pods.
+- A request without `Mcp-Session-Id` goes to the next ready pod of the
+  Service, from its EndpointSlices in the namespaces the Gateway watches,
+  with the Service host in `Host`. When the answer starts a session, the
+  client gets `<tag>.<session ID>`, where the tag is derived from the pod's
+  UID and names neither its address nor its name. Every later request of
+  the session (`POST`, the `GET` stream, `DELETE`) goes to that pod with
+  the server's own session ID, from any Gateway replica: the replicas share
+  nothing.
+- A session whose pod is no longer ready, or a session ID the Gateway did
+  not issue, gets `404` without being forwarded, so the client starts a new
+  session. A session is not moved to another pod.
+- New sessions with no ready pod, or a Service in a namespace the Gateway
+  does not watch, get `503`. Pod addresses pass the same egress checks as
+  any endpoint. The EndpointSlice port is the Service's only port, or the
+  one numbered like the endpoint's port.
+- The Operator lists such a server's tools from one ready pod.
+- The Gateway reads EndpointSlices (`get`, `list`, `watch`) in the
+  namespaces it watches and keeps them in its cache; the Operator may
+  `list` them.
+
+Without session affinity, a server that keeps session state needs one
+replica. Its lost sessions are counted as `session_not_found`, and the
+console's server page says so.
+
 ## High availability
 
 The Gateway keeps no state that replicas must share: routes come from the
@@ -651,8 +700,11 @@ tool arguments, and results are never recorded.
   stored upstream credential is missing or not pinned to its endpoint;
   `denied` (`403`) when the tool authorization policy refuses the call;
   `protocol_error` (`400`) when the request is not well-formed MCP
-  Streamable HTTP; and `exchange_failed` (`502`/`503`) when the caller's
-  token could not be exchanged for the server. JSON responses up
+  Streamable HTTP; `exchange_failed` (`502`/`503`) when the caller's
+  token could not be exchanged for the server; and `session_not_found`
+  (`404`) when a request with `Mcp-Session-Id` names a session the server
+  does not know or, with session affinity, a pod that is no longer ready
+  (it was `client_error` before `session_not_found` existed). JSON responses up
   to 1 MiB are inspected, and so are event-stream answers to a `POST`, event
   by event (events up to 1 MiB), until the one that answers the request.
   The answers the MCP specification gives for a feature a server does not

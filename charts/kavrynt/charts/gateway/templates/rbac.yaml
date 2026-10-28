@@ -1,5 +1,6 @@
 {{- if .Values.rbac.create }}
-{{- $rules := list (dict "apiGroups" (list "kavrynt.io") "resources" (list "mcpservers") "verbs" (list "get" "list" "watch")) }}
+{{- /* Read-only: MCPServers to route, and EndpointSlices to pin MCP sessions to pods (SPEC-0026-R12). */}}
+{{- $rules := list (dict "apiGroups" (list "kavrynt.io") "resources" (list "mcpservers") "verbs" (list "get" "list" "watch")) (dict "apiGroups" (list "discovery.k8s.io") "resources" (list "endpointslices") "verbs" (list "get" "list" "watch")) }}
 {{- $namespaces := include "gateway.watchNamespaces" . }}
 {{- if not $namespaces }}
 apiVersion: rbac.authorization.k8s.io/v1

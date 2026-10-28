@@ -7,6 +7,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
 	"reflect"
 	"strings"
 	"sync"
@@ -120,7 +121,7 @@ func tool(name string) map[string]any {
 
 func listTools(t *testing.T, server *fakeServer) (Result, error) {
 	t.Helper()
-	return New("test", server).ListTools(context.Background(), endpoint, nil)
+	return New("test", server).ListTools(context.Background(), endpoint, netip.AddrPort{}, nil)
 }
 
 func TestListToolsOverJSON(t *testing.T) {
@@ -407,7 +408,7 @@ func TestListToolsSendsTheCredentialHeader(t *testing.T) {
 	server.sessionID = "session-1"
 	header := http.Header{}
 	header.Set("X-API-Key", "stored-secret")
-	if _, err := New("test", server).ListTools(context.Background(), endpoint, header); err != nil {
+	if _, err := New("test", server).ListTools(context.Background(), endpoint, netip.AddrPort{}, header); err != nil {
 		t.Fatal(err)
 	}
 	if len(server.requests) < 3 {
@@ -461,5 +462,24 @@ func TestStatusSizeCountsAnnotations(t *testing.T) {
 	hinted := []kavryntv1alpha1.MCPServerTool{{Name: "search", Annotations: &kavryntv1alpha1.MCPServerToolAnnotations{ReadOnlyHint: new(true), DestructiveHint: new(false)}}}
 	if statusSize(hinted) <= statusSize(bare) {
 		t.Fatalf("status size with hints = %d, without = %d; hints must count toward MaxStatusBytes", statusSize(hinted), statusSize(bare))
+	}
+}
+
+// Verifies SPEC-0026-R09: given a pod, every request of the session goes to
+// it, with the endpoint's host in Host.
+func TestListToolsAtOneAddress(t *testing.T) {
+	server := newFakeServer(tool("echo"))
+	server.sessionID = "s-1"
+	pod := netip.MustParseAddrPort("10.0.0.7:8080")
+	if _, err := New("test", server).ListTools(context.Background(), endpoint, pod, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.requests) < 4 {
+		t.Fatalf("%d requests, want initialize, initialized, tools/list, and DELETE", len(server.requests))
+	}
+	for _, r := range server.requests {
+		if r.URL.Host != "10.0.0.7:8080" || r.Host != "demo.default.svc:8080" || r.URL.Path != "/mcp" {
+			t.Fatalf("%s %s went to %s with Host %q", r.Method, r.URL.Path, r.URL.Host, r.Host)
+		}
 	}
 }

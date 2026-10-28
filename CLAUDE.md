@@ -77,6 +77,12 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   cluster token from a Secret. Traffic rollups are not uploaded yet.
 - Gateway watches `Ready` servers and proxies **HTTP only** at
   `/mcp/<namespace>.<name>`. `stdio` manifests validate but are not proxied.
+- `MCPServer.spec.sessionAffinity: MCPSession` (SPEC-0026): for an `http`
+  Service endpoint, the Gateway sends each MCP session to the pod that
+  started it (a pod tag in front of `Mcp-Session-Id`, from read-only
+  EndpointSlices, no shared state), answers `404` for sessions of pods that
+  are gone, and the Operator discovers from one pod. Lost sessions are
+  `session_not_found` for every server.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
   forwarding and drops upstream `Set-Cookie`, `Server`, and `X-Powered-By`.
 - Gateway and Operator discovery refuse link-local, cloud metadata, and
@@ -303,7 +309,8 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
 1. Gateway and Operator become ready.
 2. Applying an `MCPServer` produces a `Ready` condition.
 3. The CRD rejects unsafe endpoints at admission.
-4. Gateway RBAC is read-only on `MCPServer` and has no Secret access.
+4. Gateway RBAC is read-only on `MCPServer` and EndpointSlices and has no
+   Secret access.
 5. The Operator records discovered tools in `status.tools`; a failed
    discovery leaves the server `Ready`.
 6. Gateway and `kavryctl list` expose the expected route.
@@ -323,6 +330,9 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     With the chart's NetworkPolicies on, a direct call to a labelled MCP
     server and a call from a namespace the Gateway policy does not allow
     both fail, while calls through the Gateway succeed.
+    A stateful three-replica server with session affinity keeps ten
+    agents' sessions through the Gateway replicas; without it, sessions
+    are lost as `session_not_found`.
     A server that needs its own token is routed and discovered with the
     stored upstream credential; an unstored one answers `503`; the value
     appears in no response, status, metric, or log.

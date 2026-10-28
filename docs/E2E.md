@@ -60,6 +60,11 @@ once on the top of a stack of branches rather than on each one.
     client pod calls `tools/list` through the Gateway Service throughout a
     rolling restart of every Gateway replica and no call may fail; deleting
     the Operator leader lets the standby reconcile a new server to `Ready`.
+    Session affinity: ten agents with twenty calls each, a new connection
+    per request, keep every session through the Gateway replicas to a
+    stateful three-replica server with `sessionAffinity: MCPSession`, whose
+    tools are discovered from one pod; without it, sessions are lost and
+    counted as `session_not_found`.
     Upstream credentials: a server that requires its own bearer token is
     discovered and routed with the stored credential from the pre-created
     Secret (the caller's token is replaced), a server whose credential is not

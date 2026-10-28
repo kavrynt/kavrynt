@@ -101,6 +101,13 @@ spec:
                         type: string
                         maxLength: 256
                         pattern: "^[\\x21\\x23-\\x5b\\x5d-\\x7e]+$"
+                sessionAffinity:
+                  type: string
+                  description: MCPSession sends every request of an MCP session (one Mcp-Session-Id) to the pod of the endpoint's Service that started it.
+                  enum:
+                    - None
+                    - MCPSession
+                  default: None
             status:
               type: object
               properties:

@@ -2,13 +2,16 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"slices"
 	"sync"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	"k8s.io/apimachinery/pkg/api/equality"
@@ -36,9 +39,15 @@ const (
 	maxConcurrentReconciles = 4
 )
 
-// ToolDiscoverer lists an MCP server's tools.
+// ToolDiscoverer lists an MCP server's tools, from one pod when pod is
+// valid.
 type ToolDiscoverer interface {
-	ListTools(ctx context.Context, endpoint string, header http.Header) (discovery.Result, error)
+	ListTools(ctx context.Context, endpoint string, pod netip.AddrPort, header http.Header) (discovery.Result, error)
+}
+
+// SessionEndpoints lists the ready pods of a Service (SPEC-0026-R09).
+type SessionEndpoints interface {
+	Ready(ctx context.Context, service kavryntv1alpha1.ServiceRef) ([]mcpsession.Endpoint, error)
 }
 
 // MCPServerReconciler validates MCPServer resources and reports whether the
@@ -63,6 +72,10 @@ type MCPServerReconciler struct {
 	// Credentials holds the stored credentials of servers that declare
 	// spec.credential; discovery sends them like the Gateway (SPEC-0011-R08).
 	Credentials upstreamcred.Store
+
+	// SessionEndpoints gives the pods of servers with session affinity, so
+	// a discovery session stays on one of them (SPEC-0026-R09).
+	SessionEndpoints SessionEndpoints
 
 	// now is the clock; tests replace it.
 	now func() time.Time
@@ -173,6 +186,24 @@ func (r *MCPServerReconciler) applyTools(ctx context.Context, key types.Namespac
 	return max(attempt.next.Sub(now), time.Second)
 }
 
+// sessionPod returns the pod a discovery session of a server with session
+// affinity goes to: the first ready pod of its Service. The error names the
+// Service, never a pod.
+func (r *MCPServerReconciler) sessionPod(ctx context.Context, server *kavryntv1alpha1.MCPServer) (netip.AddrPort, error) {
+	service, ok := kavryntv1alpha1.ServiceEndpoint(server.Spec.Endpoint)
+	if !ok || r.SessionEndpoints == nil {
+		return netip.AddrPort{}, errors.New("session affinity needs the endpoint's Service, which the Operator cannot read")
+	}
+	pods, err := r.SessionEndpoints.Ready(ctx, service)
+	if err != nil {
+		return netip.AddrPort{}, fmt.Errorf("list the pods of Service %s/%s: %w", service.Namespace, service.Name, err)
+	}
+	if len(pods) == 0 {
+		return netip.AddrPort{}, fmt.Errorf("no ready pod of Service %s/%s to list tools from", service.Namespace, service.Name)
+	}
+	return pods[0].Addr, nil
+}
+
 // discover lists the server's tools and records its reported serverInfo. On
 // failure it keeps the last known tools and serverInfo for the same endpoint
 // (SPEC-0004-R02) and backs off.
@@ -210,8 +241,12 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 			header.Set(credential.HeaderName(), credential.HeaderValue(value))
 		}
 	}
+	var pod netip.AddrPort
+	if err == nil && server.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession {
+		pod, err = r.sessionPod(ctx, server)
+	}
 	if err == nil {
-		result, err = r.Discoverer.ListTools(ctx, server.Spec.Endpoint, header)
+		result, err = r.Discoverer.ListTools(ctx, server.Spec.Endpoint, pod, header)
 	}
 	if err == nil {
 		attempt.next = now.Add(refresh)
