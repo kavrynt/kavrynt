@@ -24,6 +24,12 @@ The `Ready` condition's reason says why:
   the server behind a Streamable HTTP bridge and register the bridge's `http`
   endpoint ([example](../../examples/stdio-bridge/filesystem.yaml)).
 - `NamespaceNotWatched`: the server is outside `global.watchNamespaces`.
+- `EndpointNotAllowed`: the endpoint reaches another namespace, or an
+  address in `global.endpoints.clusterCIDRs`; the message names the
+  namespaces. Point it at a Service in the server's own namespace, or add a
+  `global.endpoints.crossNamespace` pair if the platform team allows it.
+- `AudienceNotAllowed`: `spec.tokenExchange.audience` is not listed for the
+  namespace in `global.tokenExchangeAudiences`.
 
 `ToolsDiscovered=False` alone never makes a server not Ready.
 

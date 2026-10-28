@@ -34,6 +34,14 @@ rules:
     verbs:
       - create
       - patch
+  # Whether a <service>.<namespace> endpoint names a namespace
+  # (SPEC-0029-R04).
+  - apiGroups:
+      - ""
+    resources:
+      - namespaces
+    verbs:
+      - get
   # The pods of servers with session affinity, for tool discovery
   # (SPEC-0026-R09).
   - apiGroups:

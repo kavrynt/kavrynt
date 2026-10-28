@@ -30,6 +30,40 @@
               "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
             }
           }
+        },
+        "endpoints": {
+          "type": "object",
+          "description": "Which namespaces MCPServer endpoints may reach (SPEC-0029).",
+          "additionalProperties": false,
+          "properties": {
+            "crossNamespace": {
+              "type": "array",
+              "description": "Namespace pairs whose MCPServers in from may use endpoints in to.",
+              "items": {
+                "type": "object",
+                "additionalProperties": false,
+                "required": ["from", "to"],
+                "properties": {
+                  "from": { "type": "string", "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" },
+                  "to": { "type": "string", "maxLength": 63, "pattern": "^[a-z0-9]([-a-z0-9]*[a-z0-9])?$" }
+                }
+              }
+            },
+            "clusterCIDRs": {
+              "type": "array",
+              "description": "The cluster's Service and Pod ranges; IP endpoints inside them are refused.",
+              "items": { "type": "string", "pattern": "^(([0-9]{1,3}\\.){3}[0-9]{1,3}/([0-9]|[12][0-9]|3[0-2])|[0-9a-fA-F:]+:[0-9a-fA-F:]*/([0-9]|[1-9][0-9]|1[01][0-9]|12[0-8]))$" }
+            }
+          }
+        },
+        "tokenExchangeAudiences": {
+          "type": "object",
+          "description": "Namespace (or * for all) to the token exchange audiences its MCPServers may request (SPEC-0029).",
+          "propertyNames": { "pattern": "^(\\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?)$", "maxLength": 63 },
+          "additionalProperties": {
+            "type": "array",
+            "items": { "type": "string", "minLength": 1, "maxLength": 2048, "pattern": "^[A-Za-z][A-Za-z0-9+.-]*:[^#\\s]+$" }
+          }
         }
       }
     },

@@ -18,17 +18,17 @@ import (
 
 // Verifies SPEC-0005-R11.
 func TestConsoleLoginNeedsCredentialsDirectory(t *testing.T) {
-	if _, err := newConsoleAuth(true, true, "", time.Hour); err == nil || !strings.Contains(err.Error(), "--console-auth-dir") {
+	if _, err := newConsoleAuth(true, true, "", time.Hour, ""); err == nil || !strings.Contains(err.Error(), "--console-auth-dir") {
 		t.Fatalf("login without a directory: err = %v, want a refusal naming --console-auth-dir", err)
 	}
-	if _, err := newConsoleAuth(true, true, t.TempDir(), 0); err == nil {
+	if _, err := newConsoleAuth(true, true, t.TempDir(), 0, ""); err == nil {
 		t.Fatal("zero session lifetime accepted")
 	}
-	if a, err := newConsoleAuth(true, true, t.TempDir(), time.Hour); err != nil || a == nil {
+	if a, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, ""); err != nil || a == nil {
 		t.Fatalf("login with a directory: %v, %v", a, err)
 	}
 	for _, c := range []struct{ console, auth bool }{{false, true}, {true, false}, {false, false}} {
-		if a, err := newConsoleAuth(c.console, c.auth, "", time.Hour); err != nil || a != nil {
+		if a, err := newConsoleAuth(c.console, c.auth, "", time.Hour, ""); err != nil || a != nil {
 			t.Fatalf("console=%v auth=%v: got %v, %v; want no login and no error", c.console, c.auth, a, err)
 		}
 	}
@@ -166,5 +166,16 @@ func TestHistoryFlags(t *testing.T) {
 		if err := checkHistoryFlags(n, ""); err == nil {
 			t.Errorf("--history-max-tools %d accepted", n)
 		}
+	}
+}
+
+// Verifies SPEC-0030-R01: the Gateway refuses to start with a trusted proxy
+// it cannot parse.
+func TestConsoleTrustedProxiesMustBeCIDRs(t *testing.T) {
+	if _, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, "10.0.0.0/8, fd00::/8"); err != nil {
+		t.Fatalf("valid CIDRs refused: %v", err)
+	}
+	if _, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "--console-trusted-proxies") {
+		t.Fatalf("an address without a prefix length: err = %v", err)
 	}
 }

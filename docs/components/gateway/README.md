@@ -14,8 +14,12 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   with the bridge's `http` endpoint
   ([example](../../../examples/stdio-bridge/filesystem.yaml)); `kavryctl
   validate` and `register` warn about `stdio` manifests.
-- Route path: `/mcp/<namespace>.<name>[/<suffix>]`. Suffix and query string are
-  appended to the endpoint URL.
+- Route path: `/mcp/<namespace>.<name>`. Only `POST`, `GET`, and `DELETE`
+  are forwarded, what MCP Streamable HTTP uses; other methods get `405`
+  with `Allow: GET, POST, DELETE` (SPEC-0029). The query string is appended
+  to the endpoint URL. A path below the route (`/mcp/<route>/<suffix>`)
+  gets `404` unless the server sets `spec.forwardSubpaths: true`, which
+  appends the suffix to the endpoint path, without `.` or `..` segments.
 - Endpoints are restricted to absolute `http`/`https` URLs without credentials
   or fragments.
 - Egress guard: the Gateway never connects to unspecified, link-local
@@ -427,6 +431,23 @@ no redirects, and pass the egress guard. Your authorization server decides
 which audiences the Gateway may ask for, and may add the acting client as
 `act`.
 
+The Gateway uses one OAuth client for every route, so the authorization
+server cannot tell which route asks for an audience. The platform team
+therefore lists the audiences each namespace's servers may request, in
+`global.tokenExchangeAudiences` (`--token-exchange-audiences`, a JSON
+object; `"*"` applies to every namespace):
+
+```yaml
+global:
+  tokenExchangeAudiences:
+    team-a: [https://tickets.example.com]
+```
+
+A server whose audience is not listed for its namespace is not `Ready`
+(`AudienceNotAllowed`), and the Gateway exchanges no token for it: its
+calls get `503` (`exchange_failed`) without a request to the authorization
+server. With the default, an empty list, no audience is allowed.
+
 | Case | Status | Outcome |
 | --- | --- | --- |
 | The authorization server refuses, or answers without a bearer `access_token` | `502 token exchange failed` | `exchange_failed` |
@@ -647,9 +668,20 @@ the Gateway's service account has no RBAC on Secrets.
 - To change the password, update the Secret's `password` key. Every session
   ends once the kubelet updates the mount (about a minute); no restart is
   needed.
-- After five failed logins from one address within a minute, logins from
-  that address get `429` until the minute has passed. Behind an Ingress the
-  address is the Ingress, so the limit applies to everyone.
+- After five failed logins from one client within a minute, logins from
+  that client get `429` until the minute has passed. The client is the
+  connection's address. Behind an Ingress or load balancer that is the
+  proxy, so the limit applies to everyone, unless the proxy's CIDRs are in
+  `gateway.console.auth.trustedProxies` (`--console-trusted-proxies`): for
+  requests from them, the client is the right-most `X-Forwarded-For`
+  address that is not a trusted proxy (SPEC-0030). A header with no such
+  address counts against the proxy, and `X-Forwarded-For` from other
+  addresses is ignored. List only the proxies: an address listed there can
+  name any client.
+- The limiter tracks at most 10,000 clients per replica. When it is full it
+  forgets clients whose minute has passed, then the oldest one that is not
+  refused, never a refused one; with only refused clients left, further
+  clients share one limit until room frees up.
 - Failed and successful logins are logged with the client address. The
   password and session tokens are never logged.
 - GitOps and `helm template` renders cannot look up the existing Secret and
@@ -783,6 +815,8 @@ grouped by `client_id` or `subject`.
 | `--console-auth` | `true` (chart: `console.auth.enabled`) | Require the console admin login for the console, `/v1/servers`, `/v1/traffic`, and `/v1/alerts` (with `--console`). MCP routes are not affected |
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
+| `--token-exchange-audiences` | none allowed (chart: `global.tokenExchangeAudiences`) | JSON object from namespace (or `"*"`) to the audiences tokens may be exchanged for (`KAVRYNT_TOKEN_EXCHANGE_AUDIENCES`) |
+| `--console-trusted-proxies` | empty (chart: `console.auth.trustedProxies`) | Comma-separated CIDRs of proxies whose `X-Forwarded-For` names the client for the console login limit |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
 | `--auth` | `false` (chart: `auth.enabled`, default `true`) | Require a bearer access token for the route on every `/mcp/` request |
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |

@@ -516,6 +516,9 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `global.watchNamespaces` | list | `[]` | Namespaces whose `MCPServer` resources the Gateway routes; empty means all. A list switches Gateway RBAC to per-namespace Roles, and the Operator reports servers elsewhere as not `Ready` (`NamespaceNotWatched`). |
+| `global.endpoints.crossNamespace` | list | `[]` | `from`/`to` namespace pairs whose MCPServers in `from` may use endpoints in `to`; otherwise an endpoint in another namespace is not `Ready` (`EndpointNotAllowed`) |
+| `global.endpoints.clusterCIDRs` | list | `[]` | The cluster's Service and Pod CIDRs; IP endpoints inside them are not `Ready` |
+| `global.tokenExchangeAudiences` | object | `{}` | Namespace (or `"*"`) to the `spec.tokenExchange.audience` values its MCPServers may use; others are not `Ready` (`AudienceNotAllowed`) and get no token exchange. Empty allows none |
 | `global.upstreamCredentials.secretName` | string | `""` | Secret in the release namespace with the credentials of MCP servers that declare `spec.credential`; mounted (optional) into the Gateway and the Operator, which get no Secret RBAC |
 
 ### Alerts
@@ -600,6 +603,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
 | `gateway.console.auth.sessionTTL` | string | `12h` | Console session lifetime |
+| `gateway.console.auth.trustedProxies` | list | `[]` | CIDRs of the proxies in front of the Gateway; failed console logins from them count against the client their `X-Forwarded-For` names, not the proxy |
 | `gateway.console.history.maxTools` | int | `500` | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool. Each replica keeps 24 hours in memory: about 29 KiB per route and 23 KiB per tool |
 | `gateway.console.grafanaURL` | string | `""` | Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the Grafana dashboards instead |
 | `gateway.metrics.scrapeAnnotations` | bool | `true` | Add `prometheus.io/*` pod annotations |

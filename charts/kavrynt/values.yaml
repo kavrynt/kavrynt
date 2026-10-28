@@ -11,6 +11,23 @@ global:
   # Operator; neither gets RBAC on Secrets. Empty: no credentials.
   upstreamCredentials:
     secretName: ""
+  # Which namespaces MCPServer endpoints may reach (SPEC-0029). An endpoint
+  # that names a Service in another namespace is not Ready
+  # (EndpointNotAllowed) unless a pair here allows it.
+  endpoints:
+    # - from: team-a
+    #   to: shared-tools
+    crossNamespace: []
+    # The cluster's Service and Pod CIDRs. IP endpoints (and pod DNS names)
+    # inside them are not Ready, since the Operator cannot tell which
+    # namespace they belong to. Empty: not checked.
+    clusterCIDRs: []
+  # Token exchange audiences (spec.tokenExchange.audience) the MCPServers of
+  # each namespace may request; "*" applies to all namespaces. Servers that
+  # ask for another audience are not Ready (AudienceNotAllowed), and the
+  # Gateway exchanges no token for them. Empty: token exchange is refused.
+  #   team-a: [https://tickets.example.com]
+  tokenExchangeAudiences: {}
 
 gateway:
   fullnameOverride: kavrynt-gateway

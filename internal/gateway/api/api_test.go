@@ -55,7 +55,7 @@ func TestListRoutesAndReadiness(t *testing.T) {
 
 func TestProxyHTTPRoute(t *testing.T) {
 	table := routing.NewTable()
-	table.Replace([]model.Route{{Name: "demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp"}}, time.Now())
+	table.Replace([]model.Route{{Name: "demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp", ForwardSubpaths: true}}, time.Now())
 
 	var gotURL string
 	var gotBody string

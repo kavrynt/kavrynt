@@ -12,7 +12,7 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 | Condition | True when | False reasons |
 | --- | --- | --- |
 | `Accepted` | spec is valid | `InvalidSpec` |
-| `Ready` | accepted, `transport: http`, and in a namespace the Gateway watches (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched` |
+| `Ready` | accepted, `transport: http`, in a namespace the Gateway watches, and its endpoint and token exchange audience allowed for its namespace (the Gateway can route it) | `InvalidSpec`, `UnsupportedTransport`, `NamespaceNotWatched`, `EndpointNotAllowed` (the endpoint reaches another namespace or a cluster address, see [Endpoint scope](#endpoint-scope)), `AudienceNotAllowed` (`spec.tokenExchange.audience` is not in `global.tokenExchangeAudiences` for the namespace) |
 | `ToolsDiscovered` | the Operator listed the server's tools (reason `Discovered`) | `DiscoveryFailed`, `NotRoutable`, `CredentialUnavailable` (the server declares `spec.credential` and its stored credential is missing or not pinned to the endpoint), `CallerTokenRequired` (the server declares `spec.tokenExchange`: its tools are listed with a caller's token, which the Operator does not have) |
 
 - Lists the tools of each `Ready` server into `status.tools` (see
@@ -30,6 +30,35 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
   discovery is off, for servers that are not `Ready` or have
   `spec.tokenExchange`, or after the `MCPServer` is deleted). `KavryntMCPToolDiscoveryFailing` alerts on it.
 - Does not deploy MCP server workloads, manage secrets, or proxy MCP traffic.
+
+## Endpoint scope
+
+Namespace owners write `spec.endpoint`, and the Gateway connects to it from
+its own network position. An endpoint that reaches another namespace is
+therefore not `Ready` (`EndpointNotAllowed`, SPEC-0029), judged from the
+host the way cluster DNS resolves it from the Gateway's pod:
+
+| Host | Namespace |
+| --- | --- |
+| `<service>.<namespace>.svc[.<cluster-domain>]`, and headless `<pod>.<service>.<namespace>.svc[...]` | `<namespace>` |
+| `<service>.<namespace>` | `<namespace>` when that namespace exists (the Operator may `get` namespaces); otherwise an external name |
+| `<service>` | the Gateway's namespace (`--gateway-namespace`, the release namespace) |
+| An IP address, or a pod name `<a-b-c-d>.<namespace>.pod[...]` | refused when inside `global.endpoints.clusterCIDRs`, since the Operator cannot tell its namespace; not checked when that is empty |
+| Any other name | external, under the egress guard only |
+
+`global.endpoints.crossNamespace` lists `from`/`to` pairs whose servers in
+`from` may use endpoints in `to`:
+
+```yaml
+global:
+  endpoints:
+    crossNamespace:
+      - {from: team-a, to: shared-tools}
+    clusterCIDRs: [10.96.0.0/12, 10.244.0.0/16]
+```
+
+External names that resolve to cluster addresses are not detected here;
+the egress guard and NetworkPolicies cover them.
 
 ## Tool discovery
 
@@ -155,6 +184,10 @@ The Gateway's metrics are in the
 | `--leader-elect` | `false` (chart: `true`) | Leader election through the Lease `kavrynt-k8s-operator`. Only the leader reconciles, discovers tools, and syncs to Kavrynt Cloud; a stopping leader releases the Lease so a standby takes over at once. The chart refuses more than one replica without it and adds a PodDisruptionBudget for several |
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret; discovery sends a server's stored credential like the Gateway ([Upstream credentials](../gateway/README.md#upstream-credentials)) |
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
+| `--gateway-namespace` | `$POD_NAMESPACE` (chart: the release namespace) | Where single-label endpoint hosts resolve, for the [endpoint scope](#endpoint-scope) |
+| `--endpoint-cross-namespace` | none (chart: `global.endpoints.crossNamespace`) | Comma-separated `from:to` namespace pairs allowed across namespaces |
+| `--cluster-cidrs` | none (chart: `global.endpoints.clusterCIDRs`) | Comma-separated Service and Pod CIDRs; IP endpoints inside them are not `Ready` |
+| `--token-exchange-audiences` | none allowed (chart: `global.tokenExchangeAudiences`) | JSON object from namespace (or `"*"`) to the token exchange audiences its servers may request |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |
 | `--allow-loopback-endpoints` | `false` | Allow discovery against loopback endpoints; for running the Operator on a workstation only |

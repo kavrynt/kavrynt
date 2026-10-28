@@ -108,6 +108,9 @@ spec:
                     - None
                     - MCPSession
                   default: None
+                forwardSubpaths:
+                  type: boolean
+                  description: The Gateway also forwards requests for paths below the route to the same paths below the endpoint. Off, only the route itself is forwarded.
             status:
               type: object
               properties:

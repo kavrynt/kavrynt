@@ -87,3 +87,10 @@ tests:
       - equal:
           path: spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.sessionAffinity.default
           value: None
+
+  # Verifies SPEC-0029-R03.
+  - it: lets a server allow forwarding of sub-paths
+    asserts:
+      - equal:
+          path: spec.versions[0].schema.openAPIV3Schema.properties.spec.properties.forwardSubpaths.type
+          value: boolean

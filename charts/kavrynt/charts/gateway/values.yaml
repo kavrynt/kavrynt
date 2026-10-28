@@ -147,6 +147,11 @@ console:
     existingSecret: ""
     # Session lifetime; changing the password also ends every session.
     sessionTTL: 12h
+    # CIDRs of the proxies (Ingress controller, load balancer) in front of
+    # the Gateway. Failed logins from them count against the client their
+    # X-Forwarded-For names, not against the proxy (SPEC-0030). List only
+    # the proxies: an address listed here can name any client.
+    trustedProxies: []
   # Dashboards (SPEC-0024): each replica keeps 24 hours of its own calls in
   # memory, about 29 KiB per route and 23 KiB per tool (about 27 MiB for
   # 300 routes with the default cap).

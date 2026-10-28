@@ -151,6 +151,7 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 		}
 		route.TokenExchange = server.Spec.TokenExchange.Copy()
 		route.SessionAffinity = server.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession
+		route.ForwardSubpaths = server.Spec.ForwardSubpaths
 		// Tools kept from before a failed discovery, or discovered for an
 		// earlier spec such as another endpoint, are not current
 		// (SPEC-0028-R04).

@@ -165,3 +165,21 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "additional properties 'passwrd' not allowed"
+
+  # Verifies SPEC-0030-R01.
+  - it: passes trusted proxies to the Gateway only when set
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.console.auth.trustedProxies: [10.0.0.0/8, "fd00::/8"]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --console-trusted-proxies=10.0.0.0/8,fd00::/8
+
+  # Verifies SPEC-0030-R01.
+  - it: rejects a trusted proxy that is not a CIDR
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.console.auth.trustedProxies: [10.0.0.1]
+    asserts:
+      - failedTemplate: {}

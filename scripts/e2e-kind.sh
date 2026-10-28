@@ -344,6 +344,11 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   rollout status deployment/example-mcp-server --timeout=120s
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+# The checks of forwarded headers call the sample server's /debug/headers,
+# a path below the route (SPEC-0029-R03). Patched rather than in the
+# manifest, which the upgrade checks also apply to older CRDs.
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" patch mcpserver/example-mcp-server \
+  --type merge --patch '{"spec":{"forwardSubpaths":true}}' >/dev/null
 
 # Verifies SPEC-0009-R01 and SPEC-0009-R04.
 log "verifying the chart installed the CRD from config/crd/bases"
@@ -992,6 +997,60 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-af
   mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
   --wait=false >/dev/null
 
+# Verifies SPEC-0029-R01, SPEC-0029-R02, SPEC-0029-R04, and SPEC-0029-R08:
+# only MCP methods and the route's own path reach a server, an endpoint in
+# another namespace is not routed, and neither is an unlisted token
+# exchange audience.
+log "verifying the Gateway forwards only MCP requests and endpoints stay in their namespace"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-plain
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-cross
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local:8080/mcp
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-audience
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  tokenExchange:
+    audience: https://unlisted.e2e.test
+MANIFEST
+SCOPE_ID="${E2E_NAMESPACE}.scope-plain"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SCOPE_ID}\") != null"
+HEADERS="$(curl --silent --output /dev/null --dump-header - --request PUT "${GATEWAY_URL}/mcp/${SCOPE_ID}" --data '{}')"
+grep --quiet --ignore-case '^HTTP/[0-9.]* 405' <<<"${HEADERS}" && grep --quiet --ignore-case '^allow: GET, POST, DELETE' <<<"${HEADERS}" ||
+  fail "a PUT to an MCP route was not refused with 405 and Allow: ${HEADERS}"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "${GATEWAY_URL}/mcp/${SCOPE_ID}/debug/headers")"
+[ "${STATUS}" = "404" ] || fail "a path below a route without forwardSubpaths answered HTTP ${STATUS}, want 404"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-cross \
+  --for=jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'=EndpointNotAllowed --timeout=60s ||
+  fail "an endpoint in another namespace was not refused with EndpointNotAllowed"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-audience \
+  --for=jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'=AudienceNotAllowed --timeout=60s ||
+  fail "an unlisted token exchange audience was not refused with AudienceNotAllowed"
+curl --fail --silent --show-error "${GATEWAY_URL}/v1/routes" |
+  jq --exit-status --arg cross "${E2E_NAMESPACE}.scope-cross" --arg audience "${E2E_NAMESPACE}.scope-audience" \
+    '.routes | map(.name) | (index($cross) == null and index($audience) == null)' >/dev/null ||
+  fail "the Gateway routes a server whose endpoint or audience is not allowed"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/scope-plain mcpserver/scope-cross mcpserver/scope-audience --wait=false >/dev/null
+
 # Verifies SPEC-0008-R08 and SPEC-0008-R11: deleting the Operator leader lets
 # the standby replica reconcile new servers.
 log "verifying a standby Operator takes over from a deleted leader"
@@ -1090,6 +1149,7 @@ MANIFEST
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" rollout status deployment/e2e-issuer --timeout=120s
 
 log "enabling MCP client authentication"
+TICKETS_AUDIENCE="https://tickets.e2e.test"
 helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
@@ -1098,6 +1158,7 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --set gateway.auth.resourceURL="${RESOURCE_URL}" \
   --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true,\"tokenExchange\":{\"clientID\":\"kavrynt-gateway\",\"clientSecretKey\":\"client-secret\"}}]" \
   --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange \
+  --set-json "global.tokenExchangeAudiences={\"${E2E_NAMESPACE}\":[\"${TICKETS_AUDIENCE}\"]}" \
   --set "gateway.auth.requiredScopes={mcp:tools}" \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
@@ -1169,7 +1230,6 @@ fi
 # Verifies SPEC-0015-R09 and SPEC-0015-R10: a server that needs a token for
 # its own audience gets the caller's exchanged token, never the caller's.
 log "verifying token exchange for a server with its own audience"
-TICKETS_AUDIENCE="https://tickets.e2e.test"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
 apiVersion: kavrynt.io/v1alpha1
 kind: MCPServer
@@ -1179,6 +1239,7 @@ spec:
   version: 0.0.1
   transport: http
   endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  forwardSubpaths: true
   tokenExchange:
     audience: ${TICKETS_AUDIENCE}
     scopes: [tickets:read]

@@ -31,6 +31,12 @@ const (
 	// exchange, so the Operator, which has no caller, does not list its tools
 	// (SPEC-0015-R10).
 	ReasonCallerTokenRequired = "CallerTokenRequired" // #nosec G101 -- a condition reason, not a credential.
+	// ReasonEndpointNotAllowed: the endpoint reaches another namespace, or
+	// a cluster address, that the platform team did not allow (SPEC-0029).
+	ReasonEndpointNotAllowed = "EndpointNotAllowed"
+	// ReasonAudienceNotAllowed: spec.tokenExchange.audience is not allowed
+	// for the server's namespace (SPEC-0029).
+	ReasonAudienceNotAllowed = "AudienceNotAllowed"
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
@@ -54,6 +60,9 @@ type MCPServerSpec struct {
 	// SessionAffinity is None (or empty) or MCPSession, which sends every
 	// request of an MCP session to the pod that started it (SPEC-0026).
 	SessionAffinity string `json:"sessionAffinity,omitempty"`
+	// ForwardSubpaths makes the Gateway forward requests for paths below
+	// the route to the same paths below the endpoint (SPEC-0029-R03).
+	ForwardSubpaths bool `json:"forwardSubpaths,omitempty"`
 }
 
 const (

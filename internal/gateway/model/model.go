@@ -25,6 +25,9 @@ type Route struct {
 	// SessionAffinity sends every request of an MCP session to the pod of
 	// the endpoint's Service that started it (SPEC-0026).
 	SessionAffinity bool `json:"-"`
+	// ForwardSubpaths forwards /mcp/<route>/<suffix> to the endpoint path
+	// plus the suffix; without it only the route itself is (SPEC-0029).
+	ForwardSubpaths bool `json:"-"`
 }
 
 // ServerTokenExchange tells the console that a server gets per-caller

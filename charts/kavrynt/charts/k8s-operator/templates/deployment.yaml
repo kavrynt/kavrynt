@@ -64,6 +64,15 @@ spec:
             - --gateway-watch-namespaces
             - {{ . | quote }}
             {{- end }}
+            {{- $endpoints := (.Values.global | default dict).endpoints | default dict }}
+            - --gateway-namespace={{ .Release.Namespace }}
+            {{- with $endpoints.crossNamespace }}
+            - --endpoint-cross-namespace={{ range $i, $pair := . }}{{ if $i }},{{ end }}{{ $pair.from }}:{{ $pair.to }}{{ end }}
+            {{- end }}
+            {{- with $endpoints.clusterCIDRs }}
+            - --cluster-cidrs={{ join "," . }}
+            {{- end }}
+            - {{ printf "--token-exchange-audiences=%s" ((.Values.global | default dict).tokenExchangeAudiences | default dict | toJson) | quote }}
             {{- if $credentials }}
             - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
             {{- end }}
