@@ -5,7 +5,6 @@ import (
 	"flag"
 	"fmt"
 	"log/slog"
-	"net/netip"
 	"os"
 	"strings"
 	"time"
@@ -176,11 +175,11 @@ func endpointScope(gatewayNamespace, crossNamespace, clusterCIDRs, audiences str
 		return nil, fmt.Errorf("--endpoint-cross-namespace: %w", err)
 	}
 	for _, cidr := range splitList(clusterCIDRs) {
-		prefix, err := netip.ParsePrefix(cidr)
+		prefix, err := scope.ParsePrefix(cidr)
 		if err != nil {
-			return nil, fmt.Errorf("--cluster-cidrs: %q is not a CIDR", cidr)
+			return nil, fmt.Errorf("--cluster-cidrs: %w", err)
 		}
-		policy.ClusterCIDRs = append(policy.ClusterCIDRs, prefix.Masked())
+		policy.ClusterCIDRs = append(policy.ClusterCIDRs, prefix)
 	}
 	if policy.Audiences, err = scope.ParseAudiences(audiences); err != nil {
 		return nil, fmt.Errorf("--token-exchange-audiences: %w", err)

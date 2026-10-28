@@ -42,7 +42,12 @@ func TestEndpointNamespaces(t *testing.T) {
 		"http://search.team-b:8080/mcp":                        "team-b",
 		"http://pod-0.search.team-b.svc.corp.example:9000/mcp": "team-b",
 		"http://kavrynt-gateway:8080/mcp":                      "kavrynt-system",
-		"http://search.kavrynt-system.svc.cluster.local/mcp":   "kavrynt-system",
+		// Verifies SPEC-0029-R04: <pod>.<service>.<namespace> resolves
+		// through the search path to a headless Service's pod.
+		"http://pod-0.search.team-b/mcp":                     "team-b",
+		"http://pod-0.search.team-a/mcp":                     "",
+		"https://mcp.api.example/mcp":                        "",
+		"http://search.kavrynt-system.svc.cluster.local/mcp": "kavrynt-system",
 	} {
 		err := p.Endpoint(context.Background(), "team-a", endpoint)
 		switch {
@@ -62,8 +67,9 @@ func TestEndpointNamespaces(t *testing.T) {
 func TestEndpointNamespaceLookupFailsClosed(t *testing.T) {
 	p := testPolicy()
 	p.NamespaceExists = func(context.Context, string) (bool, error) { return false, errors.New("forbidden") }
-	if err := p.Endpoint(context.Background(), "team-a", "http://search.team-b:8080/mcp"); err == nil {
-		t.Fatal("a failed namespace lookup let the endpoint through")
+	err := p.Endpoint(context.Background(), "team-a", "http://search.team-b:8080/mcp")
+	if err == nil || !errors.Is(err, ErrNamespaceUnknown) {
+		t.Fatalf("a failed namespace lookup: err = %v, want ErrNamespaceUnknown", err)
 	}
 }
 
@@ -96,6 +102,8 @@ func TestClusterAddresses(t *testing.T) {
 		"http://10-244-1-7.team-b.pod.cluster.local:8080/mcp",
 		"http://10-244-1-7.team-a.pod:8080/mcp",
 		"http://[fd00:10:96::a]:8080/mcp",
+		// Verifies SPEC-0029-R06: a zone does not hide a cluster address.
+		"http://[fd00:10:96::a%25eth0]:8080/mcp",
 	}
 	for _, endpoint := range cluster {
 		if err := p.Endpoint(context.Background(), "team-a", endpoint); err != nil {
@@ -146,6 +154,25 @@ func TestAudiences(t *testing.T) {
 	for _, bad := range []string{`[]`, `{"team-a": "https://t"}`, `{"Team-A": ["https://t"]}`, `{"team-a": ["not a uri"]}`} {
 		if _, err := ParseAudiences(bad); err == nil {
 			t.Errorf("ParseAudiences(%s) accepted", bad)
+		}
+	}
+}
+
+// Verifies SPEC-0029-R06: IPv4-mapped prefixes match IPv4 addresses, and
+// ones that cannot match any address are refused.
+func TestParsePrefix(t *testing.T) {
+	for cidr, want := range map[string]string{
+		"10.1.2.3/8":          "10.0.0.0/8",
+		"::ffff:10.0.0.0/104": "10.0.0.0/8",
+		"fd00:10:96::/112":    "fd00:10:96::/112",
+	} {
+		if got, err := ParsePrefix(cidr); err != nil || got.String() != want {
+			t.Errorf("ParsePrefix(%q) = %v, %v; want %s", cidr, got, err, want)
+		}
+	}
+	for _, cidr := range []string{"10.0.0.1", "::ffff:0:0/80", "fe80::/10%eth0"} {
+		if _, err := ParsePrefix(cidr); err == nil {
+			t.Errorf("ParsePrefix(%q) accepted", cidr)
 		}
 	}
 }

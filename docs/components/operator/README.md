@@ -41,7 +41,7 @@ host the way cluster DNS resolves it from the Gateway's pod:
 | Host | Namespace |
 | --- | --- |
 | `<service>.<namespace>.svc[.<cluster-domain>]`, and headless `<pod>.<service>.<namespace>.svc[...]` | `<namespace>` |
-| `<service>.<namespace>` | `<namespace>` when that namespace exists (the Operator may `get` namespaces); otherwise an external name |
+| `<service>.<namespace>`, and `<pod>.<service>.<namespace>` | the last label when that namespace exists (the Operator may `get` namespaces), since the search path resolves them to a Service or a headless Service's pod; otherwise an external name. A namespace that cannot be read refuses the endpoint and is checked again after 30 s |
 | `<service>` | the Gateway's namespace (`--gateway-namespace`, the release namespace) |
 | An IP address, or a pod name `<a-b-c-d>.<namespace>.pod[...]` | refused when inside `global.endpoints.clusterCIDRs`, since the Operator cannot tell its namespace; not checked when that is empty |
 | Any other name | external, under the egress guard only |
@@ -57,8 +57,12 @@ global:
     clusterCIDRs: [10.96.0.0/12, 10.244.0.0/16]
 ```
 
-External names that resolve to cluster addresses are not detected here;
-the egress guard and NetworkPolicies cover them.
+External names that resolve to cluster addresses are not detected here,
+and neither the egress guard nor the chart's NetworkPolicies (which limit
+who reaches MCP server pods, not where the Gateway connects) stop them.
+Restrict the Gateway's destinations separately, for example with an egress
+NetworkPolicy for the Gateway, if namespace owners must not reach other
+namespaces that way.
 
 ## Tool discovery
 

@@ -335,7 +335,7 @@ func (a *Authenticator) fail(client string) {
 // room it forgets the clients whose window has ended, then the oldest one
 // that is not refused, never a refused one (SPEC-0030-R03). a.mu is held.
 func (a *Authenticator) key(client string) string {
-	if _, tracked := a.failures[client]; tracked || len(a.failures) < maxTrackedClients {
+	if _, tracked := a.failures[client]; tracked || a.named() < maxTrackedClients {
 		return client
 	}
 	now := a.now()
@@ -344,7 +344,7 @@ func (a *Authenticator) key(client string) string {
 			delete(a.failures, name)
 		}
 	}
-	if len(a.failures) < maxTrackedClients {
+	if a.named() < maxTrackedClients {
 		return client
 	}
 	oldest := ""
@@ -364,6 +364,15 @@ func (a *Authenticator) reset(client string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
 	delete(a.failures, client)
+}
+
+// named is the number of clients tracked by name, without the overflow
+// entry. a.mu is held.
+func (a *Authenticator) named() int {
+	if _, ok := a.failures[overflowClient]; ok {
+		return len(a.failures) - 1
+	}
+	return len(a.failures)
 }
 
 // clientAddress is the address login failures count against: the

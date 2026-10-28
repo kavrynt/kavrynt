@@ -24,10 +24,15 @@ The `Ready` condition's reason says why:
   the server behind a Streamable HTTP bridge and register the bridge's `http`
   endpoint ([example](../../examples/stdio-bridge/filesystem.yaml)).
 - `NamespaceNotWatched`: the server is outside `global.watchNamespaces`.
-- `EndpointNotAllowed`: the endpoint reaches another namespace, or an
-  address in `global.endpoints.clusterCIDRs`; the message names the
-  namespaces. Point it at a Service in the server's own namespace, or add a
-  `global.endpoints.crossNamespace` pair if the platform team allows it.
+- `EndpointNotAllowed`: the message says which case it is.
+  - The endpoint reaches another namespace (the message names both): point
+    it at a Service in the server's own namespace, or add a
+    `global.endpoints.crossNamespace` pair if the platform team allows it.
+  - The endpoint is an address, or a pod name, in
+    `global.endpoints.clusterCIDRs`: use the Service's name instead. No
+    namespace pair allows an address.
+  - A namespace could not be read: check the Operator's logs and its RBAC
+    (`get` on namespaces); the Operator checks again after 30 seconds.
 - `AudienceNotAllowed`: `spec.tokenExchange.audience` is not listed for the
   namespace in `global.tokenExchangeAudiences`.
 

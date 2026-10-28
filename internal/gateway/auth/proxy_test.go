@@ -123,3 +123,17 @@ func TestLimiterNeverForgetsRefusedClients(t *testing.T) {
 		t.Fatalf("tracking %d entries, want at most %d and the overflow", len(a.failures), maxTrackedClients)
 	}
 }
+
+// Verifies SPEC-0030-R03: the overflow entry takes no named client's place.
+func TestOverflowTakesNoClientSlot(t *testing.T) {
+	a, c, _, _ := newTestAuth(t)
+	for i := 0; i < maxTrackedClients-1; i++ {
+		a.failures[fmt.Sprintf("refused-%d", i)] = &failures{count: maxFailures, since: c.now()}
+	}
+	a.failures["ended"] = &failures{count: maxFailures, since: c.now().Add(-failureWindow)}
+	a.failures[overflowClient] = &failures{count: 1, since: c.now()}
+	a.fail("newcomer")
+	if _, ok := a.failures["newcomer"]; !ok {
+		t.Fatal("a client was counted in the overflow entry although an ended window freed a slot")
+	}
+}

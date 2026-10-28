@@ -116,7 +116,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	status := r.desiredStatus(ctx, &server)
+	status, retry := r.desiredStatus(ctx, &server)
 	recordReady(req.NamespacedName, apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady))
 	var result ctrl.Result
 	if r.Discoverer != nil {
@@ -126,6 +126,9 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		status.Tools = nil
 		status.ServerInfo = nil
 		apimeta.RemoveStatusCondition(&status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	}
+	if retry > 0 && (result.RequeueAfter == 0 || retry < result.RequeueAfter) {
+		result.RequeueAfter = retry
 	}
 	recordToolsDiscovered(req.NamespacedName, apimeta.FindStatusCondition(status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered))
 
@@ -309,7 +312,9 @@ func (r *MCPServerReconciler) clock() time.Time {
 	return time.Now()
 }
 
-func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerStatus {
+// desiredStatus returns the status the server should have, and how soon to
+// check it again when a check could not be completed.
+func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavryntv1alpha1.MCPServer) (kavryntv1alpha1.MCPServerStatus, time.Duration) {
 	status := kavryntv1alpha1.MCPServerStatus{
 		ObservedGeneration: server.Generation,
 		Conditions:         append([]metav1.Condition(nil), server.Status.Conditions...),
@@ -347,26 +352,37 @@ func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavrynt
 		ready.Reason = kavryntv1alpha1.ReasonNamespaceNotWatched
 		ready.Message = fmt.Sprintf("Gateway does not watch namespace %q; add it to global.watchNamespaces", server.Namespace)
 	}
+	var retry time.Duration
 	if ready.Status == metav1.ConditionTrue && r.Scope != nil {
-		r.checkScope(ctx, server, &ready)
+		retry = r.checkScope(ctx, server, &ready)
 	}
 
 	apimeta.SetStatusCondition(&status.Conditions, accepted)
 	apimeta.SetStatusCondition(&status.Conditions, ready)
-	return status
+	return status, retry
 }
 
+// scopeRetryDelay is when an endpoint whose namespace could not be read is
+// checked again.
+const scopeRetryDelay = 30 * time.Second
+
 // checkScope makes ready False when the server's endpoint or token exchange
-// audience is not allowed for its namespace (SPEC-0029-R04, R08).
-func (r *MCPServerReconciler) checkScope(ctx context.Context, server *kavryntv1alpha1.MCPServer, ready *metav1.Condition) {
+// audience is not allowed for its namespace (SPEC-0029-R04, R08). It
+// returns when to check again when a namespace could not be read; the
+// server stays not Ready until then.
+func (r *MCPServerReconciler) checkScope(ctx context.Context, server *kavryntv1alpha1.MCPServer, ready *metav1.Condition) time.Duration {
 	if err := r.Scope.Endpoint(ctx, server.Namespace, server.Spec.Endpoint); err != nil {
 		ready.Status, ready.Reason, ready.Message = metav1.ConditionFalse, kavryntv1alpha1.ReasonEndpointNotAllowed, err.Error()
-		return
+		if errors.Is(err, scope.ErrNamespaceUnknown) {
+			return scopeRetryDelay
+		}
+		return 0
 	}
 	if exchange := server.Spec.TokenExchange; exchange != nil && !r.Scope.Audiences.Allowed(server.Namespace, exchange.Audience) {
 		ready.Status, ready.Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonAudienceNotAllowed
 		ready.Message = fmt.Sprintf("spec.tokenExchange.audience %q is not allowed for namespace %q; add it to global.tokenExchangeAudiences", exchange.Audience, server.Namespace)
 	}
+	return 0
 }
 
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {

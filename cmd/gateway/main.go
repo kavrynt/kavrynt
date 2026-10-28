@@ -326,11 +326,11 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 	}
 	var proxies []netip.Prefix
 	for _, cidr := range splitList(trustedProxies) {
-		prefix, err := netip.ParsePrefix(cidr)
+		prefix, err := scope.ParsePrefix(cidr)
 		if err != nil {
-			return nil, fmt.Errorf("--console-trusted-proxies: %q is not a CIDR", cidr)
+			return nil, fmt.Errorf("--console-trusted-proxies: %w", err)
 		}
-		proxies = append(proxies, prefix.Masked())
+		proxies = append(proxies, prefix)
 	}
 	a := auth.New(dir, ttl)
 	a.TrustProxies(proxies)

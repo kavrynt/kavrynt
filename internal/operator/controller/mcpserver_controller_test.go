@@ -611,3 +611,21 @@ func TestUnlistedAudiencesAreNotReady(t *testing.T) {
 		t.Fatal("an allowed audience is not Ready")
 	}
 }
+
+// Verifies SPEC-0029-R04: when the Operator cannot read a namespace, the
+// server is not routed and the check runs again soon.
+func TestNamespaceLookupFailureIsRetried(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{
+		NamespaceExists: func(context.Context, string) (bool, error) { return false, errors.New("timeout") },
+	}}
+	result := reconcileWith(t, reconciler)
+	if result.RequeueAfter <= 0 || result.RequeueAfter > time.Minute {
+		t.Fatalf("RequeueAfter = %s, want a retry within a minute", result.RequeueAfter)
+	}
+	if apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("a server whose endpoint namespace is unknown is Ready")
+	}
+}

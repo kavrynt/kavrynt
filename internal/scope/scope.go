@@ -8,6 +8,7 @@ package scope
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"net/netip"
 	"net/url"
@@ -15,6 +16,10 @@ import (
 
 	"k8s.io/apimachinery/pkg/util/validation"
 )
+
+// ErrNamespaceUnknown reports that a namespace an endpoint may name could
+// not be read, so the endpoint is not allowed for now.
+var ErrNamespaceUnknown = errors.New("namespace could not be read")
 
 // NamespacePair allows MCPServers in From to use endpoints in To.
 type NamespacePair struct {
@@ -70,7 +75,8 @@ func (p Policy) Endpoint(ctx context.Context, namespace, endpoint string) error 
 // address refuses cluster addresses, which belong to some namespace the
 // Operator cannot name.
 func (p Policy) address(addr netip.Addr) error {
-	addr = addr.Unmap()
+	// Prefixes hold no zone, and Contains is false for a zoned address.
+	addr = addr.WithZone("").Unmap()
 	for _, prefix := range p.ClusterCIDRs {
 		if prefix.Contains(addr) {
 			return fmt.Errorf("spec.endpoint is an address in the cluster's Service or Pod ranges (global.endpoints.clusterCIDRs); use the Service's name")
@@ -109,23 +115,45 @@ func (p Policy) namespaceOf(ctx context.Context, host string) (string, error) {
 	switch len(labels) {
 	case 1:
 		return p.GatewayNamespace, nil
-	case 2:
-		if len(validation.IsDNS1123Label(labels[1])) > 0 {
+	case 2, 3:
+		// Through the search path, <service>.<namespace> and
+		// <pod>.<service>.<namespace> name a Service, or a headless
+		// Service's pod, in the last label's namespace, when it exists.
+		namespace := labels[len(labels)-1]
+		if len(validation.IsDNS1123Label(namespace)) > 0 {
 			return "", nil
 		}
 		if p.NamespaceExists == nil {
-			return labels[1], nil
+			return namespace, nil
 		}
-		exists, err := p.NamespaceExists(ctx, labels[1])
+		exists, err := p.NamespaceExists(ctx, namespace)
 		if err != nil {
 			// Unknown is not allowed: the name may be a Service.
-			return "", fmt.Errorf("cannot tell whether spec.endpoint names a Service in namespace %q: the namespace could not be read", labels[1])
+			return "", fmt.Errorf("cannot tell whether spec.endpoint names a Service in namespace %q: %w", namespace, ErrNamespaceUnknown)
 		}
 		if exists {
-			return labels[1], nil
+			return namespace, nil
 		}
 	}
 	return "", nil
+}
+
+// ParsePrefix reads a CIDR for --cluster-cidrs and --console-trusted-proxies,
+// masked. An IPv4-mapped IPv6 prefix becomes its IPv4 prefix, since
+// addresses are unmapped before they are matched; one shorter than /96
+// matches no address and is refused.
+func ParsePrefix(cidr string) (netip.Prefix, error) {
+	prefix, err := netip.ParsePrefix(strings.TrimSpace(cidr))
+	if err != nil {
+		return netip.Prefix{}, fmt.Errorf("%q is not a CIDR", cidr)
+	}
+	if prefix.Addr().Is4In6() {
+		if prefix.Bits() < 96 {
+			return netip.Prefix{}, fmt.Errorf("%q is an IPv4-mapped prefix shorter than /96, which matches no address", cidr)
+		}
+		prefix = netip.PrefixFrom(prefix.Addr().Unmap(), prefix.Bits()-96)
+	}
+	return prefix.Masked(), nil
 }
 
 // ParseNamespacePairs reads "from:to,from:to".

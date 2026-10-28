@@ -24,15 +24,21 @@
 - **Endpoint namespaces (R04 to R06).** `internal/scope` (shared by the Operator and the Gateway) decides
   which namespace an endpoint host reaches, from the host alone, the way
   in-cluster DNS resolves it:
-  - an IP literal: refused when inside `clusterCIDRs` (R06), otherwise not
-    a namespace (the egress policy applies);
+  - an IP literal, its zone dropped: refused when inside `clusterCIDRs`
+    (R06), otherwise not a namespace (the egress policy applies). CIDRs are
+    read by `scope.ParsePrefix`, which turns IPv4-mapped prefixes into IPv4
+    ones and refuses mapped prefixes shorter than /96;
   - `<x>.<namespace>.pod[.<domain>]`: the IP in `<x>` like an IP literal,
     since the namespace label of pod names is not checked by every DNS
     setup;
   - a name with a `svc` label after its second label: the label before
     `svc` (covers headless `<pod>.<service>.<namespace>.svc`);
-  - `<service>.<namespace>`: that namespace when it exists (the Operator
-    may `get` namespaces); otherwise an external name;
+  - `<service>.<namespace>` and `<pod>.<service>.<namespace>`, which the
+    search path resolves to a Service or a headless Service's pod: the last
+    label's namespace when it exists (the Operator may `get` namespaces);
+    otherwise an external name. A namespace that cannot be read refuses the
+    endpoint (`scope.ErrNamespaceUnknown`) and the server is checked again
+    after 30 seconds;
   - one label: the Gateway's namespace, where such names resolve;
   - anything else: external.
   A namespace other than the server's own, and not allowed by a

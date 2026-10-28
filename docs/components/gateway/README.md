@@ -446,8 +446,10 @@ global:
 ```
 
 A server whose audience is not listed for its namespace is not `Ready`
-(`AudienceNotAllowed`), and the Gateway exchanges no token for it: its
-calls get `503` (`exchange_failed`) without a request to the authorization
+(`AudienceNotAllowed`), so the Gateway removes its route and its calls get
+`404` once the Gateway has synced. Until then, and whenever the Gateway's
+own list does not allow the audience, the Gateway exchanges no token: the
+call gets `503` (`exchange_failed`) without a request to the authorization
 server. With the default, an empty list, no audience is allowed.
 
 | Case | Status | Outcome |
@@ -683,7 +685,10 @@ the Gateway's service account has no RBAC on Secrets.
   address that is not a trusted proxy (SPEC-0030). A header with no such
   address counts against the proxy, and `X-Forwarded-For` from other
   addresses is ignored. List only the proxies: an address listed there can
-  name any client.
+  name any client. Each trusted proxy must overwrite `X-Forwarded-For`, or
+  append the address of the peer it received the request from; a proxy
+  that passes on a client's header unchanged lets that client pick a new
+  address for every attempt.
 - The limiter tracks at most 10,000 clients per replica. When it is full it
   forgets clients whose minute has passed, then the oldest one that is not
   refused, never a refused one; with only refused clients left, further
