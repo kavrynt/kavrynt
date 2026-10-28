@@ -152,4 +152,4 @@ against the assistant's summary of them.
 | [0025](0025-tool-call-approvals/spec.md) | Approvals for tool calls | Draft |
 | [0026](0026-mcp-session-affinity/spec.md) | MCP session affinity | Draft |
 | [0027](0027-discovery-diagnostics/spec.md) | Discovery diagnostics | Accepted |
-| [0028](0028-tool-annotations-in-policy/spec.md) | Tool annotations in policy | Draft |
+| [0028](0028-tool-annotations-in-policy/spec.md) | Tool annotations in policy | Implemented |

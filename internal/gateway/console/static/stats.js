@@ -297,6 +297,7 @@
         entries.push({
           tool: tool.name,
           description: tool.description || "",
+          annotations: tool.annotations,
           route: server.route,
           routed: server.routed,
           state: serverState(server),
