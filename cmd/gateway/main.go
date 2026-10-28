@@ -10,6 +10,7 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
 	"net/url"
 	"os"
 	"os/signal"
@@ -30,6 +31,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -45,6 +47,8 @@ func main() {
 	allowedOrigins := flag.String("allowed-origins", getenv("KAVRYNT_ALLOWED_ORIGINS", ""), "Comma-separated browser origins (scheme://host[:port]) allowed besides loopback; requests from other origins are rejected")
 	consoleEnabled := flag.Bool("console", true, "Serve the read-only web console at /ui/")
 	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic, /v1/alerts (with --console); MCP routes are not affected")
+	exchangeAudiences := flag.String("token-exchange-audiences", getenv("KAVRYNT_TOKEN_EXCHANGE_AUDIENCES", ""), `JSON object from namespace (or "*") to the audiences tokens may be exchanged for; empty allows none`)
+	consoleTrustedProxies := flag.String("console-trusted-proxies", getenv("KAVRYNT_CONSOLE_TRUSTED_PROXIES", ""), "Comma-separated CIDRs of proxies whose X-Forwarded-For names the client for the console login limit")
 	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
 	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
 	authEnabled := flag.Bool("auth", false, "Require a bearer access token for the route on every /mcp/ request (MCP client authentication)")
@@ -75,7 +79,7 @@ func main() {
 	}
 	flag.Parse()
 
-	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL)
+	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL, *consoleTrustedProxies)
 	if err != nil {
 		slog.Error("configure console login", "error", err)
 		os.Exit(1)
@@ -152,6 +156,12 @@ func main() {
 	}
 	handler.EnableUpstreamCredentials(upstreamcred.Store{Dir: *upstreamCredentialsDir})
 	handler.EnableSessionAffinity(mcpsession.Endpoints{Reader: routeCache, AllowLoopback: *allowLoopback})
+	audiences, err := scope.ParseAudiences(*exchangeAudiences)
+	if err != nil {
+		slog.Error("invalid --token-exchange-audiences", "error", err)
+		os.Exit(1)
+	}
+	handler.EnableTokenExchangeAudiences(audiences)
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
 	}
@@ -304,7 +314,7 @@ func checkHistoryFlags(maxTools int, grafanaURL string) error {
 // newConsoleAuth returns the console admin login, or nil when the console or
 // its login is off. Login without a credentials directory is refused rather
 // than leaving the console open by accident (SPEC-0005-R11).
-func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Duration) (*auth.Authenticator, error) {
+func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Duration, trustedProxies string) (*auth.Authenticator, error) {
 	if !consoleEnabled || !authEnabled {
 		return nil, nil
 	}
@@ -314,7 +324,17 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 	if ttl <= 0 {
 		return nil, fmt.Errorf("--console-session-ttl must be positive, got %s", ttl)
 	}
-	return auth.New(dir, ttl), nil
+	var proxies []netip.Prefix
+	for _, cidr := range splitList(trustedProxies) {
+		prefix, err := scope.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("--console-trusted-proxies: %w", err)
+		}
+		proxies = append(proxies, prefix)
+	}
+	a := auth.New(dir, ttl)
+	a.TrustProxies(proxies)
+	return a, nil
 }
 
 // warnUnauthenticated says at start that MCP routes are open when client

@@ -1,0 +1,90 @@
+suite: endpoint scope
+templates:
+  - charts/operator/templates/deployment.yaml
+  - charts/gateway/templates/deployment.yaml
+  - charts/operator/templates/rbac.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
+tests:
+  # Verifies SPEC-0029-R05 and SPEC-0029-R06.
+  - it: passes namespace pairs and cluster ranges to the Operator
+    template: charts/operator/templates/deployment.yaml
+    set:
+      global.endpoints.crossNamespace:
+        - {from: team-a, to: shared-tools}
+        - {from: team-b, to: shared-tools}
+      global.endpoints.clusterCIDRs: [10.96.0.0/12, 10.244.0.0/16]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --endpoint-cross-namespace=team-a:shared-tools,team-b:shared-tools
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cluster-cidrs=10.96.0.0/12,10.244.0.0/16
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --gateway-namespace=kavrynt-system
+
+  # Verifies SPEC-0029-R07: both components get the same audiences, and none
+  # are allowed by default.
+  - it: passes the token exchange audiences to the Operator and the Gateway
+    set:
+      global.tokenExchangeAudiences:
+        team-a: [https://tickets.example.com]
+        "*": ["urn:shared"]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: '--token-exchange-audiences={"*":["urn:shared"],"team-a":["https://tickets.example.com"]}'
+        template: charts/operator/templates/deployment.yaml
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: '--token-exchange-audiences={"*":["urn:shared"],"team-a":["https://tickets.example.com"]}'
+        template: charts/gateway/templates/deployment.yaml
+
+  # Verifies SPEC-0029-R07.
+  - it: allows no token exchange audience by default
+    template: charts/operator/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: '--token-exchange-audiences={}'
+
+  # Verifies SPEC-0029-R05, SPEC-0029-R06, and SPEC-0029-R07.
+  - it: rejects malformed scope values
+    template: charts/operator/templates/deployment.yaml
+    set:
+      global.endpoints.crossNamespace: [{from: Team-A, to: b}]
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects a cluster range that is not a CIDR
+    template: charts/operator/templates/deployment.yaml
+    set:
+      global.endpoints.clusterCIDRs: [10.96.0.1]
+    asserts:
+      - failedTemplate: {}
+
+  - it: rejects an audience that is not a URI
+    template: charts/operator/templates/deployment.yaml
+    set:
+      global.tokenExchangeAudiences:
+        team-a: ["tickets"]
+    asserts:
+      - failedTemplate: {}
+
+  # Verifies SPEC-0029-R04: the Operator may read namespaces, to tell a
+  # <service>.<namespace> endpoint from an external name.
+  - it: lets the Operator get namespaces
+    template: charts/operator/templates/rbac.yaml
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: [namespaces]
+            verbs: [get]

@@ -9,3 +9,5 @@ spec:
   version: 0.1.0
   transport: http
   endpoint: http://incidents.team-sre.svc.cluster.local:8080
+  # The demo calls /debug/headers below the route.
+  forwardSubpaths: true

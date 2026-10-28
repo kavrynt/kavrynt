@@ -13,6 +13,7 @@ import (
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -77,6 +78,10 @@ type MCPServerReconciler struct {
 	// a discovery session stays on one of them (SPEC-0026-R09).
 	SessionEndpoints SessionEndpoints
 
+	// Scope limits the endpoints and token exchange audiences a namespace
+	// may use (SPEC-0029). Nil checks neither.
+	Scope *scope.Policy
+
 	// now is the clock; tests replace it.
 	now func() time.Time
 
@@ -111,7 +116,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	status := r.desiredStatus(&server)
+	status, retry := r.desiredStatus(ctx, &server)
 	recordReady(req.NamespacedName, apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady))
 	var result ctrl.Result
 	if r.Discoverer != nil {
@@ -121,6 +126,9 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		status.Tools = nil
 		status.ServerInfo = nil
 		apimeta.RemoveStatusCondition(&status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	}
+	if retry > 0 && (result.RequeueAfter == 0 || retry < result.RequeueAfter) {
+		result.RequeueAfter = retry
 	}
 	recordToolsDiscovered(req.NamespacedName, apimeta.FindStatusCondition(status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered))
 
@@ -304,7 +312,9 @@ func (r *MCPServerReconciler) clock() time.Time {
 	return time.Now()
 }
 
-func (r *MCPServerReconciler) desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerStatus {
+// desiredStatus returns the status the server should have, and how soon to
+// check it again when a check could not be completed.
+func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavryntv1alpha1.MCPServer) (kavryntv1alpha1.MCPServerStatus, time.Duration) {
 	status := kavryntv1alpha1.MCPServerStatus{
 		ObservedGeneration: server.Generation,
 		Conditions:         append([]metav1.Condition(nil), server.Status.Conditions...),
@@ -342,10 +352,44 @@ func (r *MCPServerReconciler) desiredStatus(server *kavryntv1alpha1.MCPServer) k
 		ready.Reason = kavryntv1alpha1.ReasonNamespaceNotWatched
 		ready.Message = fmt.Sprintf("Gateway does not watch namespace %q; add it to global.watchNamespaces", server.Namespace)
 	}
+	var retry time.Duration
+	if ready.Status == metav1.ConditionTrue && r.Scope != nil {
+		retry = r.checkScope(ctx, server, &ready)
+	}
 
 	apimeta.SetStatusCondition(&status.Conditions, accepted)
 	apimeta.SetStatusCondition(&status.Conditions, ready)
-	return status
+	return status, retry
+}
+
+// scopeRetryDelay is when an endpoint whose namespace could not be read is
+// checked again; scopeRecheckInterval is when one allowed only because its
+// namespace does not exist is, in case the namespace is created.
+const (
+	scopeRetryDelay      = 30 * time.Second
+	scopeRecheckInterval = 5 * time.Minute
+)
+
+// checkScope makes ready False when the server's endpoint or token exchange
+// audience is not allowed for its namespace (SPEC-0029-R04, R08). It
+// returns when to check again when a namespace could not be read; the
+// server stays not Ready until then.
+func (r *MCPServerReconciler) checkScope(ctx context.Context, server *kavryntv1alpha1.MCPServer, ready *metav1.Condition) time.Duration {
+	if err := r.Scope.Endpoint(ctx, server.Namespace, server.Spec.Endpoint); err != nil {
+		ready.Status, ready.Reason, ready.Message = metav1.ConditionFalse, kavryntv1alpha1.ReasonEndpointNotAllowed, err.Error()
+		if errors.Is(err, scope.ErrNamespaceUnknown) {
+			return scopeRetryDelay
+		}
+		return 0
+	}
+	if exchange := server.Spec.TokenExchange; exchange != nil && !r.Scope.Audiences.Allowed(server.Namespace, exchange.Audience) {
+		ready.Status, ready.Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonAudienceNotAllowed
+		ready.Message = fmt.Sprintf("spec.tokenExchange.audience %q is not allowed for namespace %q; add it to global.tokenExchangeAudiences", exchange.Audience, server.Namespace)
+	}
+	if scope.DependsOnNamespace(server.Spec.Endpoint) {
+		return scopeRecheckInterval
+	}
+	return 0
 }
 
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {

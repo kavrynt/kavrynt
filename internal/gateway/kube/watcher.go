@@ -133,7 +133,11 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 		if !server.DeletionTimestamp.IsZero() {
 			continue
 		}
-		if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		// Ready must be for the current spec: after a change the Operator
+		// has not yet checked, such as a new endpoint, the earlier Ready
+		// does not apply (SPEC-0029-R04).
+		ready := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady)
+		if ready == nil || ready.Status != metav1.ConditionTrue || ready.ObservedGeneration != server.Generation {
 			continue
 		}
 		if server.Spec.Transport != "http" || server.Validate() != nil {
@@ -151,6 +155,7 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 		}
 		route.TokenExchange = server.Spec.TokenExchange.Copy()
 		route.SessionAffinity = server.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession
+		route.ForwardSubpaths = server.Spec.ForwardSubpaths
 		// Tools kept from before a failed discovery, or discovered for an
 		// earlier spec such as another endpoint, are not current
 		// (SPEC-0028-R04).

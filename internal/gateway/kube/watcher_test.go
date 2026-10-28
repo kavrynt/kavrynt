@@ -92,8 +92,10 @@ func TestRoutesCarryDiscoveredToolHints(t *testing.T) {
 		t.Fatalf("route tools = %v", tools)
 	}
 
-	// A changed spec (a new endpoint) is not yet discovered.
+	// A changed spec (a new endpoint) the Operator found Ready is not yet
+	// discovered.
 	item.Generation = 2
+	item.Status.Conditions[0].ObservedGeneration = 2
 	if tools := Routes([]kavryntv1alpha1.MCPServer{item})[0].Tools; len(tools) != 0 {
 		t.Fatalf("route tools of an earlier generation = %v, want none", tools)
 	}
@@ -104,5 +106,21 @@ func TestRoutesCarryDiscoveredToolHints(t *testing.T) {
 	item.Status.Conditions[1].Status, item.Status.Conditions[1].Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonDiscoveryFailed
 	if tools := Routes([]kavryntv1alpha1.MCPServer{item})[0].Tools; len(tools) != 0 {
 		t.Fatalf("route tools after a failed discovery = %v, want none", tools)
+	}
+}
+
+// Verifies SPEC-0029-R04: after a spec change the Gateway waits for the
+// Operator to check it, so a new endpoint is not routed on the earlier
+// generation's Ready.
+func TestRoutesNeedReadyForTheCurrentGeneration(t *testing.T) {
+	item := server("team-a", "search", "http", "http://search.team-b.svc:8080", metav1.ConditionTrue)
+	item.Generation = 2
+	item.Status.Conditions[0].ObservedGeneration = 1
+	if routes := Routes([]kavryntv1alpha1.MCPServer{item}); len(routes) != 0 {
+		t.Fatalf("routes = %+v, want none until Ready is observed for generation 2", routes)
+	}
+	item.Status.Conditions[0].ObservedGeneration = 2
+	if routes := Routes([]kavryntv1alpha1.MCPServer{item}); len(routes) != 1 {
+		t.Fatalf("routes = %+v, want the server once Ready is current", routes)
 	}
 }

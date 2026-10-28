@@ -18,6 +18,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -588,5 +589,94 @@ func TestDiscoveryUsesOnePodWithSessionAffinity(t *testing.T) {
 	reconcileWith(t, reconciler)
 	if plain.pod.IsValid() {
 		t.Fatalf("discovery without affinity went to pod %v", plain.pod)
+	}
+}
+
+// Verifies SPEC-0029-R04: an endpoint in another namespace is accepted but
+// not Ready, so the Gateway does not route it; an allowed pair is.
+func TestEndpointsInOtherNamespacesAreNotReady(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b.svc:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{GatewayNamespace: "kavrynt-system"}}
+	reconcileWith(t, reconciler)
+
+	server := get(t, k8sClient)
+	ready := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != kavryntv1alpha1.ReasonEndpointNotAllowed || !strings.Contains(ready.Message, `namespace "team-b"`) {
+		t.Fatalf("Ready = %+v, want False with EndpointNotAllowed naming team-b", ready)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionAccepted) {
+		t.Fatal("an endpoint in another namespace made the spec invalid")
+	}
+
+	reconciler.Scope.CrossNamespace = []scope.NamespacePair{{From: "default", To: "team-b"}}
+	reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an allowed namespace pair is not Ready")
+	}
+}
+
+// Verifies SPEC-0029-R08: a token exchange audience not allowed for the
+// namespace keeps the server from being Ready.
+func TestUnlistedAudiencesAreNotReady(t *testing.T) {
+	spec := validSpec()
+	spec.TokenExchange = &kavryntv1alpha1.MCPServerTokenExchange{Audience: "https://tickets.example.com"}
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{Audiences: scope.Audiences{"team-a": {"https://tickets.example.com"}}}}
+	reconcileWith(t, reconciler)
+	ready := apimeta.FindStatusCondition(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != kavryntv1alpha1.ReasonAudienceNotAllowed ||
+		!strings.Contains(ready.Message, "https://tickets.example.com") || !strings.Contains(ready.Message, `namespace "default"`) {
+		t.Fatalf("Ready = %+v, want False with AudienceNotAllowed naming the audience and namespace", ready)
+	}
+
+	reconciler.Scope.Audiences["default"] = []string{"https://tickets.example.com"}
+	reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an allowed audience is not Ready")
+	}
+}
+
+// Verifies SPEC-0029-R04: when the Operator cannot read a namespace, the
+// server is not routed and the check runs again soon.
+func TestNamespaceLookupFailureIsRetried(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{
+		NamespaceExists: func(context.Context, string) (bool, error) { return false, errors.New("timeout") },
+	}}
+	result := reconcileWith(t, reconciler)
+	if result.RequeueAfter <= 0 || result.RequeueAfter > time.Minute {
+		t.Fatalf("RequeueAfter = %s, want a retry within a minute", result.RequeueAfter)
+	}
+	if apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("a server whose endpoint namespace is unknown is Ready")
+	}
+}
+
+// Verifies SPEC-0029-R04: an endpoint allowed because its namespace does
+// not exist is checked again, and refused once the namespace exists.
+func TestEndpointsAreRecheckedForNewNamespaces(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	exists := false
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{
+		NamespaceExists: func(context.Context, string) (bool, error) { return exists, nil },
+	}}
+	result := reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an external two-label name is not Ready")
+	}
+	if result.RequeueAfter <= 0 || result.RequeueAfter > 10*time.Minute {
+		t.Fatalf("RequeueAfter = %s, want a recheck within ten minutes", result.RequeueAfter)
+	}
+	exists = true
+	reconcileWith(t, reconciler)
+	ready := apimeta.FindStatusCondition(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != kavryntv1alpha1.ReasonEndpointNotAllowed {
+		t.Fatalf("Ready after the namespace appeared = %+v, want EndpointNotAllowed", ready)
 	}
 }

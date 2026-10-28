@@ -124,11 +124,15 @@ spec:
             - --audit-cloud-token-file=/etc/kavrynt/audit-cloud/token
             - --audit-cloud-buffer-size={{ $auditCloud.bufferSize | default 100000 | int }}
             {{- end }}
+            - {{ printf "--token-exchange-audiences=%s" ((.Values.global | default dict).tokenExchangeAudiences | default dict | toJson) | quote }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true
             - --console-auth-dir=/etc/kavrynt/console-auth
             - --console-session-ttl={{ .Values.console.auth.sessionTTL | default "12h" }}
+            {{- with .Values.console.auth.trustedProxies }}
+            - --console-trusted-proxies={{ join "," . }}
+            {{- end }}
             {{- else }}
             - --console-auth=false
             {{- end }}

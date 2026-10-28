@@ -153,4 +153,6 @@ against the assistant's summary of them.
 | [0026](0026-mcp-session-affinity/spec.md) | MCP session affinity | Implemented |
 | [0027](0027-discovery-diagnostics/spec.md) | Discovery diagnostics | Accepted |
 | [0028](0028-tool-annotations-in-policy/spec.md) | Tool annotations in policy | Implemented |
+| [0029](0029-mcpserver-endpoint-scope/spec.md) | MCPServer endpoint scope | Implemented |
+| [0030](0030-console-login-behind-proxy/spec.md) | Console login limits behind a proxy | Implemented |
 | [0031](0031-gateway-audience/spec.md) | Gateway audience | Draft |

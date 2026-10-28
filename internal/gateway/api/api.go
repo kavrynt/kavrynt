@@ -30,6 +30,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 )
 
@@ -60,6 +61,10 @@ type Handler struct {
 	table    *routing.Table
 	client   *http.Client
 	metadata Metadata
+
+	// exchangeAudiences, when set, are the only audiences tokens are
+	// exchanged for, per route namespace (SPEC-0029-R08).
+	exchangeAudiences scope.Audiences
 
 	// sessionEndpoints lists the ready pods of MCPSession routes' Services,
 	// and nextSession spreads new sessions across them (SPEC-0026).
@@ -235,6 +240,16 @@ type SessionEndpoints interface {
 // routes answer 503.
 func (h *Handler) EnableSessionAffinity(endpoints SessionEndpoints) {
 	h.sessionEndpoints = endpoints
+}
+
+// EnableTokenExchangeAudiences limits token exchange to the audiences
+// allowed for each route's namespace (SPEC-0029-R08); an empty map allows
+// none.
+func (h *Handler) EnableTokenExchangeAudiences(audiences scope.Audiences) {
+	if audiences == nil {
+		audiences = scope.Audiences{}
+	}
+	h.exchangeAudiences = audiences
 }
 
 // EnablePolicy has engine decide every MCP request before it is forwarded,
@@ -523,6 +538,15 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusBadRequest, errors.New("path must not contain . or .. segments"))
 		return
 	}
+	// MCP Streamable HTTP uses POST, GET, and DELETE; nothing else reaches
+	// an endpoint (SPEC-0029-R01).
+	switch r.Method {
+	case http.MethodPost, http.MethodGet, http.MethodDelete:
+	default:
+		w.Header().Set("Allow", "GET, POST, DELETE")
+		writeError(w, http.StatusMethodNotAllowed, errors.New("MCP routes accept GET, POST, and DELETE"))
+		return
+	}
 
 	start := time.Now()
 	route, exists := h.table.Get(name)
@@ -548,6 +572,12 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if !exists {
 		writeError(w, http.StatusNotFound, h.unrouted(name))
+		return
+	}
+	// MCP needs one URL per server; other paths of its host are reached only
+	// when the server allows it (SPEC-0029-R02, R03).
+	if suffix != "" && !route.ForwardSubpaths {
+		writeError(w, http.StatusNotFound, errors.New("not found: the route forwards only its own path"))
 		return
 	}
 
@@ -868,6 +898,12 @@ func (h *Handler) exchangeToken(r *http.Request, route model.Route) (string, int
 			slog.Error("MCP server needs token exchange, which needs MCP client authentication; its calls are refused", "route", route.Name)
 		}
 		return "", http.StatusServiceUnavailable, errors.New("token exchange needs MCP client authentication")
+	}
+	if namespace, _, _ := strings.Cut(route.Name, "."); h.exchangeAudiences != nil && !h.exchangeAudiences.Allowed(namespace, route.TokenExchange.Audience) {
+		if _, logged := h.exchangeWithoutAuth.LoadOrStore(route.Name+"/audience", true); !logged {
+			slog.Error("MCP server asks for a token exchange audience not allowed for its namespace; its calls are refused", "route", route.Name, "audience", route.TokenExchange.Audience)
+		}
+		return "", http.StatusServiceUnavailable, errors.New("token exchange audience not allowed for this namespace")
 	}
 	identity, _ := clientauth.IdentityFrom(r.Context())
 	token, err := h.clientAuth.Exchange(r, identity, route.TokenExchange.Audience, route.TokenExchange.Scopes)
