@@ -156,6 +156,17 @@ spec:
                       inputSchema:
                         type: object
                         x-kubernetes-preserve-unknown-fields: true
+                      annotations:
+                        type: object
+                        properties:
+                          readOnlyHint:
+                            type: boolean
+                          destructiveHint:
+                            type: boolean
+                          idempotentHint:
+                            type: boolean
+                          openWorldHint:
+                            type: boolean
                 serverInfo:
                   type: object
                   properties:

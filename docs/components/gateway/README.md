@@ -244,9 +244,19 @@ Input:
 | `http_method` | `POST`, `GET`, `DELETE` |
 | `mcp_method` | JSON-RPC method of a `POST`; empty for other methods and for JSON-RPC responses |
 | `tool` | `params.name` of `tools/call`; empty otherwise |
+| `tool_annotations` | For `tools/call`, the behavior hints the Operator recorded for `tool` on this route (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), absent hints left out; `{}` otherwise |
+| `tool_discovered` | `true` when `tool` is among the route's tools and its last discovery succeeded (`ToolsDiscovered` is `True`); `false` otherwise |
 | `time` | Request time, RFC 3339, UTC |
 
-Tool arguments are never part of the input. A denied request gets `403` with
+Tool arguments are never part of the input. `tool_annotations` and
+`tool_discovered` come only from the `MCPServer` status, never from the
+request. **Hints are the MCP server's own claims:** a malicious or buggy
+server can call a destructive tool read-only, so decide on them only for
+servers whose code you trust. A hint the server did not report is absent,
+not `false`; MCP's defaults for absent hints are `readOnlyHint: false`,
+`destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true`. The
+policy sees the hints of the last discovery, and a tool the server added
+since then has `tool_discovered: false`. A denied request gets `403` with
 a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
 policy's `reason` with control characters removed and at most 200
 characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
@@ -283,13 +293,15 @@ cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
 [`examples/policy`](../../examples/policy) (allow authenticated callers, a
-per-client tool allow-list, read-only methods).
+per-client tool allow-list, read-only methods, and read-only tools of
+trusted servers by their reported hints).
 
 **Filtered tool lists.** With `--policy-filter-tools-list` (chart:
 `gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
 only the tools the policy would let the same caller call (SPEC-0016): for
-each tool the policy is asked with `mcp_method: tools/call` and `tool: <name>`
-and the caller's other input. Every other field of the answer (`nextCursor`,
+each tool the policy is asked with `mcp_method: tools/call`, `tool: <name>`,
+that tool's recorded `tool_annotations` and `tool_discovered` (not the
+annotations in the answer), and the caller's other input. Every other field of the answer (`nextCursor`,
 `_meta`, the kept tools as sent) is unchanged; in an event stream only the
 response event is changed. The Gateway asks the server for an uncompressed
 answer. If the evaluations take longer than 500 ms together, the answer is
@@ -483,7 +495,8 @@ everything it shows comes from `/v1/servers`, `/v1/traffic`, `/v1/alerts`,
   (conditions, tools, recent traffic; no tool inputs or results, and the
   endpoint's query string redacted) for an issue or a chat.
 - **Tools**: every discovered tool across all servers, searchable by name,
-  description, and route, with a link to try it in the Playground.
+  description, and route, with its reported behavior hints and a link to
+  try it in the Playground. A server's Tools tab shows the same hints.
 - **Playground**: opens an MCP session (`initialize`, `tools/list`) through
   the Gateway route, builds a form from each tool's input schema, and calls
   tools (`tools/call`) or any raw JSON-RPC method. JSON and event-stream

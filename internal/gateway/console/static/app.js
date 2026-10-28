@@ -9,7 +9,7 @@
 
 (() => {
   const { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
-  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, connectSnippets } = Kavrynt.format;
+  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets } = Kavrynt.format;
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
@@ -1008,6 +1008,15 @@
       h("p", { class: "muted small", style: "margin:0", text: "The Gateway does not authenticate callers yet and never forwards Authorization or Cookie headers upstream." })));
   }
 
+  // hintBadges shows the behavior hints the server reported for a tool
+  // (SPEC-0028-R08), or nothing when it reported none.
+  function hintBadges(annotations) {
+    const labels = toolHints(annotations);
+    if (!labels.length) return null;
+    const why = "Reported by the MCP server, not verified by Kavrynt";
+    return h("div", { class: "badges" }, labels.map((label) => badge(label, label === "destructive" ? "warn" : "", why)));
+  }
+
   function toolsPanel(server) {
     if (!server.tools.length) {
       const discovered = condition(server, "ToolsDiscovered");
@@ -1017,6 +1026,7 @@
       h("div", { class: "tool-head" },
         h("span", { class: "tool-name", text: tool.name }),
         server.routed ? h("a", { class: "btn small", href: formatHash("playground", [server.route, tool.name]), "aria-label": "Try " + tool.name }, "Try it") : null),
+      hintBadges(tool.annotations),
       tool.description ? h("p", { class: "tool-desc", text: tool.description }) : null,
       tool.inputSchema ? h("details", {}, h("summary", { text: "Input schema" }), codeBlock(pretty(tool.inputSchema))) : null))));
   }
@@ -1046,7 +1056,7 @@
         h("td", { class: "mono", text: e.tool }),
         h("td", {}, h("a", { class: "mono", href: formatHash("servers", [e.route, "tools"]), text: e.route })),
         h("td", {}, badge(e.state.label, e.state.cls)),
-        h("td", { class: "wrap muted", text: e.description }),
+        h("td", { class: "wrap muted" }, e.description, hintBadges(e.annotations)),
         h("td", { class: "actions" }, e.playable ?
           h("a", { class: "btn small", href: formatHash("playground", [e.route, e.tool]), "aria-label": "Try " + e.tool + " on " + e.route }, "Try ▶") :
           [h("button", { type: "button", class: "btn small", disabled: true, "aria-describedby": "why-" + e.route + "-" + e.tool }, "Try ▶"),

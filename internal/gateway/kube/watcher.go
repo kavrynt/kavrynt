@@ -139,6 +139,14 @@ func Routes(servers []kavryntv1alpha1.MCPServer) []model.Route {
 			route.Credential = &credential
 		}
 		route.TokenExchange = server.Spec.TokenExchange.Copy()
+		// Tools kept from before a failed discovery are not current
+		// (SPEC-0028-R04).
+		if apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) {
+			route.Tools = make(map[string]map[string]bool, len(server.Status.Tools))
+			for _, tool := range server.Status.Tools {
+				route.Tools[tool.Name] = tool.Annotations.Hints()
+			}
+		}
 		routes = append(routes, route)
 	}
 	return routes
@@ -187,6 +195,9 @@ func Servers(items []kavryntv1alpha1.MCPServer) []model.Server {
 		}
 		for _, tool := range item.Status.Tools {
 			entry := model.Tool{Name: tool.Name, Description: tool.Description}
+			if hints := tool.Annotations.Hints(); len(hints) > 0 {
+				entry.Annotations = hints
+			}
 			if tool.InputSchema != nil && len(tool.InputSchema.Raw) > 0 {
 				entry.InputSchema = append([]byte(nil), tool.InputSchema.Raw...)
 			}

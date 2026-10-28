@@ -36,7 +36,7 @@ state. Source: `cmd/operator`, `internal/operator`, `api/v1alpha1`.
 For each `Ready` server the Operator opens one short MCP session with
 `spec.endpoint` (`initialize`, `notifications/initialized`, `tools/list`)
 and records the result in `status.tools`: each tool's `name`, `description`,
-and `inputSchema`. It also records the `serverInfo` name and version the
+`inputSchema`, and `annotations`. It also records the `serverInfo` name and version the
 server reports in `initialize` in `status.serverInfo`, so the version that
 actually runs can be compared with `spec.version` (which is whatever the
 manifest says). It repeats this every `--tool-refresh-interval` and when
@@ -44,6 +44,11 @@ the spec changes. `kavryctl list` shows the tool count; `kavryctl inspect`
 shows the tools and `serverInfo`; `kubectl get mcpservers` shows the reported
 version in the `REPORTED` column.
 
+- `annotations` keeps only the MCP behavior hints `readOnlyHint`,
+  `destructiveHint`, `idempotentHint`, and `openWorldHint`, each only when
+  the server reports it as a JSON boolean; anything else, such as `title`,
+  is dropped. They count toward the status bounds. They are self-reported
+  and untrusted; the Gateway gives them to the tool authorization policy.
 - `serverInfo` is self-reported and untrusted. A name or version is kept only
   when it is a non-blank string of at most 128 printable characters. A failed
   discovery keeps the last value while the endpoint is unchanged; a changed
