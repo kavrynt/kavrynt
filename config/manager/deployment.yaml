@@ -33,6 +33,13 @@ spec:
           imagePullPolicy: IfNotPresent
           args:
             - --leader-elect
+          env:
+            # Where single-label MCPServer endpoint hosts resolve
+            # (SPEC-0029); the Gateway runs in the same namespace.
+            - name: POD_NAMESPACE
+              valueFrom:
+                fieldRef:
+                  fieldPath: metadata.namespace
           ports:
             - name: metrics
               containerPort: 8080

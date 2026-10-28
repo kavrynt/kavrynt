@@ -22,6 +22,7 @@ import (
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
@@ -160,6 +161,11 @@ func splitList(value string) []string {
 // endpointScope builds the endpoint and audience rules from the flags
 // (SPEC-0029). Namespaces are read uncached, one at a time.
 func endpointScope(gatewayNamespace, crossNamespace, clusterCIDRs, audiences string, reader client.Reader) (*scope.Policy, error) {
+	// Without it, single-label hosts, which resolve in the Gateway's
+	// namespace, would pass as external names.
+	if len(validation.IsDNS1123Label(gatewayNamespace)) > 0 {
+		return nil, fmt.Errorf("--gateway-namespace (or POD_NAMESPACE) must name the Gateway's namespace, got %q", gatewayNamespace)
+	}
 	policy := &scope.Policy{
 		GatewayNamespace: gatewayNamespace,
 		NamespaceExists: func(ctx context.Context, name string) (bool, error) {
