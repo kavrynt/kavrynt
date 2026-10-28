@@ -76,3 +76,33 @@ func TestRoutesCarryTheTokenExchange(t *testing.T) {
 		t.Fatalf("server token exchange = %+v", servers[0].TokenExchange)
 	}
 }
+
+// Verifies SPEC-0028-R04: a route knows the hints of the tools of its last
+// successful discovery, and no tools while discovery is not True.
+func TestRoutesCarryDiscoveredToolHints(t *testing.T) {
+	item := server("team-a", "tickets", "http", "http://tickets.team-a.svc:8080", metav1.ConditionTrue)
+	item.Status.Tools = []kavryntv1alpha1.MCPServerTool{
+		{Name: "search", Annotations: &kavryntv1alpha1.MCPServerToolAnnotations{ReadOnlyHint: new(true)}},
+		{Name: "bare"},
+	}
+	item.Status.Conditions = append(item.Status.Conditions, metav1.Condition{Type: kavryntv1alpha1.ConditionToolsDiscovered, Status: metav1.ConditionTrue, Reason: kavryntv1alpha1.ReasonDiscovered})
+
+	tools := Routes([]kavryntv1alpha1.MCPServer{item})[0].Tools
+	if len(tools) != 2 || !tools["search"]["readOnlyHint"] || len(tools["bare"]) != 0 || tools["bare"] == nil {
+		t.Fatalf("route tools = %v", tools)
+	}
+
+	// A changed spec (a new endpoint) is not yet discovered.
+	item.Generation = 2
+	if tools := Routes([]kavryntv1alpha1.MCPServer{item})[0].Tools; len(tools) != 0 {
+		t.Fatalf("route tools of an earlier generation = %v, want none", tools)
+	}
+	item.Status.Conditions[1].ObservedGeneration = 2
+
+	// A failed discovery keeps the last known tools in status, but they are
+	// not current.
+	item.Status.Conditions[1].Status, item.Status.Conditions[1].Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonDiscoveryFailed
+	if tools := Routes([]kavryntv1alpha1.MCPServer{item})[0].Tools; len(tools) != 0 {
+		t.Fatalf("route tools after a failed discovery = %v, want none", tools)
+	}
+}

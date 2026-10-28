@@ -71,7 +71,9 @@ and recognises the Enterprise-Managed Authorization extension (ID-JAG).
 - Engine: Open Policy Agent embedded as a Go library.
 - Input: verified identity (subject, groups, client, actor), route, MCP method
   and name (from the `Mcp-Method` / `Mcp-Name` headers, cross-checked against
-  the body), tool risk metadata, and request context.
+  the body), tool risk metadata, and request context. Implemented risk
+  metadata (SPEC-0028): the tool's MCP behavior hints as recorded by the
+  Operator, self-reported by the server, and whether the tool was discovered.
 - Output: `allow`, `deny`, or `require_approval`, with a reason recorded in
   audit.
 - Default deny. A route with no applicable policy is denied.

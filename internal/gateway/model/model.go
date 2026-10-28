@@ -18,6 +18,10 @@ type Route struct {
 	// TokenExchange is set when the server gets each caller's exchanged
 	// token (SPEC-0015).
 	TokenExchange *kavryntv1alpha1.MCPServerTokenExchange `json:"-"`
+	// Tools maps each tool of the server's last successful discovery to
+	// its recorded behavior hints, for the policy input (SPEC-0028). It is
+	// never modified after the route is built.
+	Tools map[string]map[string]bool `json:"-"`
 }
 
 // ServerTokenExchange tells the console that a server gets per-caller
@@ -77,4 +81,6 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	// Annotations are the recorded behavior hints by MCP name (SPEC-0028).
+	Annotations map[string]bool `json:"annotations,omitempty"`
 }
