@@ -7,7 +7,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 
 - Watches `MCPServer` resources through a read-only informer cache
   (`internal/gateway/kube`). A server gets a route when the operator reports
-  `Ready=True`, the spec passes validation, and the transport is `http`.
+  `Ready=True` for the current spec (the condition's `observedGeneration`
+  equals the generation, so a changed spec waits for the Operator), the
+  spec passes validation, and the transport is `http`.
   A request for a registered server without a route answers `404` saying
   why: it uses the `stdio` transport, or it is not Ready. A `stdio` server
   can run behind a Streamable HTTP bridge in its own pod and be registered
