@@ -52,21 +52,24 @@ issue one audience per token cannot serve such an agent at all.
   MUST refuse to render with it `true` while `gateway.auth.enabled` is
   `false`, since routes then take no tokens at all (SPEC-0006-R01).
 - **SPEC-0031-R02** When enabled, a token whose `aud` contains
-  `gateway.auth.resourceURL` exactly, and that passes every other check of
-  SPEC-0006-R08, MUST be accepted for a route listed in
-  `gateway.auth.gatewayAudience.routes`, and refused (SPEC-0006-R05) for
-  every other route. The list holds route names and `<namespace>.*`
+  `gateway.auth.resourceURL` exactly but not the route's own URI, and that
+  passes every other check of SPEC-0006-R08, MUST be accepted for a route
+  listed in `gateway.auth.gatewayAudience.routes`, and refused
+  (SPEC-0006-R05) for every other route. The list holds route names and `<namespace>.*`
   patterns; the chart MUST refuse an empty list and the entry `*` when
   enabled. A list that names every route, one by one or by namespace, is
   the operator's explicit choice.
 - **SPEC-0031-R03** A token whose `aud` contains the route's own URI MUST be
-  accepted as today, whether or not the Gateway audience is enabled.
+  accepted as today, whether or not the Gateway audience is enabled and
+  whether or not its `aud` also contains the Gateway audience: the route's
+  own URI takes precedence, and the route list does not apply.
 
 ### Telling them apart
 
 - **SPEC-0031-R04** The policy input MUST include `audience`: `route` when
-  the token was accepted for the route's own URI, `gateway` when only for
-  the Gateway audience.
+  the token's `aud` contains the route's own URI (also when it contains the
+  Gateway audience too), `gateway` when it was accepted for the Gateway
+  audience alone.
 - **SPEC-0031-R05** Audit events MUST record the same value.
 - **SPEC-0031-R06** The Gateway MUST log at start, and the console MUST
   show, that the Gateway audience is enabled and for which routes.
@@ -82,6 +85,11 @@ issue one audience per token cannot serve such an agent at all.
 - Given the same values, when a token for
   `https://mcp.example.com/mcp/team-b.billing` calls that route, then it is
   accepted with `audience: route` (R03).
+- Given the same values and a token whose `aud` lists both
+  `https://mcp.example.com` and `https://mcp.example.com/mcp/team-b.billing`,
+  when it calls `team-b.billing`, which is not listed, then it is accepted
+  with `audience: route`; when it calls `team-b.other`, then it gets `401`,
+  since neither its own URI nor the list covers that route (R02, R03, R04).
 - Given `routes: ["*"]`, or `routes: []`, with the Gateway audience
   enabled, then the chart refuses to render (R02).
 - Given `gatewayAudience.enabled: true` and `gateway.auth.enabled: false`,
