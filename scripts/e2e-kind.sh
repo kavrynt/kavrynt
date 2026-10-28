@@ -443,6 +443,15 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/unreachable-mcp-server \
   --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+# Verifies SPEC-0027-R01: kubectl get shows the failed discovery next to Ready.
+UNREACHABLE_GET="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/unreachable-mcp-server)"
+grep -q 'DISCOVERY' <<<"${UNREACHABLE_GET}" && grep -q 'DiscoveryFailed' <<<"${UNREACHABLE_GET}" ||
+  fail "kubectl get mcpserver does not show the Discovery column: ${UNREACHABLE_GET}"
+# Verifies SPEC-0027-R02: kavryctl list shows the reason in TOOLS.
+UNREACHABLE_TOOLS="$("${TEMP_DIR}/kavryctl" list --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" |
+  awk '$2 == "unreachable-mcp-server" { print $7 }')"
+[ "${UNREACHABLE_TOOLS}" = "DiscoveryFailed" ] ||
+  fail "kavryctl list TOOLS for a failed discovery is '${UNREACHABLE_TOOLS}', want DiscoveryFailed"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/unreachable-mcp-server --wait=true --timeout=60s >/dev/null
 

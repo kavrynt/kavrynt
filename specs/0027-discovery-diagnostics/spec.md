@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Accepted |
 | Owners | @Ravi041 |
 | Created | 2026-10-27 |
 | Issue | #82 |
