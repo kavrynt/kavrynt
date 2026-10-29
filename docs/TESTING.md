@@ -319,8 +319,13 @@ kubectl get mcpservers -A
 kubectl describe mcpserver my-server
 ```
 
-If `ToolsDiscovered` is `False`, the condition message says why. If the
-server needs an API key, see `spec.credential` in the
+`READY True` means the Gateway routes the server, not that it answers.
+Check the `DISCOVERY` column: if it is `DiscoveryFailed`, the
+`ToolsDiscovered` message in `kubectl describe` names the cause and what to
+check, for example no ready pods behind the Service, a host that does not
+resolve, or a wrong path (`HTTP 404 for path "/"`; many MCP servers serve at
+`/mcp`). See [Discovery messages](components/operator/README.md#discovery-messages).
+If the server needs an API key, see `spec.credential` in the
 [Gateway docs](components/gateway/README.md#upstream-credentials).
 
 If the server keeps MCP sessions in memory (most servers built with the

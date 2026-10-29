@@ -19,13 +19,33 @@ keep the last tools discovered from the same endpoint, or none.
 ## Diagnosis
 
 ```bash
+kubectl -n <namespace> get mcpserver <name>   # the Discovery column
 kubectl -n <namespace> get mcpserver <name> -o jsonpath='{range .status.conditions[?(@.type=="ToolsDiscovered")]}{.reason}: {.message}{"\n"}{end}'
 ```
 
-- `DiscoveryFailed`: the message is the error of the MCP `initialize` or
-  `tools/list` call, such as an HTTP status, a timeout, a refused
-  address (link-local, cloud metadata, or loopback), or an answer that
-  is not a valid tool list.
+- `DiscoveryFailed`: the message names the cause of the failed MCP
+  `initialize` or `tools/list` call and what to check
+  ([all messages](../components/operator/README.md#discovery-messages)):
+  - `cannot connect to <host>:<port>`: the Service has no ready pods, or
+    nothing listens on that port. Check
+    `kubectl -n <namespace> get endpointslices -l kubernetes.io/service-name=<service>`
+    and the pods' readiness.
+  - `host <host> does not resolve`: the Service name or namespace in
+    `spec.endpoint` is wrong, or the Service does not exist.
+  - `HTTP 404 for path "<path>"`: the server serves MCP at another path,
+    often `/mcp`.
+  - `HTTP 401` or `HTTP 403`: the server needs a credential. Set
+    `spec.credential` for a stored key, or `spec.tokenExchange` for the
+    caller's own token.
+  - `the egress policy refuses <kind> addresses`: the endpoint resolves to a
+    link-local, cloud metadata, or loopback address, which the Operator and
+    the Gateway never connect to. Point it at the server's Service.
+  - `no answer ... within 10s`: the server did not answer `initialize` in
+    time, or the connection never opened, for example because a
+    NetworkPolicy in the server's namespace drops the Operator's traffic.
+  - `does not look like an MCP Streamable HTTP endpoint`: something
+    answered, but not with MCP JSON-RPC; the endpoint may point at a web page
+    or another service.
 - `CredentialUnavailable`: `spec.credential` is set but the upstream
   credentials Secret has no key `<namespace>.<name>`, or its
   `<namespace>.<name>.origin` does not match the endpoint. The message names

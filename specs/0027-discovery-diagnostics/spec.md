@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-27 |
 | Issue | #82 |
@@ -66,8 +66,8 @@ Developers read `READY True` as "my agents can use this".
 
 ### Messages
 
-Each failed discovery MUST set a `ToolsDiscovered` message that names the
-cause and the next step:
+A discovery that fails for one of these causes MUST set a `ToolsDiscovered`
+message that names the cause and the next step:
 
 - **SPEC-0027-R04** An HTTP `404` to `initialize`: the path that answered
   `404`, and that many MCP frameworks serve at `/mcp`.
@@ -84,6 +84,9 @@ cause and the next step:
 - **SPEC-0027-R10** An answer that is not MCP (not JSON-RPC, or not
   `application/json` or `text/event-stream`): that the endpoint does not
   look like an MCP Streamable HTTP endpoint.
+
+Other failures (another HTTP status, a JSON-RPC error, an oversized answer)
+keep a short message that names the MCP method and what went wrong.
 
 ### Bounds
 

@@ -457,8 +457,48 @@ UNREACHABLE_TOOLS="$("${TEMP_DIR}/kavryctl" list --context "${KUBE_CONTEXT}" -n 
   awk '$2 == "unreachable-mcp-server" { print $7 }')"
 [ "${UNREACHABLE_TOOLS}" = "DiscoveryFailed" ] ||
   fail "kavryctl list TOOLS for a failed discovery is '${UNREACHABLE_TOOLS}', want DiscoveryFailed"
+# Verifies SPEC-0027-R06: the message names the host that does not resolve.
+UNREACHABLE_MESSAGE="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/unreachable-mcp-server \
+  -o jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].message}')"
+grep --fixed-strings --quiet "host unreachable-mcp-server.${E2E_NAMESPACE}.svc.cluster.local does not resolve" <<<"${UNREACHABLE_MESSAGE}" ||
+  fail "the message for a host that does not resolve is '${UNREACHABLE_MESSAGE}'"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/unreachable-mcp-server --wait=true --timeout=60s >/dev/null
+
+# Verifies SPEC-0027-R05: a Service without ready pods is routed, and its
+# message names the host and port and says to check for ready pods.
+log "verifying the discovery message for a Service without ready pods"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Service
+metadata:
+  name: no-pods-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: no-pods-mcp-server
+  ports:
+    - port: 8080
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: no-pods-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://no-pods-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080/mcp
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/no-pods-mcp-server --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/no-pods-mcp-server \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+NO_PODS_MESSAGE="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/no-pods-mcp-server \
+  -o jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].message}')"
+grep --fixed-strings --quiet "cannot connect to no-pods-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080; check that the Service has ready pods" <<<"${NO_PODS_MESSAGE}" ||
+  fail "the message for a Service without ready pods is '${NO_PODS_MESSAGE}'"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  delete mcpserver/no-pods-mcp-server service/no-pods-mcp-server --wait=true --timeout=60s >/dev/null
 
 log "starting Gateway port-forward"
 start_gateway_port_forward
@@ -648,6 +688,15 @@ METADATA_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -
 [ "${METADATA_STATUS}" = "502" ] ||
   fail "Gateway answered a request to a metadata endpoint with HTTP ${METADATA_STATUS}, want 502"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}"   wait mcpserver/metadata-endpoint   --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+# Verifies SPEC-0027-R07 and SPEC-0027-R11: the message names the kind of
+# address the egress policy refuses, and not the address.
+METADATA_MESSAGE="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/metadata-endpoint \
+  -o jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].message}')"
+grep --fixed-strings --quiet "the egress policy refuses cloud metadata addresses for MCP endpoints" <<<"${METADATA_MESSAGE}" ||
+  fail "the message for a cloud metadata endpoint is '${METADATA_MESSAGE}'"
+if grep --fixed-strings --quiet "169.254.169.254" <<<"${METADATA_MESSAGE}"; then
+  fail "the message for a cloud metadata endpoint contains the address: ${METADATA_MESSAGE}"
+fi
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}"   delete mcpserver/metadata-endpoint --wait=true --timeout=60s >/dev/null
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${METADATA_ID}\") == null" 30
 

@@ -284,7 +284,7 @@ func TestListToolsErrorsNeverEchoServerText(t *testing.T) {
 				http.Error(w, "upstream-secret", http.StatusUnauthorized)
 				return true
 			},
-			want: "initialize returned HTTP 401",
+			want: "initialize returned HTTP 401; the server needs a credential: set spec.credential for a stored key, or spec.tokenExchange for the caller's own token",
 		},
 		{
 			name: "redirect is not followed",
@@ -323,7 +323,7 @@ func TestListToolsErrorsNeverEchoServerText(t *testing.T) {
 				fmt.Fprint(w, "<html>")
 				return true
 			},
-			want: "initialize: unsupported response content type",
+			want: "initialize: the answer is neither application/json nor text/event-stream; the endpoint does not look like an MCP Streamable HTTP endpoint",
 		},
 		{
 			name: "invalid session ID",

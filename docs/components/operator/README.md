@@ -96,7 +96,10 @@ version in the `REPORTED` column.
   example because it requires credentials) or cannot be reached keeps routing;
   `ToolsDiscovered` is `False` with reason `DiscoveryFailed`, the last known
   tools are kept, and the Operator retries with backoff (30 s, doubling, up to
-  the refresh interval).
+  the refresh interval). `kubectl get mcpservers` shows the
+  `ToolsDiscovered` reason in its `Discovery` column, next to `Ready`, and
+  `kavryctl list` shows it in `TOOLS` (see
+  [Discovery messages](#discovery-messages)).
 - The Operator sends no credentials except a server's stored upstream
   credential (`spec.credential`), only to its pinned origin, and follows no
   redirects.
@@ -113,6 +116,29 @@ version in the `REPORTED` column.
   not reach MCP servers, disable discovery (`config.toolDiscovery.enabled:
   false` in the operator subchart, `operator.config.toolDiscovery.enabled` in
   the umbrella chart).
+
+### Discovery messages
+
+A `DiscoveryFailed` message names the cause and what to check (SPEC-0027).
+It is written by the Operator from `spec.endpoint`'s host, port, and path,
+never from the server's answer, and never holds a query string, a header
+value, a credential, or an address the host resolved to. It is at most 512
+characters.
+
+| Cause | Message (for `http://demo.ns.svc:8080/`) |
+| --- | --- |
+| No ready pods behind the Service, or nothing listening | `initialize: cannot connect to demo.ns.svc:8080; check that the Service has ready pods listening on port 8080` |
+| The host does not resolve | `initialize: host demo.ns.svc does not resolve; check the Service name and namespace in spec.endpoint` |
+| Wrong path | `initialize returned HTTP 404 for path "/"; check the path in spec.endpoint, many MCP frameworks serve at /mcp` |
+| The server needs a credential | `initialize returned HTTP 401; the server needs a credential: set spec.credential for a stored key, or spec.tokenExchange for the caller's own token` (also for `403`) |
+| An address the egress policy refuses | `initialize: the egress policy refuses cloud metadata addresses for MCP endpoints, and the endpoint resolves to one` (or `link-local`, `loopback`, `unspecified`, `multicast`) |
+| No answer in time | `initialize: no answer from demo.ns.svc:8080 within 10s` |
+| Not an MCP endpoint | `initialize: the answer is neither application/json nor text/event-stream; the endpoint does not look like an MCP Streamable HTTP endpoint` |
+| The server's TLS certificate is not trusted | `initialize: the TLS certificate of demo.ns.svc:443 could not be verified` |
+
+Other failures keep short messages such as `tools/list returned HTTP 500`,
+`tools/list returned JSON-RPC error -32603`, or
+`initialize: the request to demo.ns.svc:8080 failed`.
 
 ## Kavrynt Cloud sync
 

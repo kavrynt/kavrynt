@@ -72,7 +72,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
   into `status.tools`, with their MCP behavior hints, and sets a
   `ToolsDiscovered` condition that never affects `Ready`, and records the reported `serverInfo` name and version in
-  `status.serverInfo`.
+  `status.serverInfo`. A failed discovery shows in `kubectl get`'s
+  `Discovery` column and `kavryctl list`'s `TOOLS`, with a message that
+  names the cause and never quotes the server or a resolved address
+  (SPEC-0027).
 - Opt-in Operator connector (`cloud.enabled`) sends full inventory snapshots
   (servers and tools) to Kavrynt Cloud `POST /v1/sync/mcpservers` with a
   cluster token from a Secret. Traffic rollups are not uploaded yet.
