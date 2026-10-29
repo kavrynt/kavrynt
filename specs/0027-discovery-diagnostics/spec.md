@@ -66,8 +66,10 @@ Developers read `READY True` as "my agents can use this".
 
 ### Messages
 
-Each failed discovery MUST set a `ToolsDiscovered` message that names the
-cause and the next step:
+A discovery that fails for one of these causes MUST set a `ToolsDiscovered`
+message that names the cause and the next step. Other failures (another
+HTTP status, a JSON-RPC error, an oversized answer) keep a short message
+that names the MCP method and what went wrong, within R11:
 
 - **SPEC-0027-R04** An HTTP `404` to `initialize`: the path that answered
   `404`, and that many MCP frameworks serve at `/mcp`.
