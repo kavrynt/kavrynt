@@ -118,11 +118,21 @@ func New(version string, transport http.RoundTripper) *Client {
 // A valid pod sends every request of the session to that address, with the
 // endpoint's host in Host (SPEC-0026-R09). header is sent with every
 // request, for a server's stored credential (SPEC-0011-R08); it may be nil.
+// Every failure is an *Error.
 func (c *Client) ListTools(ctx context.Context, endpoint string, pod netip.AddrPort, header http.Header) (Result, error) {
+	start := time.Now()
 	ctx, cancel := context.WithTimeout(ctx, Timeout)
 	defer cancel()
+	deadline, _ := ctx.Deadline()
 
-	s := &session{client: c, endpoint: endpoint, pod: pod, header: header}
+	s := &session{
+		client:   c,
+		endpoint: endpoint,
+		target:   parseTarget(endpoint),
+		waited:   deadline.Sub(start).Round(100 * time.Millisecond),
+		pod:      pod,
+		header:   header,
+	}
 	var initialized struct {
 		ProtocolVersion string `json:"protocolVersion"`
 		Capabilities    struct {
@@ -344,8 +354,11 @@ func CanonicalTools(tools []kavryntv1alpha1.MCPServerTool) []kavryntv1alpha1.MCP
 }
 
 type session struct {
-	client          *Client
-	endpoint        string
+	client   *Client
+	endpoint string
+	target   target
+	// waited is how long the session may take, for timeout messages.
+	waited          time.Duration
 	pod             netip.AddrPort
 	header          http.Header
 	sessionID       string
@@ -366,34 +379,34 @@ func (s *session) call(ctx context.Context, method string, params any, result an
 	id := s.nextID
 	body, err := json.Marshal(map[string]any{"jsonrpc": "2.0", "id": id, "method": method, "params": params})
 	if err != nil {
-		return err
+		return s.otherError(method, fmt.Sprintf("%s: cannot encode the request", method))
 	}
 	resp, err := s.send(ctx, http.MethodPost, body)
 	if err != nil {
-		return fmt.Errorf("%s: %w", method, err)
+		return s.transportError(method, err)
 	}
 	defer resp.Body.Close()
 
 	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("%s returned HTTP %d", method, resp.StatusCode)
+		return &Error{method: method, cause: causeStatus, target: s.target, status: resp.StatusCode}
 	}
 	if method == "initialize" {
 		sessionID := resp.Header.Get("Mcp-Session-Id")
 		if !validSessionID(sessionID) {
-			return fmt.Errorf("%s returned an invalid session ID", method)
+			return s.otherError(method, method+" returned an invalid session ID")
 		}
 		s.sessionID = sessionID
 	}
 
 	message, err := readResponse(resp, id)
 	if err != nil {
-		return fmt.Errorf("%s: %w", method, err)
+		return s.answerError(method, err)
 	}
 	if message.Error != nil {
-		return fmt.Errorf("%s returned JSON-RPC error %d", method, message.Error.Code)
+		return s.otherError(method, fmt.Sprintf("%s returned JSON-RPC error %d", method, message.Error.Code))
 	}
 	if err := json.Unmarshal(message.Result, result); err != nil {
-		return fmt.Errorf("%s returned an invalid result", method)
+		return s.otherError(method, method+" returned an invalid result")
 	}
 	return nil
 }
@@ -477,13 +490,13 @@ func readResponse(resp *http.Response, id int64) (rpcResponse, error) {
 		}
 		var message rpcResponse
 		if json.Unmarshal(data, &message) != nil || !matchesID(message.ID, id) {
-			return rpcResponse{}, errors.New("invalid JSON-RPC response")
+			return rpcResponse{}, errNotJSONRPC
 		}
 		return message, nil
 	case "text/event-stream":
 		return readEventStream(body, id)
 	default:
-		return rpcResponse{}, errors.New("unsupported response content type")
+		return rpcResponse{}, errContentType
 	}
 }
 
@@ -524,7 +537,7 @@ func readEventStream(body *cappedReader, id int64) (rpcResponse, error) {
 	if message, ok := dispatch(); ok {
 		return message, nil
 	}
-	return rpcResponse{}, errors.New("no JSON-RPC response in event stream")
+	return rpcResponse{}, errNoStreamReply
 }
 
 func matchesID(raw json.RawMessage, id int64) bool {

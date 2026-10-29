@@ -18,7 +18,14 @@
   (`*net.OpError` with op `dial`, R05); then the answer: HTTP `404` to
   `initialize` (R04), `401` or `403` (R08), a response that is not
   `application/json` or `text/event-stream` or holds no matching JSON-RPC
-  response (R10). Other failures keep today's terse messages.
+  response (R10). Other answers keep today's terse messages (an HTTP
+  status, a JSON-RPC error code, an oversized response).
+- **Deviations.** Two cases the spec does not list: a TLS certificate that
+  cannot be verified gets its own message, and any other transport failure
+  says `the request to <host>:<port> failed` instead of today's text, which
+  quoted the resolved address and the full URL (R11). The timeout message
+  names the session's actual wait (its deadline minus its start), which is
+  `Timeout` unless the caller's context ends sooner.
 - **Egress.** `egress.Control` returns `*egress.RefusedError{Kind}`, with
   the kinds `cloud metadata` (169.254.169.254, `fd00:ec2::254`,
   100.100.100.200), `link-local`, `loopback`, `unspecified`, and

@@ -36,7 +36,10 @@ The `Ready` condition's reason says why:
 - `AudienceNotAllowed`: `spec.tokenExchange.audience` is not listed for the
   namespace in `global.tokenExchangeAudiences`.
 
-`ToolsDiscovered=False` alone never makes a server not Ready.
+`ToolsDiscovered=False` alone never makes a server not Ready: a server can
+be `Ready` (routed) while it does not answer. The `Discovery` column of
+`kubectl get mcpservers` shows that case; see
+[KavryntMCPToolDiscoveryFailing](KavryntMCPToolDiscoveryFailing.md).
 
 ## Mitigation
 
