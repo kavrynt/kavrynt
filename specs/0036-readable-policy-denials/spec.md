@@ -7,7 +7,7 @@
 | Created | 2026-10-31 |
 | Issue | to be opened |
 | ADRs | [ADR-0003](../../docs/ADR-0003-Runtime-Authorization.md) |
-| Supersedes | SPEC-0012-R08, only its `403` for denied JSON-RPC requests |
+| Supersedes | SPEC-0012-R08 and SPEC-0012-R12, only their `403` for denied JSON-RPC requests |
 
 ## Summary
 

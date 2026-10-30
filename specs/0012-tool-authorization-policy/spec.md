@@ -105,14 +105,17 @@ destructive tool off limits, or allow read-only methods only.
 - **SPEC-0012-R12** With authentication and the per-client allow-list
   example enabled, an allowed client's `tools/call` MUST succeed and
   another client's MUST get `403`; replacing the ConfigMap with an invalid
-  policy MUST leave the previous decisions in force.
+  policy MUST leave the previous decisions in force. Superseded by SPEC-0036
+  for the status: the other client's `tools/call` gets `200` with the
+  JSON-RPC error.
 
 ## Acceptance criteria
 
 - Given the allow-list policy permitting client `support-agent` to call
   `search` on `team-a.search`, when that client calls it, then the call is
-  proxied; when client `etl` calls it, then `403 denied by policy: tool not
-  allowed for client` and outcome `denied` (R07, R08, R12).
+  proxied; when client `etl` calls it, then the JSON-RPC error `denied by
+  policy: tool not allowed for client` (with `200` since SPEC-0036, `403`
+  before) and outcome `denied` (R07, R08, R12).
 - Given a policy file with a syntax error at start-up, then the Gateway
   exits with the file and line (R03).
 - Given a valid policy in force, when the ConfigMap is updated with a
