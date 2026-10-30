@@ -1,5 +1,6 @@
-# CodeRabbit pull request reviews. Reviews are advice: the merge gate is
-# every CI check passing (CLAUDE.md, "Merging"), never a review approval.
+# CodeRabbit pull request reviews. A review never blocks a merge by itself,
+# but every comment is worked before merging: verified against the code,
+# fixed when it holds, and answered on its thread (CLAUDE.md, "Merging").
 # Schema: https://coderabbit.ai/integrations/schema.v2.json
 # yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
 language: en-US
