@@ -320,7 +320,11 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if len(servers.Items) == 0 {
-		fmt.Fprintln(stdout, "no MCPServers found")
+		if *allNamespaces {
+			fmt.Fprintln(stdout, "no MCPServers found")
+		} else {
+			fmt.Fprintln(stdout, emptyListMessage(ctx, c, namespace))
+		}
 		return 0
 	}
 
@@ -406,6 +410,17 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
 	fs.SetOutput(stderr)
 	return fs
+}
+
+// emptyListMessage names the namespace an empty list searched and how to
+// search all of them, with the count elsewhere when the user may list it
+// (SPEC-0037). A refused cluster-wide list only leaves the count out.
+func emptyListMessage(ctx context.Context, c client.Client, namespace string) string {
+	var all kavryntv1alpha1.MCPServerList
+	if err := c.List(ctx, &all); err == nil && len(all.Items) > 0 {
+		return fmt.Sprintf("no MCPServers found in namespace %s; %d in other namespaces: kavryctl list -A", namespace, len(all.Items))
+	}
+	return fmt.Sprintf("no MCPServers found in namespace %s (kavryctl list -A lists every namespace)", namespace)
 }
 
 func printUsage(w io.Writer) {
