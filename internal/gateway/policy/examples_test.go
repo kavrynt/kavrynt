@@ -76,6 +76,20 @@ func TestExamplePolicies(t *testing.T) {
 		{"read-only-tools.rego", hinted(search, true, map[string]bool{}), false},
 		{"read-only-tools.rego", untrusted(hinted(search, true, map[string]bool{"readOnlyHint": true})), false},
 		{"read-only-tools.rego", untrusted(list), true},
+
+		// Fails closed: only tools discovered as read-only or explicitly
+		// non-destructive are open to every client.
+		{"deny-destructive-tools.rego", authenticated(list, "research-agent"), true},
+		{"deny-destructive-tools.rego", authenticated(stream, "research-agent"), true},
+		{"deny-destructive-tools.rego", authenticated(hinted(search, true, map[string]bool{"readOnlyHint": true}), "research-agent"), true},
+		{"deny-destructive-tools.rego", authenticated(hinted(search, true, map[string]bool{"readOnlyHint": false, "destructiveHint": false}), "research-agent"), true},
+		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, true, map[string]bool{"destructiveHint": true}), "research-agent"), false},
+		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, true, map[string]bool{}), "research-agent"), false},
+		// Discovery failing (a server pod restarting): no hints, not discovered.
+		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, false, map[string]bool{}), "research-agent"), false},
+		{"deny-destructive-tools.rego", authenticated(hinted(search, false, map[string]bool{}), "research-agent"), false},
+		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, true, map[string]bool{"destructiveHint": true}), "ops-agent"), true},
+		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, false, map[string]bool{}), "ops-agent"), true},
 	}
 	engines := map[string]*Engine{}
 	for _, tc := range cases {

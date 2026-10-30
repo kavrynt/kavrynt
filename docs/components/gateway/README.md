@@ -311,8 +311,20 @@ cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
 [`examples/policy`](../../examples/policy) (allow authenticated callers, a
-per-client tool allow-list, read-only methods, and read-only tools of
-trusted servers by their reported hints).
+per-client tool allow-list, read-only methods, read-only tools of trusted
+servers by their reported hints, and tools that may be destructive only for
+listed clients).
+
+**Write hint-based policies to fail closed.** While a server's discovery is
+failing, for example for the minute or two its pod takes to restart, every
+tool has `tool_annotations: {}` and `tool_discovered: false`. A deny rule
+such as `input.tool_annotations.destructiveHint == true` then matches
+nothing and the destructive tools are allowed, and listed with
+`filterToolsList`. Allow on hints instead (`tool_discovered` and
+`readOnlyHint == true`, or `destructiveHint == false`) and treat everything
+else as unknown, as
+[`deny-destructive-tools.rego`](../../examples/policy/deny-destructive-tools.rego)
+does. An absent `destructiveHint` means `true` in MCP.
 
 **Filtered tool lists.** With `--policy-filter-tools-list` (chart:
 `gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
