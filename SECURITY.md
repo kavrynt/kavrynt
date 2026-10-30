@@ -17,8 +17,8 @@ available. Reporters are credited unless they ask not to be.
 
 ## Supported versions
 
-Kavrynt is in beta. Only the latest `0.0.x` prerelease receives security
-fixes. Fixes are not backported.
+Kavrynt is in beta. Only the latest prerelease (`1.0.0-beta.N`) receives
+security fixes. Fixes are not backported.
 
 ## Known limitations
 
