@@ -150,3 +150,31 @@ func TestPolicyDecidesOnTheVerifiedCaller(t *testing.T) {
 		t.Fatalf("etl: %d, want 403", rr.Code)
 	}
 }
+
+// Verifies SPEC-0012-R09: the policy decides only on a message every reader
+// reads the same way. Go's encoding/json matches keys case-insensitively and
+// keeps the last duplicate; MCP servers in other languages match exactly or
+// keep the first. A body whose decision fields could be read two ways is
+// refused before the policy runs and never forwarded.
+func TestPolicyRefusesAmbiguousMessages(t *testing.T) {
+	handler, calls := demoHandler(t, okResponse)
+	enablePolicy(t, handler, testPolicy)
+	for name, body := range map[string]string{
+		"method in another case":  `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"},"Method":"tools/list"}`,
+		"method twice":            `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"},"method":"tools/list"}`,
+		"params in Unicode folds": `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all"},"paramſ":{"name":"echo"}}`,
+		"name in another case":    `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","Name":"echo"}}`,
+		"name twice":              `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"delete_all","name":"echo"}}`,
+	} {
+		if rr := rpc(handler, body, nil); rr.Code != http.StatusBadRequest {
+			t.Errorf("%s: %d, want 400", name, rr.Code)
+		}
+	}
+	if *calls != 0 {
+		t.Fatalf("%d ambiguous requests reached the MCP server", *calls)
+	}
+	// Unrelated members, in any case, stay allowed.
+	if rr := rpc(handler, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{},"_meta":{}},"Extra":1}`, nil); rr.Code != http.StatusOK || *calls != 1 {
+		t.Fatalf("unambiguous call: %d after %d upstream calls", rr.Code, *calls)
+	}
+}
