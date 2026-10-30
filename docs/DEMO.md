@@ -65,7 +65,7 @@ make demo-down          # delete the cluster
       with the password step 1 prints.
 - [ ] Decide whether to connect a real agent (see below), and test it on the
       same network.
-- [ ] Confirm `1.0.0-beta.2` is published (`gh release view v1.0.0-beta.2`)
+- [ ] Confirm `1.0.0-beta.3` is published (`gh release view v1.0.0-beta.3`)
       and its `make e2e-release` run passed. See
       [Questions to prepare for](#questions-to-prepare-for).
 

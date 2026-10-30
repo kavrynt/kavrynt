@@ -20,7 +20,7 @@ topologySpreadConstraints: []
 
 image:
   repository: kavrynt/gateway
-  tag: 1.0.0-beta.2
+  tag: 1.0.0-beta.3
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []

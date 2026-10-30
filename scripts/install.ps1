@@ -5,7 +5,7 @@ param(
 )
 
 if ([string]::IsNullOrWhiteSpace($Version)) {
-    $Version = "v1.0.0-beta.2"
+    $Version = "v1.0.0-beta.3"
 }
 if ([string]::IsNullOrWhiteSpace($InstallDir)) {
     $InstallDir = Join-Path $HOME ".kavrynt\bin"

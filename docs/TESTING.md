@@ -58,7 +58,7 @@ kubectl auth can-i create customresourcedefinitions   # expect: yes
 ## 2. Install Kavrynt
 
 ```bash
-export KAVRYNT_VERSION=1.0.0-beta.2
+export KAVRYNT_VERSION=1.0.0-beta.3
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
@@ -271,8 +271,8 @@ Expected for the denied call:
 chained with SHA-256. Install `kavryctl` and verify the chain:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/v1.0.0-beta.2/scripts/install.sh \
-  | KAVRYNT_VERSION=v1.0.0-beta.2 sh
+curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/v1.0.0-beta.3/scripts/install.sh \
+  | KAVRYNT_VERSION=v1.0.0-beta.3 sh
 export PATH="$HOME/.kavrynt/bin:$PATH"
 
 kubectl -n kavrynt-system logs -l app.kubernetes.io/name=gateway --prefix=false --tail=-1 \
