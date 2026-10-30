@@ -321,11 +321,13 @@ end-to-end job. All checks must be green.
 A pull request can be merged when:
 
 1. CI is green, including the Kind end-to-end job;
-2. new behavior has tests that run without network access, citing their
+2. every CodeRabbit comment is answered: fixed, or replied to with the
+   reason it does not apply;
+3. new behavior has tests that run without network access, citing their
    spec requirements;
-3. docs describe only what the code actually does;
-4. every commit is signed off;
-5. a maintainer has approved it.
+4. docs describe only what the code actually does;
+5. every commit is signed off;
+6. a maintainer has approved it.
 
 ### Stacking large changes
 
@@ -337,6 +339,9 @@ independently reviewable and each leaving `develop` green. A spec's
 
 - Push follow-up commits to the same branch; the pull request updates
   automatically.
+- CodeRabbit reviews every pull request and each new commit. Check each of
+  its findings against the code, fix the ones that hold, and reply on every
+  thread with the fixing commit or why the finding does not apply.
 - Prefer new commits over force-pushes during active review so reviewers can
   see what changed. Never force-push `develop` or `main`.
 - Sign off new commits too (`git commit -s`).
