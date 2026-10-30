@@ -3,7 +3,9 @@ package audit
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"io"
+	"regexp"
 	"strings"
 	"sync"
 	"testing"
@@ -54,6 +56,37 @@ func TestWriterChainsAndFlushes(t *testing.T) {
 	}
 	if testutil.ToFloat64(w.written) != 20 {
 		t.Fatal("events written not counted")
+	}
+}
+
+// Verifies SPEC-0035-R04: every line is the event's canonical form with the
+// hash member last, so verifiers can hash the line as written.
+func TestWriterPutsTheHashLast(t *testing.T) {
+	out := &syncBuffer{}
+	w, err := New(out, "gw-a/1", Reject, 10)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for i := 0; i < 3; i++ {
+		ok := w.Reserve()
+		w.Emit(auditv1.Event{RequestID: "r", Decision: auditv1.DecisionAllow, FilteredTools: i, Audience: "gateway"}, ok)
+	}
+	if err := w.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	hashLast := regexp.MustCompile(`,"hash":"([0-9a-f]{64})"}$`)
+	for _, line := range strings.Split(strings.TrimSpace(out.String()), "\n") {
+		m := hashLast.FindStringSubmatchIndex(line)
+		if m == nil {
+			t.Fatalf("hash is not the last member: %s", line)
+		}
+		var e auditv1.Event
+		if err := json.Unmarshal([]byte(line), &e); err != nil {
+			t.Fatal(err)
+		}
+		if line[:m[0]]+"}" != string(auditv1.Canonical(e)) {
+			t.Fatalf("line without its hash is not the canonical form:\n%s\n%s", line, auditv1.Canonical(e))
+		}
 	}
 }
 

@@ -2,9 +2,14 @@ package v1
 
 import (
 	"bufio"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"fmt"
 	"io"
+	"reflect"
+	"regexp"
+	"slices"
 	"strings"
 )
 
@@ -24,6 +29,74 @@ type Summary struct {
 	Events    int
 	Instances int
 	Breaks    []Break
+	// UnknownFields counts events with members this version does not know:
+	// their hashes cover them, but they were not interpreted (SPEC-0035-R05).
+	UnknownFields int
+}
+
+// hashMember is the last member of every line the Gateway writes
+// (SPEC-0035-R04).
+var hashMember = regexp.MustCompile(`,"hash":"[0-9a-f]{64}"}$`)
+
+// knownFields are the members of Event, from its JSON tags.
+var knownFields = func() map[string]bool {
+	known := map[string]bool{}
+	t := reflect.TypeOf(Event{})
+	for i := range t.NumField() {
+		name, _, _ := strings.Cut(t.Field(i).Tag.Get("json"), ",")
+		known[name] = true
+	}
+	return known
+}()
+
+// verifiesAsWritten reports whether line, without its hash member, hashes
+// with e.PrevHash to e.Hash: the bytes the Gateway hashed, whatever members
+// they hold (SPEC-0035-R01).
+func verifiesAsWritten(line string, e Event) bool {
+	loc := hashMember.FindStringIndex(line)
+	if loc == nil {
+		return false
+	}
+	sum := sha256.New()
+	sum.Write([]byte(e.PrevHash))
+	sum.Write([]byte(line[:loc[0]]))
+	sum.Write([]byte("}"))
+	return hex.EncodeToString(sum.Sum(nil)) == e.Hash
+}
+
+// unknownFields returns the top-level members of line that Event does not
+// have, sorted.
+func unknownFields(line string) []string {
+	var members map[string]json.RawMessage
+	if json.Unmarshal([]byte(line), &members) != nil {
+		return nil
+	}
+	var unknown []string
+	for name := range members {
+		if !knownFields[name] {
+			unknown = append(unknown, name)
+		}
+	}
+	slices.Sort(unknown)
+	return unknown
+}
+
+// unknownProblem explains a break of an event with unknown members, naming
+// at most five of them, quoted and bounded (SPEC-0035-R03).
+func unknownProblem(unknown []string) string {
+	names := make([]string, 0, 5)
+	for _, name := range unknown[:min(len(unknown), 5)] {
+		if len(name) > 64 {
+			name = name[:64] + "..."
+		}
+		names = append(names, fmt.Sprintf("%q", name))
+	}
+	if len(unknown) > 5 {
+		names = append(names, fmt.Sprintf("and %d more", len(unknown)-5))
+	}
+	return "hash does not match, and the event has fields this kavryctl does not know (" +
+		strings.Join(names, ", ") + "), so it cannot tell an edit from a rewrite on the way: " +
+		"verify the original lines with the Gateway's release or a newer kavryctl"
 }
 
 // Verify reads lines from r, skips lines that are not version 1 audit
@@ -65,7 +138,17 @@ func Verify(r io.Reader) (Summary, error) {
 		} else if e.PrevHash != s.hash {
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "prev_hash does not match the previous event"})
 		}
-		if ComputeHash(e) != e.Hash {
+		unknown := unknownFields(line)
+		if len(unknown) > 0 {
+			summary.UnknownFields++
+		}
+		// The written line first, then the known fields re-encoded, for
+		// lines a collector rewrote (SPEC-0035-R02).
+		switch {
+		case verifiesAsWritten(line, e), ComputeHash(e) == e.Hash:
+		case len(unknown) > 0:
+			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, unknownProblem(unknown)})
+		default:
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "hash does not match the event (altered)"})
 		}
 		s.seq, s.hash = e.Seq, e.Hash

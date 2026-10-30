@@ -2,6 +2,8 @@ package v1
 
 import (
 	"bytes"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"strings"
 	"testing"
@@ -100,5 +102,97 @@ func TestVerifyCannotDetectTruncationOrAFullRewrite(t *testing.T) {
 	}
 	if s, err := Verify(strings.NewReader(lines(rewritten))); err != nil || len(s.Breaks) != 0 {
 		t.Fatalf("rewritten chain: %+v, %v", s, err)
+	}
+}
+
+// newerChain is a chain written by a Gateway whose events have a field this
+// version does not know, hashed over the bytes as written.
+func newerChain(instance string, n int) []string {
+	prev := GenesisHash
+	var lines []string
+	for i := 1; i <= n; i++ {
+		e := Event{Type: Type, Time: "2026-10-31T12:00:00.000Z", Instance: instance, Seq: uint64(i), RequestID: "r",
+			Route: Route{Namespace: "team-a", Name: "search"}, Decision: DecisionAllow, Outcome: "ok", Status: 200, PrevHash: prev}
+		canonical := strings.Replace(string(Canonical(e)), `"issuer":"",`, `"issuer":"","future_field":"x",`, 1)
+		sum := sha256.Sum256([]byte(prev + canonical))
+		hash := hex.EncodeToString(sum[:])
+		lines = append(lines, strings.TrimSuffix(canonical, "}")+`,"hash":"`+hash+`"}`)
+		prev = hash
+	}
+	return lines
+}
+
+// reencode rewrites a line the way a collector might: members sorted by
+// name, so "hash" is no longer last.
+func reencode(t *testing.T, line string) string {
+	t.Helper()
+	var members map[string]any
+	if err := json.Unmarshal([]byte(line), &members); err != nil {
+		t.Fatal(err)
+	}
+	data, err := json.Marshal(members)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return string(data)
+}
+
+// Verifies SPEC-0035-R01 and SPEC-0035-R05: events with a field this
+// version does not know verify as written, and are counted.
+func TestVerifyAcceptsNewerEventsAsWritten(t *testing.T) {
+	newer := newerChain("gw-new/1", 3)
+	summary, err := Verify(strings.NewReader(strings.Join(newer, "\n") + "\n"))
+	if err != nil || summary.Events != 3 || len(summary.Breaks) != 0 || summary.UnknownFields != 3 {
+		t.Fatalf("newer chain: %+v, %v", summary, err)
+	}
+	old := chain("gw-old/1", 2)
+	if s, _ := Verify(strings.NewReader(lines(old))); len(s.Breaks) != 0 || s.UnknownFields != 0 {
+		t.Fatalf("current chain: %+v", s)
+	}
+}
+
+// Verifies SPEC-0035-R02: a chain of known fields whose members a collector
+// reordered still verifies by re-encoding.
+func TestVerifyFallsBackToReencoding(t *testing.T) {
+	var rewritten []string
+	for _, e := range chain("gw-a/1", 3) {
+		data, _ := json.Marshal(e)
+		rewritten = append(rewritten, reencode(t, string(data)))
+	}
+	if s, err := Verify(strings.NewReader(strings.Join(rewritten, "\n"))); err != nil || s.Events != 3 || len(s.Breaks) != 0 {
+		t.Fatalf("reordered chain: %+v, %v", s, err)
+	}
+}
+
+// Verifies SPEC-0035-R03: an event with unknown fields that does not
+// verify is a break that names them and the remedy, never "altered"; an
+// event without unknown fields is still reported as altered.
+func TestUnknownFieldsAreNotCalledAltered(t *testing.T) {
+	newer := newerChain("gw-new/1", 3)
+	for name, broken := range map[string]string{
+		"rewritten": reencode(t, newer[1]),
+		"edited":    strings.Replace(newer[1], `"decision":"allow"`, `"decision":"deny"`, 1),
+	} {
+		s, _ := Verify(strings.NewReader(strings.Join([]string{newer[0], broken, newer[2]}, "\n")))
+		if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 {
+			t.Fatalf("%s: breaks %+v, want one at seq 2", name, s.Breaks)
+		}
+		problem := s.Breaks[0].Problem
+		if !strings.Contains(problem, `"future_field"`) || !strings.Contains(problem, "newer kavryctl") || strings.Contains(problem, "altered") {
+			t.Fatalf("%s: problem %q", name, problem)
+		}
+	}
+	many := strings.Repeat("x", 100)
+	if p := unknownProblem([]string{"a", "b", "c", "d", "e", "f", many}); !strings.Contains(p, "and 2 more") || strings.Contains(p, many) {
+		t.Fatalf("problem not bounded: %q", p)
+	}
+	if p := unknownProblem([]string{many}); strings.Contains(p, many) || !strings.Contains(p, strings.Repeat("x", 64)+"...") {
+		t.Fatalf("long name not truncated: %q", p)
+	}
+
+	current := chain("gw-a/1", 2)
+	current[1].Tool = "delete_all"
+	if s, _ := Verify(strings.NewReader(lines(current))); len(s.Breaks) != 1 || !strings.Contains(s.Breaks[0].Problem, "altered") {
+		t.Fatalf("edited current event: %+v", s.Breaks)
 	}
 }

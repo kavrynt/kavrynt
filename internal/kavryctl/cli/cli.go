@@ -180,6 +180,11 @@ func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "%s from %s: every chain verifies\n", plural(summary.Events, "event"), plural(summary.Instances, "instance"))
+	if summary.UnknownFields > 0 {
+		// Their hashes cover those fields, but this version cannot say what
+		// they mean (SPEC-0035-R05).
+		fmt.Fprintf(stdout, "%s carried fields this kavryctl does not know; a newer kavryctl can interpret them\n", plural(summary.UnknownFields, "event"))
+	}
 	return 0
 }
 

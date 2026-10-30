@@ -156,3 +156,4 @@ against the assistant's summary of them.
 | [0029](0029-mcpserver-endpoint-scope/spec.md) | MCPServer endpoint scope | Implemented |
 | [0030](0030-console-login-behind-proxy/spec.md) | Console login limits behind a proxy | Implemented |
 | [0031](0031-gateway-audience/spec.md) | Gateway audience | Implemented |
+| [0035](0035-audit-verify-newer-events/spec.md) | Verifying audit events from newer Gateways | Implemented |

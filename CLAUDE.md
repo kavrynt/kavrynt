@@ -160,7 +160,8 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   (SPEC-0028).
 - Opt-in audit events (`gateway.audit`, SPEC-0013): one JSON line per `/mcp/`
   request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
-  chained per instance, verified by `kavryctl audit verify`; never arguments,
+  chained per instance, verified by `kavryctl audit verify` (on the line
+  as written, so newer Gateways' fields verify, SPEC-0035); never arguments,
   results, or tokens. `X-Request-Id` on every `/mcp/` response.
 - Opt-in Gateway audience (`gateway.auth.gatewayAudience`, SPEC-0031): the
   listed routes (names or `<namespace>.*`, never `*`) also accept a token

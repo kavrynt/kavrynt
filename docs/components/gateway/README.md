@@ -166,9 +166,14 @@ credential, or an unknown route, when it completes.
 | `prev_hash`, `hash` | The chain |
 
 Fields that do not apply are present and empty, except `filtered_tools` and
-`audience`. `kavryctl audit verify` of a release before one of them existed
-reports events that carry it as breaks; verify with the `kavryctl` of the
-Gateway's release. Events never contain tool
+`audience`. The Gateway writes each event as its canonical form with `hash`
+as the last member, so `kavryctl audit verify` checks the hash on the line
+as written and accepts fields added by a newer Gateway (SPEC-0035); it says
+how many events carried such fields. A line a log collector re-encoded is
+checked by re-encoding its known fields, as before; if it also has unknown
+fields and does not verify, the break says so instead of calling it
+altered. `kavryctl` releases before this one report events with fields
+they do not know as altered; verify with this release or later. Events never contain tool
 arguments, results, bodies, tokens, credentials, cookies, or headers; they do
 identify people and agents, so treat them as personal data.
 
