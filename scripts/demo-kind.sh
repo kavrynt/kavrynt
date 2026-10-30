@@ -477,12 +477,14 @@ CMD
 
   step "What Kavrynt does not do yet"
   cat <<'EOF'
-  - No client authentication or token exchange: anyone who reaches the Gateway
-    can call every routed tool. The console has no login.
-  - No policy or tool-level authorization, and no audit log.
+  - Client authentication is on by default, but this demo opts out: anyone
+    who reaches the Gateway can call every routed tool. The console login
+    protects the console only.
+  - Tool authorization policy and audit events are opt-in; no approvals yet.
   - HTTP MCP servers only; stdio manifests validate but are not proxied.
-  - Single replica; no tested high-availability profile.
-  - 0.0.x beta, one maintainer organization. Run it in trusted dev or
+  - The demo runs one replica; the high-availability profile is tested in CI.
+    No backup or restore workflow yet.
+  - 1.0.0 beta, one maintainer organization. Run it in trusted dev or
     evaluation clusters only.
 EOF
   pause
