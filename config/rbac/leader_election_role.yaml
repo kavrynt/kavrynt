@@ -1,0 +1,33 @@
+# Leader election needs Leases only in the Operator's own namespace.
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: kavrynt-k8s-operator-leader-election
+  namespace: kavrynt-system
+rules:
+  - apiGroups:
+      - coordination.k8s.io
+    resources:
+      - leases
+    verbs:
+      - get
+      - list
+      - watch
+      - create
+      - update
+      - patch
+      - delete
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: kavrynt-k8s-operator-leader-election
+  namespace: kavrynt-system
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: kavrynt-k8s-operator-leader-election
+subjects:
+  - kind: ServiceAccount
+    name: kavrynt-k8s-operator
+    namespace: kavrynt-system

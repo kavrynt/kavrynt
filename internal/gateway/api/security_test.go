@@ -55,7 +55,13 @@ func TestProxyPassesRedirectsToClient(t *testing.T) {
 
 func TestProxyRejectsDotSegments(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
-	for _, path := range []string{"/mcp/team-a.demo/../admin", "/mcp/team-a.demo/./x", "/mcp/team-a.demo/a/.."} {
+	// Servers that drop ;parameters from segments (Tomcat, Jetty, Spring) or
+	// treat \ as a separator read these as dot segments too.
+	for _, path := range []string{
+		"/mcp/team-a.demo/../admin", "/mcp/team-a.demo/./x", "/mcp/team-a.demo/a/..",
+		"/mcp/team-a.demo/..;/admin", "/mcp/team-a.demo/.;x=1/x", "/mcp/team-a.demo/a\\..\\admin",
+		"/mcp/team-a.demo/a%5C..%5Cadmin",
+	} {
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusBadRequest {

@@ -211,7 +211,7 @@ The Gateway's metrics are in the
 | --- | --- | --- |
 | `--metrics-bind-address` | `:8080` | controller-runtime metrics |
 | `--health-probe-bind-address` | `:8081` | `/healthz`, `/readyz` |
-| `--leader-elect` | `false` (chart: `true`) | Leader election through the Lease `kavrynt-k8s-operator`. Only the leader reconciles, discovers tools, and syncs to Kavrynt Cloud; a stopping leader releases the Lease so a standby takes over at once. The chart refuses more than one replica without it and adds a PodDisruptionBudget for several |
+| `--leader-elect` | `false` (chart: `true`) | Leader election through the Lease `kavrynt-k8s-operator` in the Operator's namespace, the only namespace where its RBAC (a Role) grants Leases. Only the leader reconciles, discovers tools, and syncs to Kavrynt Cloud; a stopping leader releases the Lease so a standby takes over at once. The chart refuses more than one replica without it and adds a PodDisruptionBudget for several |
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret; discovery sends a server's stored credential like the Gateway ([Upstream credentials](../gateway/README.md#upstream-credentials)) |
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--gateway-namespace` | `$POD_NAMESPACE` (chart: the release namespace) | Where single-label endpoint hosts resolve, for the [endpoint scope](#endpoint-scope) |

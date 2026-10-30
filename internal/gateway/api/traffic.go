@@ -148,25 +148,66 @@ func inspectBody(prefix []byte) bodyInfo {
 	if len(prefix) > maxInspectBytes {
 		return info
 	}
-	var message struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}
-	// A JSON-RPC batch is an array and does not decode into the struct.
-	if json.Unmarshal(prefix, &message) != nil {
+	// A JSON-RPC batch is an array and is not an object.
+	message, ok := unambiguousObject(prefix, "jsonrpc", "id", "method", "params")
+	if !ok {
 		return info
 	}
-	info.classified, info.method, info.id = true, message.Method, message.ID
-	if message.Method == "tools/call" {
-		var params struct {
-			Name *string `json:"name"`
-		}
-		if json.Unmarshal(message.Params, &params) == nil && params.Name != nil {
-			info.tool, info.toolOK = *params.Name, true
+	var method string
+	if raw, present := message["method"]; present && json.Unmarshal(raw, &method) != nil {
+		return info
+	}
+	info.classified, info.method, info.id = true, method, message["id"]
+	if method == "tools/call" {
+		params, ok := unambiguousObject(message["params"], "name")
+		var name string
+		if ok && params["name"] != nil && json.Unmarshal(params["name"], &name) == nil {
+			info.tool, info.toolOK = name, true
 		}
 	}
 	return info
+}
+
+// unambiguousObject returns the members of the JSON object raw, or false
+// when it is not one object, or when any of fields could be read two ways:
+// a member appears twice, or another member matches it only as Go's
+// encoding/json matches names (case-insensitively, with Unicode folding).
+// MCP servers in other languages match names exactly and may keep the first
+// of two, so the Gateway's policy, audit, and metrics would otherwise decide
+// on a different message than the server runs (SPEC-0012-R09).
+func unambiguousObject(raw []byte, fields ...string) (map[string]json.RawMessage, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	members := map[string]json.RawMessage{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, false
+		}
+		name := token.(string)
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		if _, seen := members[name]; seen {
+			return nil, false
+		}
+		for _, field := range fields {
+			if name != field && strings.EqualFold(name, field) {
+				return nil, false
+			}
+		}
+		members[name] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return members, true
 }
 
 // probeMethods are methods clients call to learn whether a server offers

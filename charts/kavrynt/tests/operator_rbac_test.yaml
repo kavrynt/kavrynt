@@ -1,0 +1,63 @@
+suite: operator RBAC
+templates:
+  - charts/operator/templates/rbac.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+tests:
+  # Leader election needs Leases only in the Operator's own namespace; a
+  # cluster-wide grant would let the Operator rewrite every Lease, including
+  # kube-system leader elections and node heartbeats.
+  - it: grants no cluster-wide access to Leases
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - notContains:
+          path: rules
+          any: true
+          content:
+            apiGroups:
+              - coordination.k8s.io
+
+  - it: grants Leases in the release namespace only
+    documentSelector:
+      path: kind
+      value: Role
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: kavrynt-system
+      - contains:
+          path: rules
+          content:
+            apiGroups:
+              - coordination.k8s.io
+            resources:
+              - leases
+            verbs:
+              - get
+              - list
+              - watch
+              - create
+              - update
+              - patch
+              - delete
+
+  - it: binds the Lease Role to the Operator's service account
+    documentSelector:
+      path: kind
+      value: RoleBinding
+    asserts:
+      - equal:
+          path: metadata.namespace
+          value: kavrynt-system
+      - equal:
+          path: roleRef
+          value:
+            apiGroup: rbac.authorization.k8s.io
+            kind: Role
+            name: kavrynt-operator-leader-election
+      - equal:
+          path: subjects[0].namespace
+          value: kavrynt-system

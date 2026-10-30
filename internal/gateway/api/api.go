@@ -1054,8 +1054,12 @@ func parseMCPPath(path string) (string, string, bool) {
 	return name, "/" + suffix, true
 }
 
+// hasDotSegment reports a . or .. segment as any upstream may read it: some
+// servers also split on \ and drop a ;parameter from a segment (Tomcat,
+// Jetty, Spring), so "..;" and "a\..\b" leave the endpoint's path there.
 func hasDotSegment(path string) bool {
-	for _, segment := range strings.Split(path, "/") {
+	for _, segment := range strings.FieldsFunc(path, func(r rune) bool { return r == '/' || r == '\\' }) {
+		segment, _, _ = strings.Cut(segment, ";")
 		if segment == "." || segment == ".." {
 			return true
 		}
