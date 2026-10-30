@@ -422,6 +422,8 @@ default.
   `decision`:
 
   ```rego
+  package kavrynt.authz
+
   sensitive_route if input.route == {"namespace": "payments", "name": "refunds"}
 
   default decision := {"allow": false, "reason": "not allowed"}
