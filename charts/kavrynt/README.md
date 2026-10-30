@@ -11,7 +11,7 @@ Kavrynt MCP Control Plane runtime chart.
 ```bash
 # With your authorization server (MCP client authentication is on by default):
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 \
+  --version 1.0.0-beta.3 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.resourceURL=https://mcp.example.com \
@@ -19,7 +19,7 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 
 # A trial without one: MCP routes accept unauthenticated calls.
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 \
+  --version 1.0.0-beta.3 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -506,7 +506,7 @@ applied. Check a values file with:
 
 ```bash
 helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 --values my-values.yaml >/dev/null
+  --version 1.0.0-beta.3 --values my-values.yaml >/dev/null
 ```
 
 `global` accepts additional keys for platform-injected globals.
