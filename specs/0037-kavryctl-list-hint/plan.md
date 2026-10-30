@@ -6,10 +6,12 @@
 
 ## Design
 
-In `runList`, when the namespaced list is empty, `emptyListMessage` tries a
-cluster-wide list with the same client and timeout. A count above zero is
-added to the message; any error (for example `forbidden`) leaves the count
-out. `-A` keeps the old message.
+In `runList`, when the namespaced list is empty, `emptyListMessage` counts
+`MCPServer`s cluster-wide in pages of 500, keeping only the count, within
+5 seconds. A count above zero is added to the message; any error (for
+example `forbidden`) or timeout leaves the count out. The suggested
+`kavryctl list -A` keeps the user's `--kubeconfig` and `--context`
+(shell-quoted). `-A` keeps the old message.
 
 ## Affected files
 

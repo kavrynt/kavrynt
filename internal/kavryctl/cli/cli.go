@@ -323,7 +323,7 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		if *allNamespaces {
 			fmt.Fprintln(stdout, "no MCPServers found")
 		} else {
-			fmt.Fprintln(stdout, emptyListMessage(ctx, c, namespace))
+			fmt.Fprintln(stdout, emptyListMessage(ctx, c, namespace, listAllCommand(opts)))
 		}
 		return 0
 	}
@@ -412,15 +412,58 @@ func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
 	return fs
 }
 
+// countTimeout bounds the optional count of an empty list: the answer is
+// already known, so a slow cluster-wide list only drops the count.
+const countTimeout = 5 * time.Second
+
+// countPage is the page size of that count, so it never holds the whole
+// cluster's list.
+const countPage = 500
+
 // emptyListMessage names the namespace an empty list searched and how to
 // search all of them, with the count elsewhere when the user may list it
-// (SPEC-0037). A refused cluster-wide list only leaves the count out.
-func emptyListMessage(ctx context.Context, c client.Client, namespace string) string {
-	var all kavryntv1alpha1.MCPServerList
-	if err := c.List(ctx, &all); err == nil && len(all.Items) > 0 {
-		return fmt.Sprintf("no MCPServers found in namespace %s; %d in other namespaces: kavryctl list -A", namespace, len(all.Items))
+// (SPEC-0037). A refused, failed, or slow cluster-wide list only leaves the
+// count out.
+func emptyListMessage(ctx context.Context, c client.Client, namespace, listAll string) string {
+	ctx, cancel := context.WithTimeout(ctx, countTimeout)
+	defer cancel()
+	count, next := 0, ""
+	for {
+		var page kavryntv1alpha1.MCPServerList
+		if err := c.List(ctx, &page, client.Limit(countPage), client.Continue(next)); err != nil {
+			count = 0
+			break
+		}
+		count += len(page.Items)
+		if next = page.Continue; next == "" {
+			break
+		}
 	}
-	return fmt.Sprintf("no MCPServers found in namespace %s (kavryctl list -A lists every namespace)", namespace)
+	if count > 0 {
+		return fmt.Sprintf("no MCPServers found in namespace %s; %d in other namespaces: %s", namespace, count, listAll)
+	}
+	return fmt.Sprintf("no MCPServers found in namespace %s (%s lists every namespace)", namespace, listAll)
+}
+
+// listAllCommand is the kavryctl list -A command for the cluster the user
+// chose with --kubeconfig and --context.
+func listAllCommand(opts kubeOptions) string {
+	command := "kavryctl list -A"
+	if opts.kubeconfig != "" {
+		command += " --kubeconfig " + shellQuote(opts.kubeconfig)
+	}
+	if opts.context != "" {
+		command += " --context " + shellQuote(opts.context)
+	}
+	return command
+}
+
+// shellQuote quotes s for a POSIX shell unless it needs none.
+func shellQuote(s string) string {
+	if s != "" && strings.Trim(s, "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_./:@") == "" {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
 func printUsage(w io.Writer) {

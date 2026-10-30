@@ -335,8 +335,13 @@ func TestEmptyListPointsToOtherNamespaces(t *testing.T) {
 			}
 			return c.List(ctx, list, opts...)
 		}}).Build()
-	if msg := emptyListMessage(context.Background(), refusing, "default"); msg != "no MCPServers found in namespace default (kavryctl list -A lists every namespace)" {
+	if msg := emptyListMessage(context.Background(), refusing, "default", "kavryctl list -A"); msg != "no MCPServers found in namespace default (kavryctl list -A lists every namespace)" {
 		t.Fatalf("refused cluster-wide list: %q", msg)
+	}
+
+	// The suggested command keeps the cluster the user chose.
+	if out, _, _ := run(t, "list", "--context", "staging", "--kubeconfig", "/tmp/my config"); !strings.Contains(out, `kavryctl list -A --kubeconfig '/tmp/my config' --context staging`) {
+		t.Fatalf("hint without the chosen cluster: %q", out)
 	}
 
 	useFakeClient(t, "default")
