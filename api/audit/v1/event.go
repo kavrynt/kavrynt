@@ -27,21 +27,26 @@ const (
 	DecisionUnavailable     = "unavailable"
 )
 
-// Event is one audit event. Every field is always present; fields that do
-// not apply are empty (SPEC-0013-R03). It never holds tool arguments,
+// Event is one audit event. Every field is present, empty when it does not
+// apply (SPEC-0013-R03), except FilteredTools and Audience, which are left
+// out when empty so that events without them hash as before. It never holds tool arguments,
 // results, bodies, tokens, credentials, cookies, or headers (R04).
 //
 // The canonical form is this struct encoded by encoding/json without Hash:
 // fields in declaration order, no maps, no insignificant whitespace.
 type Event struct {
-	Type           string  `json:"type"`
-	Time           string  `json:"time"`
-	Instance       string  `json:"instance"`
-	Seq            uint64  `json:"seq"`
-	RequestID      string  `json:"request_id"`
-	Subject        string  `json:"subject"`
-	ClientID       string  `json:"client_id"`
-	Issuer         string  `json:"issuer"`
+	Type      string `json:"type"`
+	Time      string `json:"time"`
+	Instance  string `json:"instance"`
+	Seq       uint64 `json:"seq"`
+	RequestID string `json:"request_id"`
+	Subject   string `json:"subject"`
+	ClientID  string `json:"client_id"`
+	Issuer    string `json:"issuer"`
+	// Audience is "route" or "gateway", the audience the caller's token was
+	// accepted for (SPEC-0031-R05); omitted unless the Gateway audience is
+	// enabled, so other installations' events are unchanged.
+	Audience       string  `json:"audience,omitempty"`
 	Route          Route   `json:"route"`
 	HTTPMethod     string  `json:"http_method"`
 	MCPMethod      string  `json:"mcp_method"`

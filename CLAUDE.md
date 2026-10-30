@@ -41,7 +41,8 @@ and `operator` repositories are archived and must not receive new changes.
   credentials (SPEC-0011), tool authorization policy (SPEC-0012, opt-in),
   audit events (SPEC-0013, opt-in), their delivery to Kavrynt Cloud
   (SPEC-0017, opt-in; the Cloud ingestion endpoint lives in kavrynt-cloud),
-  and token exchange (SPEC-0015). Not yet: approvals.
+  token exchange (SPEC-0015), and the Gateway audience (SPEC-0031,
+  opt-in). Not yet: approvals.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -161,6 +162,11 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
   chained per instance, verified by `kavryctl audit verify`; never arguments,
   results, or tokens. `X-Request-Id` on every `/mcp/` response.
+- Opt-in Gateway audience (`gateway.auth.gatewayAudience`, SPEC-0031): the
+  listed routes (names or `<namespace>.*`, never `*`) also accept a token
+  whose `aud` is `resourceURL`; the route's own URI takes precedence, and
+  policy input and audit events say which audience (`route`, `gateway`) a
+  call used. Warned about at start and in the console.
 - `MCPServer.spec.tokenExchange` (SPEC-0015): the Gateway exchanges the
   caller's verified token at its issuer (RFC 8693, `client_secret_basic`
   with a client secret from the kubelet-mounted

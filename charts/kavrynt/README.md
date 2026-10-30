@@ -590,10 +590,12 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |
 | `gateway.config.shutdownTimeout` | string | `10s` | Then wait this long for in-flight requests (whole seconds). The termination grace period is both plus 5 seconds |
-| `gateway.auth.enabled` | bool | `false` | Require a bearer access token for the route on every `/mcp/` request (MCP client authentication) |
+| `gateway.auth.enabled` | bool | `true` | Require a bearer access token for the route on every `/mcp/` request (MCP client authentication); `false` leaves MCP routes open |
 | `gateway.auth.resourceURL` | string | `""` | The Gateway's external https origin; required when enabled |
 | `gateway.auth.issuers` | list | `[]` | Trusted authorization servers: `issuer` (equals the tokens' `iss`), optional `jwksURI`, `allowHTTP`; at least one when enabled |
 | `gateway.auth.requiredScopes` | list | `[]` | Scopes every token must carry |
+| `gateway.auth.gatewayAudience.enabled` | bool | `false` | Let the listed routes also accept a token whose audience is `resourceURL` (SPEC-0031); needs `gateway.auth.enabled` |
+| `gateway.auth.gatewayAudience.routes` | list | `[]` | Routes one such token reaches: `<namespace>.<name>` or `<namespace>.*`; required when enabled, `*` refused |
 | `gateway.audit.enabled` | bool | `false` | Write one audit event per MCP request to the Gateway's standard output |
 | `gateway.audit.queueSize` | int | `10000` | Audit events that may wait to be written |
 | `gateway.audit.onOverflow` | string | `reject` | With a full queue: `reject` new MCP requests or `drop` their events |

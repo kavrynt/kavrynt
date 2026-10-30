@@ -474,7 +474,11 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("console login is disabled"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false, "mcpAuth": h.clientAuth != nil})
+	gatewayAudience := []string{}
+	if h.clientAuth != nil {
+		gatewayAudience = h.clientAuth.GatewayAudienceRoutes()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "mcpAuth": h.clientAuth != nil, "gatewayAudience": gatewayAudience})
 }
 
 func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
@@ -923,6 +927,7 @@ func policyInput(r *http.Request, routeName string) policy.Input {
 	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
 	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
 		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
+		input.Audience = identity.Audience
 	}
 	return input
 }

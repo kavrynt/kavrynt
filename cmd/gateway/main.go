@@ -55,6 +55,7 @@ func main() {
 	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
 	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
 	tokenExchangeDir := flag.String("token-exchange-secret-dir", getenv("KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR", ""), "Directory of the mounted Secret with the client secrets named by the issuers' tokenExchange.clientSecretKey (token exchange)")
+	authGatewayAudience := flag.String("auth-gateway-audience-routes", getenv("KAVRYNT_AUTH_GATEWAY_AUDIENCE_ROUTES", ""), "Comma-separated routes (<namespace>.<name> or <namespace>.*) that also accept a token whose audience is --auth-resource-url; empty accepts only each route's own URI")
 	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
 	auditEnabled := flag.Bool("audit", false, "Write one audit event per MCP request as a JSON line on standard output")
 	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
@@ -90,12 +91,15 @@ func main() {
 		os.Exit(1)
 	}
 
-	clientAuth, err := newClientAuth(*authEnabled, *authResourceURL, *authIssuers, *authScopes, *tokenExchangeDir)
+	clientAuth, err := newClientAuth(*authEnabled, *authResourceURL, *authIssuers, *authScopes, *tokenExchangeDir, *authGatewayAudience)
 	if err != nil {
 		slog.Error("configure MCP client authentication", "error", err)
 		os.Exit(1)
 	}
 	warnUnauthenticated(slog.Default(), clientAuth != nil)
+	if clientAuth != nil {
+		warnGatewayAudience(slog.Default(), *authResourceURL, clientAuth.GatewayAudienceRoutes())
+	}
 
 	var policyEngine *policy.Engine
 	if *policyDir != "" {
@@ -178,6 +182,7 @@ func main() {
 		handler.EnableClientAuth(clientAuth)
 		if consoleAuth != nil {
 			consoleAuth.ReportMCPAuth(true)
+			consoleAuth.ReportGatewayAudience(clientAuth.GatewayAudienceRoutes())
 		}
 	}
 
@@ -345,12 +350,24 @@ func warnUnauthenticated(logger *slog.Logger, authenticated bool) {
 	}
 }
 
+// warnGatewayAudience says at start which routes accept a token for the
+// Gateway audience (SPEC-0031-R06): one leaked token reaches all of them.
+func warnGatewayAudience(logger *slog.Logger, resourceURL string, routes []string) {
+	if len(routes) == 0 {
+		return
+	}
+	logger.Warn("the Gateway audience is enabled: one token whose audience is the Gateway reaches every listed route", "audience", strings.TrimRight(resourceURL, "/"), "routes", strings.Join(routes, ","))
+}
+
 // newClientAuth returns the MCP client authenticator, or nil when --auth is
 // off. Authentication without a resource URL or a trusted issuer is refused
 // (SPEC-0006-R02). Key and metadata requests use the egress guard without the
 // loopback exception (SPEC-0006-R11).
-func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes, tokenExchangeDir string) (*clientauth.Authenticator, error) {
+func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes, tokenExchangeDir, gatewayAudienceRoutes string) (*clientauth.Authenticator, error) {
 	if !enabled {
+		if gatewayAudienceRoutes != "" {
+			return nil, errors.New("--auth-gateway-audience-routes needs --auth: routes without client authentication take no tokens")
+		}
 		return nil, nil
 	}
 	var issuers []clientauth.Issuer
@@ -366,6 +383,7 @@ func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes, tokenExchange
 		Issuers:                issuers,
 		RequiredScopes:         splitList(scopes),
 		TokenExchangeSecretDir: tokenExchangeDir,
+		GatewayAudienceRoutes:  splitList(gatewayAudienceRoutes),
 	}, egress.Transport(false), slog.Default())
 }
 

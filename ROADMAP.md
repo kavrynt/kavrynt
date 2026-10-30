@@ -45,6 +45,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - Alert notifications (Slack, email, Teams, webhook), Grafana dashboards,
   and chart NetworkPolicies that make MCP servers reachable only through the
   Gateway.
+- An opt-in Gateway audience: one token can reach a listed group of MCP
+  routes, with policy and audit telling it apart from a per-route token.
 
 ## Next
 

@@ -32,6 +32,17 @@ type auditRecord struct {
 	// filteredTools counts tools removed from a tools/list answer
 	// (SPEC-0016-R05).
 	filteredTools int
+	// gatewayAudience is set when the Gateway audience is enabled.
+	gatewayAudience bool
+}
+
+// audience is the audit event's audience, recorded only while the Gateway
+// audience is enabled (SPEC-0031-R05).
+func (rec *auditRecord) audience() string {
+	if !rec.gatewayAudience {
+		return ""
+	}
+	return rec.identity.Audience
 }
 
 type auditKey struct{}
@@ -58,7 +69,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
-	rec := &auditRecord{}
+	rec := &auditRecord{gatewayAudience: h.clientAuth != nil && h.clientAuth.GatewayAudienceEnabled()}
 	status := &statusWriter{ResponseWriter: w}
 	h.proxy(status, r.WithContext(context.WithValue(r.Context(), auditKey{}, rec)))
 
@@ -70,6 +81,7 @@ func (h *Handler) serveMCP(w http.ResponseWriter, r *http.Request) {
 		Subject:        rec.identity.Subject,
 		ClientID:       rec.identity.ClientID,
 		Issuer:         rec.identity.Issuer,
+		Audience:       rec.audience(),
 		Route:          auditv1.Route{Namespace: bound(namespace), Name: bound(server)},
 		HTTPMethod:     r.Method,
 		MCPMethod:      rec.call.body.method,

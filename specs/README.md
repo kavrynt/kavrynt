@@ -155,7 +155,7 @@ against the assistant's summary of them.
 | [0028](0028-tool-annotations-in-policy/spec.md) | Tool annotations in policy | Implemented |
 | [0029](0029-mcpserver-endpoint-scope/spec.md) | MCPServer endpoint scope | Implemented |
 | [0030](0030-console-login-behind-proxy/spec.md) | Console login limits behind a proxy | Implemented |
-| [0031](0031-gateway-audience/spec.md) | Gateway audience | Draft |
+| [0031](0031-gateway-audience/spec.md) | Gateway audience | Implemented |
 | [0032](0032-console-sso/spec.md) | Console sign-in through the authorization server | Draft |
 | [0033](0033-kavryctl-doctor/spec.md) | kavryctl doctor | Draft |
 | [0034](0034-registration-backup/spec.md) | Registration export and import | Draft |

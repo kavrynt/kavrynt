@@ -33,6 +33,13 @@ const (
 // can be fetched.
 func authHandler(t *testing.T, keysUp bool) (*Handler, *[]*http.Request, func(claims map[string]any) string) {
 	t.Helper()
+	return gatewayAudienceHandler(t, keysUp, nil)
+}
+
+// gatewayAudienceHandler is authHandler with the Gateway audience accepted
+// for gatewayRoutes (SPEC-0031).
+func gatewayAudienceHandler(t *testing.T, keysUp bool, gatewayRoutes []string) (*Handler, *[]*http.Request, func(claims map[string]any) string) {
+	t.Helper()
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	if err != nil {
 		t.Fatal(err)
@@ -45,9 +52,10 @@ func authHandler(t *testing.T, keysUp bool) (*Handler, *[]*http.Request, func(cl
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{"Content-Type": []string{"application/json"}}, Body: io.NopCloser(bytes.NewReader(set))}, nil
 	})
 	auth, err := clientauth.New(clientauth.Config{
-		ResourceURL:    authResource,
-		Issuers:        []clientauth.Issuer{{Issuer: authIssuer, JWKSURI: authIssuer + "/jwks"}},
-		RequiredScopes: []string{"mcp:tools"},
+		ResourceURL:           authResource,
+		Issuers:               []clientauth.Issuer{{Issuer: authIssuer, JWKSURI: authIssuer + "/jwks"}},
+		RequiredScopes:        []string{"mcp:tools"},
+		GatewayAudienceRoutes: gatewayRoutes,
 	}, keyTransport, slog.New(slog.NewTextHandler(io.Discard, nil)))
 	if err != nil {
 		t.Fatal(err)

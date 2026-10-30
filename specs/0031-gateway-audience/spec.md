@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-28 |
 | Issue | #84 |
@@ -70,9 +70,12 @@ issue one audience per token cannot serve such an agent at all.
   the token's `aud` contains the route's own URI (also when it contains the
   Gateway audience too), `gateway` when it was accepted for the Gateway
   audience alone.
-- **SPEC-0031-R05** Audit events MUST record the same value.
+- **SPEC-0031-R05** While the Gateway audience is enabled, audit events
+  MUST record the same value; while it is off, they MUST NOT carry the
+  field, so they stay as before (Compatibility).
 - **SPEC-0031-R06** The Gateway MUST log at start, and the console MUST
-  show, that the Gateway audience is enabled and for which routes.
+  show to signed-in users, that the Gateway audience is enabled and for
+  which routes.
 
 ## Acceptance criteria
 
@@ -131,9 +134,10 @@ and values, and `SECURITY.md`.
 
 ## Open questions
 
-- Should the list also accept label selectors on `MCPServer`s instead of
-  names? Recommended: names and namespace patterns first; selectors would
-  let namespace owners add their servers to the list.
-- Should the Gateway audience be an identifier other than `resourceURL`,
-  for example `<resourceURL>/mcp`? Recommended: `resourceURL`, which is
-  already the Gateway's identifier in its metadata. The owner decides.
+Resolved when the spec was accepted (see [plan.md](plan.md)):
+
+- Label selectors on `MCPServer`s: not now. The list takes route names and
+  namespace patterns; selectors would let namespace owners add their
+  servers to the list.
+- The Gateway audience is `resourceURL`, already the Gateway's identifier
+  in its metadata.

@@ -84,7 +84,7 @@ func TestShutdownDrainsBeforeClosing(t *testing.T) {
 
 // Verifies SPEC-0006-R01 and SPEC-0006-R02.
 func TestClientAuthConfiguration(t *testing.T) {
-	if a, err := newClientAuth(false, "", "", "", ""); a != nil || err != nil {
+	if a, err := newClientAuth(false, "", "", "", "", ""); a != nil || err != nil {
 		t.Fatalf("auth off: %v, %v; want nothing", a, err)
 	}
 	issuers := `[{"issuer":"https://as.example.com"}]`
@@ -97,11 +97,11 @@ func TestClientAuthConfiguration(t *testing.T) {
 		"http issuer":          {"https://mcp.example.com", `[{"issuer":"http://as.example.com"}]`},
 		"http resource URL":    {"http://mcp.example.com", issuers},
 	} {
-		if _, err := newClientAuth(true, c.url, c.issuers, "", ""); err == nil {
+		if _, err := newClientAuth(true, c.url, c.issuers, "", "", ""); err == nil {
 			t.Errorf("%s: authentication configured, want a refusal to start", name)
 		}
 	}
-	if a, err := newClientAuth(true, "https://mcp.example.com", issuers, "mcp:tools", ""); err != nil || a == nil {
+	if a, err := newClientAuth(true, "https://mcp.example.com", issuers, "mcp:tools", "", ""); err != nil || a == nil {
 		t.Fatalf("valid configuration: %v, %v", a, err)
 	}
 }
@@ -177,5 +177,32 @@ func TestConsoleTrustedProxiesMustBeCIDRs(t *testing.T) {
 	}
 	if _, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "--console-trusted-proxies") {
 		t.Fatalf("an address without a prefix length: err = %v", err)
+	}
+}
+
+// Verifies SPEC-0031-R01 and SPEC-0031-R06: the Gateway audience needs client
+// authentication, refuses "*", and is warned about at start with its routes.
+func TestGatewayAudienceConfiguration(t *testing.T) {
+	issuers := `[{"issuer":"https://login.example.com"}]`
+	if _, err := newClientAuth(false, "", "", "", "", "team-a.*"); err == nil {
+		t.Error("Gateway audience without client authentication configured")
+	}
+	if _, err := newClientAuth(true, "https://mcp.example.com", issuers, "", "", "*"); err == nil {
+		t.Error(`Gateway audience for "*" configured`)
+	}
+	a, err := newClientAuth(true, "https://mcp.example.com", issuers, "", "", "team-a.*, team-c.reports")
+	if err != nil || strings.Join(a.GatewayAudienceRoutes(), ",") != "team-a.*,team-c.reports" {
+		t.Fatalf("valid configuration: %v", err)
+	}
+
+	var logs bytes.Buffer
+	warnGatewayAudience(slog.New(slog.NewTextHandler(&logs, nil)), "https://mcp.example.com/", a.GatewayAudienceRoutes())
+	if out := logs.String(); !strings.Contains(out, "level=WARN") || !strings.Contains(out, "routes=team-a.*,team-c.reports") || !strings.Contains(out, "audience=https://mcp.example.com ") {
+		t.Fatalf("start log = %q, want a warning naming the audience and routes", out)
+	}
+	logs.Reset()
+	warnGatewayAudience(slog.New(slog.NewTextHandler(&logs, nil)), "https://mcp.example.com", nil)
+	if logs.Len() != 0 {
+		t.Fatalf("Gateway audience off: logged %q", logs.String())
 	}
 }

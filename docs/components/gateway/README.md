@@ -155,6 +155,7 @@ credential, or an unknown route, when it completes.
 | `instance`, `seq` | Gateway instance (pod name and a start nonce) and its event number, from 1 |
 | `request_id` | Also returned to the client as `X-Request-Id` |
 | `subject`, `client_id`, `issuer` | The verified caller; empty without client authentication |
+| `audience` | `route` or `gateway`, the audience the caller's token was accepted for (SPEC-0031); only present while the Gateway audience is enabled |
 | `route` | `namespace`, `name` |
 | `http_method`, `mcp_method`, `tool` | What was asked |
 | `decision` | `allow`, `deny` (policy), `unauthenticated`, `forbidden` (scope), `invalid` (bad request, unknown route), `unavailable` (issuer keys or upstream credential) |
@@ -164,10 +165,10 @@ credential, or an unknown route, when it completes.
 | `filtered_tools` | Tools removed from a `tools/list` answer by the policy (SPEC-0016); only present when some were |
 | `prev_hash`, `hash` | The chain |
 
-Fields that do not apply are present and empty, except `filtered_tools`.
-`kavryctl audit verify` of a release before `filtered_tools` existed reports
-events that carry it as breaks; verify with the `kavryctl` of the Gateway's
-release. Events never contain tool
+Fields that do not apply are present and empty, except `filtered_tools` and
+`audience`. `kavryctl audit verify` of a release before one of them existed
+reports events that carry it as breaks; verify with the `kavryctl` of the
+Gateway's release. Events never contain tool
 arguments, results, bodies, tokens, credentials, cookies, or headers; they do
 identify people and agents, so treat them as personal data.
 
@@ -249,6 +250,7 @@ Input:
 | Field | Value |
 | --- | --- |
 | `subject`, `client_id`, `issuer`, `scopes` | The verified caller (MCP client authentication); empty without it |
+| `audience` | `route` when the token's `aud` contains the route's own resource URI (also when it contains the Gateway audience too), `gateway` when it was accepted for the [Gateway audience](#gateway-audience) alone; empty without MCP client authentication |
 | `route.namespace`, `route.name` | The `MCPServer` |
 | `http_method` | `POST`, `GET`, `DELETE` |
 | `mcp_method` | JSON-RPC method of a `POST`; empty for other methods and for JSON-RPC responses |
@@ -341,7 +343,8 @@ A request to `/mcp/<namespace>.<name>` is forwarded only with
   (60 s leeway);
 - has an `aud` that contains the route's resource URI,
   `<resourceURL>/mcp/<namespace>.<name>` (RFC 8707): a token for another
-  route, for the Gateway's base URL, or for any other resource is refused;
+  route, for the Gateway's base URL, or for any other resource is refused,
+  unless the [Gateway audience](#gateway-audience) covers the route;
 - carries every scope in `--auth-required-scopes` (`scope`, space-separated,
   or `scp`).
 
@@ -386,6 +389,60 @@ only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's
 Playground offers a field for an access token, kept in page memory only and
 sent only in the `Authorization` header of its own calls, and explains `401`,
 `403`, and `503` answers. The console login never authorizes `/mcp/` calls.
+
+### Gateway audience
+
+With `--auth-gateway-audience-routes` (chart:
+`gateway.auth.gatewayAudience.enabled` and `.routes`; SPEC-0031) the listed
+routes also accept a token whose `aud` contains the Gateway audience,
+`resourceURL` exactly, without a trailing slash even when `resourceURL`
+was configured with one (the Gateway removes it; a `resourceURL` with a
+path is refused at start). An agent that calls many
+servers then needs one audience instead of one per route. It is off by
+default.
+
+- The list holds route names (`team-a.search`) and namespace patterns
+  (`team-a.*`). The chart refuses an empty list, `*`, and turning it on
+  without MCP client authentication; the Gateway refuses to start with
+  anything else in the list.
+- A token whose `aud` contains the route's own resource URI is accepted as
+  before, listed or not; the route's own URI takes precedence. A token for
+  the Gateway audience alone is refused (`401`) on routes the list does not
+  cover. Every other check (issuer, signature, time, scopes) still applies.
+- The policy input and audit events carry `audience`: `route` or
+  `gateway`. A policy can require a route's own audience for sensitive
+  routes. `decision` is a complete rule, so two definitions that both
+  match one call are an evaluation error (denied, but as a failure):
+  exclude the case from the allow rules instead of adding a second
+  `decision`:
+
+  ```rego
+  sensitive_route if input.route == {"namespace": "payments", "name": "refunds"}
+
+  default decision := {"allow": false, "reason": "not allowed"}
+
+  refused_audience if {
+      sensitive_route
+      input.audience == "gateway"
+  }
+
+  decision := {"allow": false, "reason": "this route needs a token for its own audience"} if refused_audience
+
+  decision := {"allow": true} if {
+      not refused_audience
+      input.client_id == "support-agent"
+  }
+  ```
+
+- The Gateway logs a warning at start naming the audience and the routes,
+  `GET /v1/session` reports them as `gatewayAudience` to signed-in
+  sessions (and without console login), and the console's notice names
+  them, also when opened through a port-forward.
+
+**Trade-off.** A token for the Gateway audience reaches every listed route,
+so a leaked token reaches all of them. List only what one token should
+reach. Protected Resource Metadata is unchanged: clients that request a
+token per route keep working.
 
 ## Token exchange
 
@@ -836,6 +893,7 @@ grouped by `client_id` or `subject`.
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
 | `--token-exchange-secret-dir` | none (chart: the mounted `auth.tokenExchangeSecret`) | Directory of the Secret with the client secrets named by the issuers' `tokenExchange.clientSecretKey` (`KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
+| `--auth-gateway-audience-routes` | none (chart: `auth.gatewayAudience.routes` with `auth.gatewayAudience.enabled`) | Comma-separated routes (`<namespace>.<name>` or `<namespace>.*`) that also accept a token for the Gateway audience, `--auth-resource-url`; needs `--auth` (`KAVRYNT_AUTH_GATEWAY_AUDIENCE_ROUTES`) |
 | `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
 | `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |
 | `--audit-on-overflow` | `reject` (chart: `audit.onOverflow`) | With a full queue: `reject` new MCP requests (`503`) or `drop` their events |
