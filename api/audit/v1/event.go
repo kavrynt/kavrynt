@@ -34,14 +34,18 @@ const (
 // The canonical form is this struct encoded by encoding/json without Hash:
 // fields in declaration order, no maps, no insignificant whitespace.
 type Event struct {
-	Type           string  `json:"type"`
-	Time           string  `json:"time"`
-	Instance       string  `json:"instance"`
-	Seq            uint64  `json:"seq"`
-	RequestID      string  `json:"request_id"`
-	Subject        string  `json:"subject"`
-	ClientID       string  `json:"client_id"`
-	Issuer         string  `json:"issuer"`
+	Type      string `json:"type"`
+	Time      string `json:"time"`
+	Instance  string `json:"instance"`
+	Seq       uint64 `json:"seq"`
+	RequestID string `json:"request_id"`
+	Subject   string `json:"subject"`
+	ClientID  string `json:"client_id"`
+	Issuer    string `json:"issuer"`
+	// Audience is "route" or "gateway", the audience the caller's token was
+	// accepted for (SPEC-0031-R05); omitted unless the Gateway audience is
+	// enabled, so other installations' events are unchanged.
+	Audience       string  `json:"audience,omitempty"`
 	Route          Route   `json:"route"`
 	HTTPMethod     string  `json:"http_method"`
 	MCPMethod      string  `json:"mcp_method"`

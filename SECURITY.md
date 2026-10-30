@@ -37,6 +37,10 @@ These are documented gaps, not vulnerabilities:
   reachable by anyone who can reach the Gateway (`/v1/routes` lists no
   endpoints while MCP client authentication is on). There are no other
   users, roles, or SSO.
+- The opt-in Gateway audience (`gateway.auth.gatewayAudience`) lets one
+  token reach every listed route, so a leaked token for it reaches all of
+  them. It is off by default, refuses `*`, and is visible in policy input,
+  audit events, the start-up log, and the console.
 - Audit events (`gateway.audit`) are tamper-evident, not tamper-proof: the
   hash chain detects a removed, reordered, or edited event unless every later
   event is recomputed as well. Ship them out of the cluster to protect them.

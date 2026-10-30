@@ -296,6 +296,23 @@
           "type": "string",
           "maxLength": 253,
           "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
+        "gatewayAudience": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "enabled": {
+              "type": "boolean"
+            },
+            "routes": {
+              "type": "array",
+              "uniqueItems": true,
+              "items": {
+                "type": "string",
+                "pattern": "^(\\*|[a-z0-9]([-a-z0-9]*[a-z0-9])?\\.(\\*|[a-z0-9]([-a-z0-9.]*[a-z0-9])?))$"
+              }
+            }
+          }
         }
       }
     },

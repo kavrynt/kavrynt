@@ -99,6 +99,10 @@ spec:
             - --auth-required-scopes
             - {{ join "," . | quote }}
             {{- end }}
+            {{- if (.Values.auth.gatewayAudience | default dict).enabled }}
+            - --auth-gateway-audience-routes
+            - {{ join "," .Values.auth.gatewayAudience.routes | quote }}
+            {{- end }}
             {{- if $exchange }}
             - --token-exchange-secret-dir=/etc/kavrynt/token-exchange
             {{- end }}

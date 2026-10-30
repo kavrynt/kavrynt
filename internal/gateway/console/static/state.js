@@ -83,10 +83,25 @@
   function sessionState(status, body) {
     // mcpAuth: whether /mcp/ routes need access tokens (SPEC-0006-R15).
     const mcpAuth = Boolean(body && body.mcpAuth === true);
-    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth };
-    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || ""), mcpAuth };
-    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth };
+    // gatewayAudience: routes one token for the Gateway reaches (SPEC-0031-R06).
+    const gatewayAudience = routeList(body && body.gatewayAudience);
+    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth, gatewayAudience };
+    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || ""), mcpAuth, gatewayAudience };
+    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth, gatewayAudience };
     return null;
+  }
+
+  // routeList keeps the strings of a route list from the Gateway, bounded.
+  function routeList(value) {
+    if (!Array.isArray(value)) return [];
+    return value.filter((route) => typeof route === "string" && route.length > 0 && route.length <= 260).slice(0, 100);
+  }
+
+  // noticeShown reports whether the banner is shown: from any address other
+  // than loopback (SPEC-0002-R12), and wherever the Gateway audience is on,
+  // since one token then reaches several routes (SPEC-0031-R06).
+  function noticeShown(hostname, auth) {
+    return !isLoopbackHost(hostname) || Boolean(auth && auth.mcpAuth && auth.gatewayAudience && auth.gatewayAudience.length);
   }
 
   // notice is the banner shown when the console is opened from an address
@@ -94,9 +109,11 @@
   // what the console login protects (SPEC-0005-R16).
   function notice(auth) {
     if (auth && auth.mcpAuth) {
+      const shared = auth.gatewayAudience && auth.gatewayAudience.length ?
+        "One token for the Gateway audience reaches every one of these routes: " + auth.gatewayAudience.join(", ") + ". " : "";
       return {
         title: "MCP routes require access tokens.",
-        text: "Agents need a token from a trusted authorization server for each route they call. " +
+        text: "Agents need a token from a trusted authorization server for each route they call. " + shared +
           (auth.enabled ? "This login protects the console only; it does not authorize MCP calls." : "This console has no login: anyone who can reach this Gateway can read its servers and traffic."),
       };
     }
@@ -139,5 +156,5 @@
     }
   }
 
-  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, authFailureMessage, notice });
+  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, authFailureMessage, notice, noticeShown });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).state = {}));

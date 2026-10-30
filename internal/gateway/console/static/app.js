@@ -19,7 +19,7 @@
     RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
     alertMarks, topLists, rangeSummary, toolRows, dashboardNote, grafanaLinks,
   } = Kavrynt.charts;
-  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
+  const { parseHash, formatHash, createPoller, sessionState, loginMessage, notice, noticeShown } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
@@ -1182,10 +1182,11 @@
 
   // Say what is not protected wherever the console is reachable from more
   // than this machine: without login, the console and MCP routes
-  // (SPEC-0002-R12); with login, still the MCP routes (SPEC-0005-R16).
+  // (SPEC-0002-R12); with login, still the MCP routes (SPEC-0005-R16); and
+  // which routes share the Gateway audience (SPEC-0031-R06).
   function initNotice() {
     const el = document.getElementById("notice");
-    if (isLoopbackHost(location.hostname)) {
+    if (!noticeShown(location.hostname, state.auth)) {
       el.hidden = true;
       return;
     }

@@ -332,3 +332,25 @@ func TestSessionReportsMCPAuth(t *testing.T) {
 		t.Fatalf("signed-in session = %s, want mcpAuth", rr.Body.String())
 	}
 }
+
+// Verifies SPEC-0031-R06: the session reports the routes that accept the
+// Gateway audience, signed in or not, and an empty list when it is off.
+func TestSessionReportsGatewayAudience(t *testing.T) {
+	a, _, _, _ := newTestAuth(t)
+	rr := httptest.NewRecorder()
+	a.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/session", nil))
+	if !strings.Contains(rr.Body.String(), `"gatewayAudience":[]`) {
+		t.Fatalf("GET /v1/session = %s, want an empty gatewayAudience", rr.Body.String())
+	}
+	a.ReportGatewayAudience([]string{"team-a.*"})
+	rr = httptest.NewRecorder()
+	a.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/session", nil))
+	if rr.Code != http.StatusUnauthorized || !strings.Contains(rr.Body.String(), `"gatewayAudience":["team-a.*"]`) {
+		t.Fatalf("GET /v1/session = %d %s, want 401 reporting the routes", rr.Code, rr.Body.String())
+	}
+	rr = httptest.NewRecorder()
+	a.ServeHTTP(rr, withCookie(sessionCookie(t, login(t, a, "admin", testPassword))))
+	if !strings.Contains(rr.Body.String(), `"gatewayAudience":["team-a.*"]`) {
+		t.Fatalf("signed-in session = %s, want the routes", rr.Body.String())
+	}
+}

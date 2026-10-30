@@ -88,6 +88,15 @@ auth:
   # token exchange (SPEC-0015), one key per issuer's clientSecretKey. The
   # kubelet mounts it; the Gateway gets no RBAC on Secrets.
   tokenExchangeSecret: ""
+  # Gateway audience (SPEC-0031): the listed routes also accept a token
+  # whose audience is resourceURL, so an agent that calls many servers needs
+  # one audience instead of one per route. A leaked token then reaches every
+  # listed route, so list only what one token should reach: route names
+  # (<namespace>.<name>) and <namespace>.* patterns; "*" is refused. Policy
+  # input and audit events say which audience a call used.
+  gatewayAudience:
+    enabled: false
+    routes: []
 
 # Audit events (SPEC-0013): one JSON line per MCP request on the Gateway's
 # standard output ("type":"kavrynt.audit.v1"), with the caller, route, method,

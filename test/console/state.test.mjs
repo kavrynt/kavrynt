@@ -102,10 +102,10 @@ test("a poller started in a hidden page waits until it is visible", () => {
 
 test("session responses map to login off, signed in, or login required, and fail closed", () => {
   const { sessionState } = state;
-  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth: false });
+  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth: false, gatewayAudience: [] });
   assert.deepEqual(sessionState(200, { enabled: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z" }),
-    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z", mcpAuth: false });
-  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth: false });
+    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z", mcpAuth: false, gatewayAudience: [] });
+  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth: false, gatewayAudience: [] });
   // Anything unexpected is not a session; the console then shows the login form.
   for (const [status, body] of [[200, {}], [200, null], [500, null], [403, { error: "origin not allowed" }]]) {
     assert.equal(sessionState(status, body), null, status + " " + JSON.stringify(body));
@@ -165,4 +165,20 @@ test("the notice says MCP routes are open when authentication is off", () => {
     assert.match(title + " " + text, /call every routed tool/);
     assert.match(title + " " + text, /turn on MCP client authentication/);
   }
+});
+
+// Verifies SPEC-0031-R06: the console learns from /v1/session which routes
+// accept the Gateway audience, names them in the notice, and shows the
+// notice even from loopback while it is on.
+test("the notice names the routes that share the Gateway audience", () => {
+  const { sessionState, notice, noticeShown } = state;
+  const auth = sessionState(200, { enabled: true, username: "admin", mcpAuth: true, gatewayAudience: ["team-a.*", "team-c.reports", 7, ""] });
+  assert.deepEqual(auth.gatewayAudience, ["team-a.*", "team-c.reports"]);
+  assert.deepEqual(sessionState(200, { enabled: false, gatewayAudience: "team-a.*" }).gatewayAudience, []);
+  assert.match(notice(auth).text, /Gateway audience reaches every one of these routes: team-a\.\*, team-c\.reports\./);
+  assert.doesNotMatch(notice({ enabled: true, mcpAuth: true, gatewayAudience: [] }).text, /Gateway audience/);
+
+  assert.equal(noticeShown("localhost", auth), true);
+  assert.equal(noticeShown("localhost", { ...auth, gatewayAudience: [] }), false);
+  assert.equal(noticeShown("kavrynt.example.com", { ...auth, gatewayAudience: [] }), true);
 });

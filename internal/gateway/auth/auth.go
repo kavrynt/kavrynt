@@ -23,6 +23,7 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
+	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -65,6 +66,9 @@ type Authenticator struct {
 	// mcpAuth is reported by GET /v1/session so the console can say whether
 	// MCP routes need tokens (SPEC-0006-R15).
 	mcpAuth bool
+	// gatewayAudience lists the routes that accept the Gateway audience,
+	// reported by GET /v1/session for the console (SPEC-0031-R06).
+	gatewayAudience []string
 
 	// trustedProxies are the addresses whose X-Forwarded-For names the
 	// client (SPEC-0030-R01).
@@ -197,6 +201,12 @@ func (a *Authenticator) ReportMCPAuth(enabled bool) {
 	a.mcpAuth = enabled
 }
 
+// ReportGatewayAudience sets the routes GET /v1/session reports as
+// accepting the Gateway audience (SPEC-0031-R06).
+func (a *Authenticator) ReportGatewayAudience(routes []string) {
+	a.gatewayAudience = slices.Clone(routes)
+}
+
 // ServeHTTP serves /v1/session: GET reports the session, POST signs in, and
 // DELETE signs out.
 func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -205,7 +215,7 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s, ok := a.current(r)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth})
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth, "gatewayAudience": nonNil(a.gatewayAudience)})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -213,6 +223,8 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"username":  s.Subject,
 			"expiresAt": time.Unix(s.Expires, 0).UTC().Format(time.RFC3339),
 			"mcpAuth":   a.mcpAuth,
+			// Routes reachable with one token for the Gateway audience.
+			"gatewayAudience": nonNil(a.gatewayAudience),
 		})
 	case http.MethodPost:
 		a.login(w, r)
@@ -417,4 +429,12 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
+}
+
+// nonNil encodes a missing list as [] rather than null.
+func nonNil(list []string) []string {
+	if list == nil {
+		return []string{}
+	}
+	return list
 }

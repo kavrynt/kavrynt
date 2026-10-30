@@ -37,6 +37,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - MCP client authentication, on by default with an explicit opt-out for
   trials: the Gateway is an OAuth 2.1 resource server with per-route token
   audiences and Protected Resource Metadata.
+- An opt-in Gateway audience: one token can reach a listed group of MCP
+  routes, with policy and audit telling it apart from a per-route token.
 
 ## Next
 

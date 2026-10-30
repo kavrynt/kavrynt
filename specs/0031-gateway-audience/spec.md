@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-28 |
 | Issue | #84 |
@@ -131,9 +131,10 @@ and values, and `SECURITY.md`.
 
 ## Open questions
 
-- Should the list also accept label selectors on `MCPServer`s instead of
-  names? Recommended: names and namespace patterns first; selectors would
-  let namespace owners add their servers to the list.
-- Should the Gateway audience be an identifier other than `resourceURL`,
-  for example `<resourceURL>/mcp`? Recommended: `resourceURL`, which is
-  already the Gateway's identifier in its metadata. The owner decides.
+Resolved when the spec was accepted (see [plan.md](plan.md)):
+
+- Label selectors on `MCPServer`s: not now. The list takes route names and
+  namespace patterns; selectors would let namespace owners add their
+  servers to the list.
+- The Gateway audience is `resourceURL`, already the Gateway's identifier
+  in its metadata.
