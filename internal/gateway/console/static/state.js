@@ -91,10 +91,12 @@
     return null;
   }
 
-  // routeList keeps the strings of a route list from the Gateway, bounded.
+  // routeList keeps the strings of a route list from the Gateway. The
+  // Gateway validated every route at start; none is dropped, so the notice
+  // names every route the Gateway audience reaches (SPEC-0031-R06).
   function routeList(value) {
     if (!Array.isArray(value)) return [];
-    return value.filter((route) => typeof route === "string" && route.length > 0 && route.length <= 260).slice(0, 100);
+    return value.filter((route) => typeof route === "string" && route.length > 0);
   }
 
   // noticeShown reports whether the banner is shown: from any address other

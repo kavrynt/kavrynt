@@ -175,6 +175,11 @@ test("the notice names the routes that share the Gateway audience", () => {
   const auth = sessionState(200, { enabled: true, username: "admin", mcpAuth: true, gatewayAudience: ["team-a.*", "team-c.reports", 7, ""] });
   assert.deepEqual(auth.gatewayAudience, ["team-a.*", "team-c.reports"]);
   assert.deepEqual(sessionState(200, { enabled: false, gatewayAudience: "team-a.*" }).gatewayAudience, []);
+  // Long names and long lists are kept whole.
+  const many = Array.from({ length: 150 }, (_, i) => "team-" + i + "." + "a".repeat(250));
+  const kept = sessionState(200, { enabled: false, mcpAuth: true, gatewayAudience: many });
+  assert.deepEqual(kept.gatewayAudience, many);
+  assert.equal(noticeShown("localhost", kept), true);
   assert.match(notice(auth).text, /Gateway audience reaches every one of these routes: team-a\.\*, team-c\.reports\./);
   assert.doesNotMatch(notice({ enabled: true, mcpAuth: true, gatewayAudience: [] }).text, /Gateway audience/);
 
