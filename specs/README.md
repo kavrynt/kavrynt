@@ -141,10 +141,18 @@ against the assistant's summary of them.
 | [0014](0014-client-auth-by-default/spec.md) | MCP client authentication on by default | Implemented |
 | [0015](0015-upstream-token-exchange/spec.md) | Upstream token exchange | Implemented |
 | [0016](0016-policy-filtered-tools-list/spec.md) | Policy-filtered tools/list | Implemented |
-| [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Draft |
+| [0017](0017-audit-delivery-to-cloud/spec.md) | Audit delivery to Kavrynt Cloud | Implemented |
 | [0018](0018-streamable-http-routing/spec.md) | MCP Streamable HTTP routing | Implemented |
 | [0019](0019-kavryctl-upgrade-rollback/spec.md) | kavryctl upgrade and rollback | Implemented |
-| [0020](0020-console-alerts/spec.md) | Alerts in the console | Draft |
-| [0021](0021-tool-and-discovery-alerts/spec.md) | Tool error and discovery alerts | Draft |
-| [0022](0022-alert-notifications/spec.md) | Alert notifications | Draft |
-| [0023](0023-custom-dashboards/spec.md) | Custom dashboards | Draft |
+| [0020](0020-console-alerts/spec.md) | Alerts in the console | Implemented |
+| [0021](0021-tool-and-discovery-alerts/spec.md) | Tool error and discovery alerts | Implemented |
+| [0022](0022-alert-notifications/spec.md) | Alert notifications | Implemented |
+| [0023](0023-custom-dashboards/spec.md) | Custom dashboards | Implemented |
+| [0024](0024-console-dashboards/spec.md) | Console dashboards | Implemented |
+| [0025](0025-tool-call-approvals/spec.md) | Approvals for tool calls | Draft |
+| [0026](0026-mcp-session-affinity/spec.md) | MCP session affinity | Implemented |
+| [0027](0027-discovery-diagnostics/spec.md) | Discovery diagnostics | Implemented |
+| [0028](0028-tool-annotations-in-policy/spec.md) | Tool annotations in policy | Implemented |
+| [0029](0029-mcpserver-endpoint-scope/spec.md) | MCPServer endpoint scope | Implemented |
+| [0030](0030-console-login-behind-proxy/spec.md) | Console login limits behind a proxy | Implemented |
+| [0031](0031-gateway-audience/spec.md) | Gateway audience | Draft |

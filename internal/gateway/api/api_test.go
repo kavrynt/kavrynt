@@ -1,6 +1,7 @@
 package api
 
 import (
+	"encoding/json"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -54,7 +55,7 @@ func TestListRoutesAndReadiness(t *testing.T) {
 
 func TestProxyHTTPRoute(t *testing.T) {
 	table := routing.NewTable()
-	table.Replace([]model.Route{{Name: "demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp"}}, time.Now())
+	table.Replace([]model.Route{{Name: "demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp", ForwardSubpaths: true}}, time.Now())
 
 	var gotURL string
 	var gotBody string
@@ -141,6 +142,8 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 			Header: http.Header{
 				"Content-Type": []string{"application/json"},
 				"Set-Cookie":   []string{"session=upstream"},
+				"Server":       []string{"uvicorn Python/3.12"},
+				"X-Powered-By": []string{"Express"},
 				"X-Upstream":   []string{"1"},
 			},
 			Body: io.NopCloser(strings.NewReader(`{}`)),
@@ -174,8 +177,12 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 			t.Errorf("upstream missing %s", name)
 		}
 	}
-	if rr.Header().Get("Set-Cookie") != "" {
-		t.Errorf("client received upstream Set-Cookie: %q", rr.Header().Get("Set-Cookie"))
+	// Set-Cookie would apply to the shared Gateway origin; Server and
+	// X-Powered-By disclose the upstream's software (issue #80).
+	for _, name := range []string{"Set-Cookie", "Server", "X-Powered-By"} {
+		if value := rr.Header().Get(name); value != "" {
+			t.Errorf("client received upstream %s: %q", name, value)
+		}
 	}
 	if rr.Header().Get("X-Upstream") != "1" {
 		t.Error("client missing X-Upstream response header")
@@ -185,5 +192,33 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 	handler.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(metrics.Body.String(), "kavrynt_gateway_stripped_credential_requests_total 1") {
 		t.Fatalf("metrics missing stripped count:\n%s", metrics.Body.String())
+	}
+}
+
+// A registered server the Gateway does not route says why, instead of
+// claiming it is not registered (issue #87).
+func TestProxyExplainsUnroutedServers(t *testing.T) {
+	handler, calls := demoHandler(t, okResponse)
+	handler.table.ReplaceServers([]model.Server{
+		{Namespace: "team-a", Name: "files", Route: "team-a.files", Transport: "stdio"},
+		{Namespace: "team-a", Name: "pending", Route: "team-a.pending", Transport: "http"},
+	})
+	for route, want := range map[string]string{
+		"team-a.files":   `MCP server "team-a.files" uses the stdio transport, which the Gateway does not proxy; run it behind a Streamable HTTP bridge and register the bridge's http endpoint`,
+		"team-a.pending": `MCP server "team-a.pending" is registered but not routed; check its Ready condition`,
+		"team-a.missing": `MCP server "team-a.missing" is not registered`,
+	} {
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/"+route, strings.NewReader(`{}`)))
+		var body errorResponse
+		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
+			t.Fatal(err)
+		}
+		if rr.Code != http.StatusNotFound || body.Error != want {
+			t.Errorf("%s: %d %q, want 404 %q", route, rr.Code, body.Error, want)
+		}
+	}
+	if *calls != 0 {
+		t.Fatalf("%d requests reached an MCP server", *calls)
 	}
 }

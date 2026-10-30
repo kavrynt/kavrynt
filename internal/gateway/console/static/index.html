@@ -11,6 +11,7 @@
        --allowed-origins, leaving the console blank behind an Ingress. -->
   <script src="format.js" defer></script>
   <script src="stats.js" defer></script>
+  <script src="charts.js" defer></script>
   <script src="state.js" defer></script>
   <script src="dom.js" defer></script>
   <script src="playground.js" defer></script>
@@ -26,10 +27,12 @@
       </a>
       <ul class="nav">
         <li><a href="#/overview" data-nav="overview"><span class="nav-icon" aria-hidden="true">&#9673;</span>Overview</a></li>
+        <li><a href="#/dashboard" data-nav="dashboard"><span class="nav-icon" aria-hidden="true">&#9636;</span>Dashboard</a></li>
         <li><a href="#/servers" data-nav="servers"><span class="nav-icon" aria-hidden="true">&#9638;</span>Servers</a></li>
         <li><a href="#/tools" data-nav="tools"><span class="nav-icon" aria-hidden="true">&#9881;</span>Tools</a></li>
         <li><a href="#/playground" data-nav="playground"><span class="nav-icon" aria-hidden="true">&#9654;</span>Playground</a></li>
         <li><a href="#/traffic" data-nav="traffic"><span class="nav-icon" aria-hidden="true">&#8776;</span>Traffic</a></li>
+        <li><a href="#/alerts" data-nav="alerts"><span class="nav-icon" aria-hidden="true">&#9888;</span>Alerts<span class="nav-count" id="alert-count" hidden>0</span></a></li>
       </ul>
       <div class="sidebar-foot">
         <div class="gw-status" id="gw-status" role="status"><span class="dot"></span><span>Connecting&hellip;</span></div>

@@ -7,6 +7,18 @@
 {{- if and $policy.enabled (not $policy.configMap) }}
 {{- fail "policy.configMap is required when policy.enabled is true: the ConfigMap with the .rego files" }}
 {{- end }}
+{{- $auditCloud := ((.Values.audit | default dict).cloud | default dict) }}
+{{- if $auditCloud.enabled }}
+{{- if not .Values.audit.enabled }}
+{{- fail "audit.cloud.enabled needs audit.enabled: only written audit events are delivered" }}
+{{- end }}
+{{- if not (hasPrefix "https://" ($auditCloud.url | default "")) }}
+{{- fail "audit.cloud.url must be an https URL when audit.cloud.enabled is true" }}
+{{- end }}
+{{- if not ($auditCloud.tokenSecret | default dict).name }}
+{{- fail "audit.cloud.tokenSecret.name is required when audit.cloud.enabled is true" }}
+{{- end }}
+{{- end }}
 {{- if and $policy.filterToolsList (not $policy.enabled) }}
 {{- fail "policy.filterToolsList needs policy.enabled: the tools are filtered by the policy" }}
 {{- end }}
@@ -107,13 +119,28 @@ spec:
             - --audit-on-overflow={{ .onOverflow | default "reject" }}
             {{- end }}
             {{- end }}
+            {{- if $auditCloud.enabled }}
+            - --audit-cloud-url={{ $auditCloud.url }}
+            - --audit-cloud-token-file=/etc/kavrynt/audit-cloud/token
+            - --audit-cloud-buffer-size={{ $auditCloud.bufferSize | default 100000 | int }}
+            {{- end }}
+            - {{ printf "--token-exchange-audiences=%s" ((.Values.global | default dict).tokenExchangeAudiences | default dict | toJson) | quote }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true
             - --console-auth-dir=/etc/kavrynt/console-auth
             - --console-session-ttl={{ .Values.console.auth.sessionTTL | default "12h" }}
+            {{- with .Values.console.auth.trustedProxies }}
+            - --console-trusted-proxies={{ join "," . }}
+            {{- end }}
             {{- else }}
             - --console-auth=false
+            {{- end }}
+            - --alerts-config=/etc/kavrynt/alerts/config.json
+            {{- $console := .Values.console | default dict }}
+            - --history-max-tools={{ (($console.history | default dict).maxTools | default 500) | int }}
+            {{- with $console.grafanaURL }}
+            - --grafana-url={{ . }}
             {{- end }}
           env:
             # Names this replica in /v1/traffic (SPEC-0008-R06).
@@ -136,10 +163,12 @@ spec:
             {{- toYaml .Values.securityContext | nindent 12 }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
-          {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
-          # The kubelet mounts these Secrets; the Gateway's service account has
-          # no RBAC on Secrets.
+          # The kubelet mounts these Secrets and ConfigMaps; the Gateway's
+          # service account has no RBAC on either.
           volumeMounts:
+            - name: console-alerts
+              mountPath: /etc/kavrynt/alerts
+              readOnly: true
             {{- if include "gateway.consoleAuthEnabled" . }}
             - name: console-auth
               mountPath: /etc/kavrynt/console-auth
@@ -160,9 +189,19 @@ spec:
               mountPath: /etc/kavrynt/token-exchange
               readOnly: true
             {{- end }}
-          {{- end }}
-      {{- if or (include "gateway.consoleAuthEnabled" .) $credentials $policy.enabled $exchange }}
+            {{- if $auditCloud.enabled }}
+            - name: audit-cloud-token
+              mountPath: /etc/kavrynt/audit-cloud
+              readOnly: true
+            {{- end }}
       volumes:
+        # Console alert thresholds, which the umbrella chart writes from
+        # metrics.prometheusRule (SPEC-0020-R03). Optional: without it the
+        # Gateway uses the defaults.
+        - name: console-alerts
+          configMap:
+            name: {{ .Release.Name }}-console-alerts
+            optional: true
         {{- if include "gateway.consoleAuthEnabled" . }}
         - name: console-auth
           secret:
@@ -195,7 +234,17 @@ spec:
             secretName: {{ $exchange | quote }}
             defaultMode: 0444
         {{- end }}
-      {{- end }}
+        {{- if $auditCloud.enabled }}
+        # The cluster token for audit delivery (SPEC-0017), as the file token.
+        # Not optional: delivery needs it.
+        - name: audit-cloud-token
+          secret:
+            secretName: {{ $auditCloud.tokenSecret.name | quote }}
+            defaultMode: 0444
+            items:
+              - key: {{ $auditCloud.tokenSecret.key | default "token" | quote }}
+                path: token
+        {{- end }}
       {{- with .Values.nodeSelector }}
       nodeSelector:
         {{- toYaml . | nindent 8 }}

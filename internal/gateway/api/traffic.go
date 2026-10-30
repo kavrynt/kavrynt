@@ -70,6 +70,10 @@ const (
 	// The caller's token could not be exchanged for one for the server
 	// (SPEC-0015-R06).
 	outcomeExchangeFailed = "exchange_failed"
+
+	// An MCP session the server, or with session affinity the Gateway, does
+	// not know (SPEC-0026-R10).
+	outcomeSessionNotFound = "session_not_found"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.
@@ -144,55 +148,209 @@ func inspectBody(prefix []byte) bodyInfo {
 	if len(prefix) > maxInspectBytes {
 		return info
 	}
-	var message struct {
-		ID     json.RawMessage `json:"id"`
-		Method string          `json:"method"`
-		Params json.RawMessage `json:"params"`
-	}
-	// A JSON-RPC batch is an array and does not decode into the struct.
-	if json.Unmarshal(prefix, &message) != nil {
+	// A JSON-RPC batch is an array and is not an object.
+	message, ok := unambiguousObject(prefix, "jsonrpc", "id", "method", "params")
+	if !ok {
 		return info
 	}
-	info.classified, info.method, info.id = true, message.Method, message.ID
-	if message.Method == "tools/call" {
-		var params struct {
-			Name *string `json:"name"`
-		}
-		if json.Unmarshal(message.Params, &params) == nil && params.Name != nil {
-			info.tool, info.toolOK = *params.Name, true
+	var method string
+	if raw, present := message["method"]; present && json.Unmarshal(raw, &method) != nil {
+		return info
+	}
+	info.classified, info.method, info.id = true, method, message["id"]
+	if method == "tools/call" {
+		params, ok := unambiguousObject(message["params"], "name")
+		var name string
+		if ok && params["name"] != nil && json.Unmarshal(params["name"], &name) == nil {
+			info.tool, info.toolOK = name, true
 		}
 	}
 	return info
 }
 
-// classifyResponse maps an upstream response to an outcome. body holds at
-// most maxInspectBytes of a JSON response; nil when not captured.
-func classifyResponse(status int, body *captureBuffer) string {
+// unambiguousObject returns the members of the JSON object raw, or false
+// when it is not one object, or when any of fields could be read two ways:
+// a member appears twice, or another member matches it only as Go's
+// encoding/json matches names (case-insensitively, with Unicode folding).
+// MCP servers in other languages match names exactly and may keep the first
+// of two, so the Gateway's policy, audit, and metrics would otherwise decide
+// on a different message than the server runs (SPEC-0012-R09).
+func unambiguousObject(raw []byte, fields ...string) (map[string]json.RawMessage, bool) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	if token, err := decoder.Token(); err != nil || token != json.Delim('{') {
+		return nil, false
+	}
+	members := map[string]json.RawMessage{}
+	for decoder.More() {
+		token, err := decoder.Token()
+		if err != nil {
+			return nil, false
+		}
+		name := token.(string)
+		var value json.RawMessage
+		if err := decoder.Decode(&value); err != nil {
+			return nil, false
+		}
+		if _, seen := members[name]; seen {
+			return nil, false
+		}
+		for _, field := range fields {
+			if name != field && strings.EqualFold(name, field) {
+				return nil, false
+			}
+		}
+		members[name] = value
+	}
+	if _, err := decoder.Token(); err != nil {
+		return nil, false
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, false
+	}
+	return members, true
+}
+
+// probeMethods are methods clients call to learn whether a server offers
+// them, so "method not found" is a normal answer and not an error.
+var probeMethods = map[string]bool{"server/discover": true}
+
+// jsonRPCMethodNotFound is the JSON-RPC error code of an unknown method.
+const jsonRPCMethodNotFound = -32601
+
+// classifyResponse maps an upstream response to an outcome. message is the
+// JSON-RPC response read from a JSON answer or event stream; nil when none
+// was read.
+func classifyResponse(r *http.Request, call mcpCall, status int, message []byte) string {
 	switch {
+	case status == http.StatusMethodNotAllowed && (r.Method == http.MethodGet || r.Method == http.MethodDelete):
+		// The MCP answer of a server that does not offer the optional GET
+		// stream or client-terminated sessions.
+		return outcomeOK
 	case status >= 500:
 		return outcomeUpstreamError
+	case status == http.StatusNotFound && r.Header.Get(sessionHeader) != "":
+		return outcomeSessionNotFound
 	case status >= 400:
 		return outcomeClientError
 	}
-	if body == nil || body.truncated {
+	if message == nil {
 		return outcomeOK
 	}
-	var message struct {
+	var response struct {
 		Error  json.RawMessage `json:"error"`
 		Result struct {
 			IsError bool `json:"isError"`
 		} `json:"result"`
 	}
-	if json.Unmarshal(body.Bytes(), &message) != nil {
+	if json.Unmarshal(message, &response) != nil {
 		return outcomeOK
 	}
-	if len(message.Error) > 0 && string(message.Error) != "null" {
+	if len(response.Error) > 0 && string(response.Error) != "null" {
+		var rpcErr struct {
+			Code int `json:"code"`
+		}
+		if probeMethods[call.method] && json.Unmarshal(response.Error, &rpcErr) == nil && rpcErr.Code == jsonRPCMethodNotFound {
+			return outcomeOK
+		}
 		return outcomeRPCError
 	}
-	if message.Result.IsError {
+	if response.Result.IsError {
 		return outcomeToolError
 	}
 	return outcomeOK
+}
+
+// isResponseTo reports whether message is a JSON-RPC response to the request
+// with id; any response when id is unknown.
+func isResponseTo(message []byte, id json.RawMessage) bool {
+	var envelope struct {
+		ID     json.RawMessage `json:"id"`
+		Result json.RawMessage `json:"result"`
+		Error  json.RawMessage `json:"error"`
+	}
+	if json.Unmarshal(message, &envelope) != nil || (envelope.Result == nil && envelope.Error == nil) {
+		return false
+	}
+	if len(id) == 0 {
+		return true
+	}
+	var got, want bytes.Buffer
+	return json.Compact(&got, envelope.ID) == nil && json.Compact(&want, id) == nil && got.String() == want.String()
+}
+
+// streamObserver reads a text/event-stream answer as it is copied to the
+// client and keeps the first event that carries the JSON-RPC response to the
+// request. It holds one event at a time; an event larger than
+// maxInspectBytes is skipped. Writes never fail, so it cannot interrupt a
+// response.
+type streamObserver struct {
+	id json.RawMessage
+	// line is the current line; lineLen counts its bytes even when skipped.
+	line    bytes.Buffer
+	lineLen int
+	// data is the current event's data, its lines joined by "\n".
+	data    bytes.Buffer
+	hasData bool
+	skip    bool
+	// response is the JSON-RPC response, once seen.
+	response []byte
+}
+
+func (s *streamObserver) Write(p []byte) (int, error) {
+	n := len(p)
+	for len(p) > 0 && s.response == nil {
+		chunk, rest, complete := bytes.Cut(p, []byte("\n"))
+		s.lineLen += len(chunk)
+		if !s.skip {
+			if s.line.Len()+s.data.Len()+len(chunk) > maxInspectBytes {
+				s.skip = true
+				s.line.Reset()
+				s.data.Reset()
+			} else {
+				s.line.Write(chunk)
+			}
+		}
+		if !complete {
+			break
+		}
+		s.endLine()
+		p = rest
+	}
+	return n, nil
+}
+
+// finish ends a stream whose last event has no closing blank line.
+func (s *streamObserver) finish() {
+	if s.response == nil && s.lineLen > 0 {
+		s.endLine()
+	}
+	s.dispatch()
+}
+
+func (s *streamObserver) endLine() {
+	line := bytes.TrimSuffix(s.line.Bytes(), []byte("\r"))
+	switch {
+	case len(line) == 0 && s.lineLen <= 1:
+		s.dispatch()
+	case !s.skip:
+		if field, value, ok := bytes.Cut(line, []byte(":")); ok && string(field) == "data" {
+			if s.hasData {
+				s.data.WriteByte('\n')
+			}
+			s.data.Write(bytes.TrimPrefix(value, []byte(" ")))
+			s.hasData = true
+		}
+	}
+	s.line.Reset()
+	s.lineLen = 0
+}
+
+func (s *streamObserver) dispatch() {
+	if s.response == nil && !s.skip && s.hasData && isResponseTo(s.data.Bytes(), s.id) {
+		s.response = bytes.Clone(s.data.Bytes())
+	}
+	s.data.Reset()
+	s.hasData, s.skip = false, false
 }
 
 func classifyTransportError(err error) string {
@@ -369,6 +527,10 @@ type trafficMetrics struct {
 	tools    *labelLimiter
 }
 
+// durationBuckets are the latency buckets of the duration histogram, and of
+// the console alerts' latency (SPEC-0020-R01).
+var durationBuckets = []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30}
+
 func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 	labels := []string{"route", "method", "tool", "outcome"}
 	m := &trafficMetrics{
@@ -379,7 +541,7 @@ func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 		duration: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Name:    "kavrynt_gateway_mcp_request_duration_seconds",
 			Help:    "Time from receiving an MCP request to the end of the upstream response.",
-			Buckets: []float64{0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10, 30},
+			Buckets: durationBuckets,
 		}, labels),
 		bytes: prometheus.NewCounterVec(prometheus.CounterOpts{
 			Name: "kavrynt_gateway_mcp_bytes_total",
@@ -392,13 +554,15 @@ func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 	return m
 }
 
-func (m *trafficMetrics) observe(route string, call mcpCall, outcome string, elapsed time.Duration, bytesIn, bytesOut int64) {
+// observe records a request and returns its bounded method and tool labels.
+func (m *trafficMetrics) observe(route string, call mcpCall, outcome string, elapsed time.Duration, bytesIn, bytesOut int64) (string, string) {
 	method := m.methods.admit(route, sanitizeLabel(call.method, maxMethodLength))
 	tool := m.tools.admit(route, sanitizeLabel(call.tool, maxToolLength))
 	m.requests.WithLabelValues(route, method, tool, outcome).Inc()
 	m.duration.WithLabelValues(route, method, tool, outcome).Observe(elapsed.Seconds())
 	m.bytes.WithLabelValues(route, "in").Add(float64(bytesIn))
 	m.bytes.WithLabelValues(route, "out").Add(float64(bytesOut))
+	return method, tool
 }
 
 // newRegistry returns a registry with the Gateway's operational metrics, Go

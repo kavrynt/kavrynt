@@ -6,7 +6,7 @@ CLUSTER_NAME="${KIND_CLUSTER_NAME:-kavrynt-alpha0}"
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 CONTROL_NAMESPACE="kavrynt-system"
 E2E_NAMESPACE="kavrynt-e2e"
-LOCAL_VERSION="${LOCAL_VERSION:-1.0.0-beta.2-local}"
+LOCAL_VERSION="${LOCAL_VERSION:-1.0.0-beta.3-local}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 
 GATEWAY_IMAGE="kavrynt/gateway:${LOCAL_VERSION}"
@@ -32,6 +32,22 @@ require_command() {
 
 git_commit() {
   git -C "${ROOT_DIR}" rev-parse --short=12 HEAD 2>/dev/null || printf 'unknown'
+}
+
+# control_logs prints the whole logs of every pod in the control namespace
+# that matches a label selector. A Deployment's rollout is complete while
+# old pods still drain, so a pod listed here may be gone before its logs are
+# read; such a pod is skipped (its logs cannot be read any more), any other
+# error fails.
+control_logs() {
+  local pod
+  for pod in $(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get pods --selector "$1" --output name); do
+    if ! kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 "${pod}" 2>"${TEMP_DIR}/logs-error"; then
+      kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get "${pod}" >/dev/null 2>&1 &&
+        fail "cannot read the logs of ${pod}: $(cat "${TEMP_DIR}/logs-error")"
+      log "skipping the logs of ${pod}, which terminated while they were read" >&2
+    fi
+  done
 }
 
 diagnostics() {
@@ -296,6 +312,7 @@ helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --create-namespace \
   --values "${ROOT_DIR}/examples/helm/values-production.yaml" \
   --set gateway.auth.enabled=false \
+  --set metrics.prometheusRule.discoveryFailingFor=30s \
   --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials \
   --set networkPolicy.mcpServers.enabled=true \
   --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
@@ -315,8 +332,7 @@ done
 
 # Verifies SPEC-0014-R03. The logs are read first: grep --quiet would stop
 # reading early and fail the pipeline.
-GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+GATEWAY_LOGS="$(control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
 grep --fixed-strings --quiet "MCP client authentication is off" <<<"${GATEWAY_LOGS}" ||
   fail "the Gateway did not warn that MCP routes are unauthenticated"
 
@@ -328,6 +344,11 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   rollout status deployment/example-mcp-server --timeout=120s
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/example-mcp-server --for=condition=Ready --timeout=120s
+# The checks of forwarded headers call the sample server's /debug/headers,
+# a path below the route (SPEC-0029-R03). Patched rather than in the
+# manifest, which the upgrade checks also apply to older CRDs.
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" patch mcpserver/example-mcp-server \
+  --type merge --patch '{"spec":{"forwardSubpaths":true}}' >/dev/null
 
 # Verifies SPEC-0009-R01 and SPEC-0009-R04.
 log "verifying the chart installed the CRD from config/crd/bases"
@@ -374,13 +395,21 @@ for verb in create update patch delete; do
   [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" mcpservers.kavrynt.io --as="${GATEWAY_SA}" -A)" = "no" ] ||
     fail "Gateway must not ${verb} MCPServers"
 done
+# Verifies SPEC-0026-R12: read-only EndpointSlices, for session affinity.
+for verb in get list watch; do
+  [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" endpointslices.discovery.k8s.io --as="${GATEWAY_SA}" -A)" = "yes" ] ||
+    fail "Gateway cannot ${verb} EndpointSlices"
+done
+for verb in create update patch delete; do
+  [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" endpointslices.discovery.k8s.io --as="${GATEWAY_SA}" -A)" = "no" ] ||
+    fail "Gateway must not ${verb} EndpointSlices"
+done
 # Verifies SPEC-0005-R13: the console admin Secret is mounted, not read.
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
   fail "Gateway must not read Secrets"
 
 log "verifying the Operator has the permissions it uses"
-if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=operator,app.kubernetes.io/instance=kavrynt |
+if control_logs app.kubernetes.io/name=operator,app.kubernetes.io/instance=kavrynt |
   grep --fixed-strings --quiet "forbidden"; then
   fail "Operator logged a forbidden API request; check its RBAC"
 fi
@@ -419,8 +448,57 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   wait mcpserver/unreachable-mcp-server \
   --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+# Verifies SPEC-0027-R01: kubectl get shows the failed discovery next to Ready.
+UNREACHABLE_GET="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/unreachable-mcp-server)"
+grep -q 'DISCOVERY' <<<"${UNREACHABLE_GET}" && grep -q 'DiscoveryFailed' <<<"${UNREACHABLE_GET}" ||
+  fail "kubectl get mcpserver does not show the Discovery column: ${UNREACHABLE_GET}"
+# Verifies SPEC-0027-R02: kavryctl list shows the reason in TOOLS.
+UNREACHABLE_TOOLS="$("${TEMP_DIR}/kavryctl" list --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" |
+  awk '$2 == "unreachable-mcp-server" { print $7 }')"
+[ "${UNREACHABLE_TOOLS}" = "DiscoveryFailed" ] ||
+  fail "kavryctl list TOOLS for a failed discovery is '${UNREACHABLE_TOOLS}', want DiscoveryFailed"
+# Verifies SPEC-0027-R06: the message names the host that does not resolve.
+UNREACHABLE_MESSAGE="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/unreachable-mcp-server \
+  -o jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].message}')"
+grep --fixed-strings --quiet "host unreachable-mcp-server.${E2E_NAMESPACE}.svc.cluster.local does not resolve" <<<"${UNREACHABLE_MESSAGE}" ||
+  fail "the message for a host that does not resolve is '${UNREACHABLE_MESSAGE}'"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
   delete mcpserver/unreachable-mcp-server --wait=true --timeout=60s >/dev/null
+
+# Verifies SPEC-0027-R05: a Service without ready pods is routed, and its
+# message names the host and port and says to check for ready pods.
+log "verifying the discovery message for a Service without ready pods"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Service
+metadata:
+  name: no-pods-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: no-pods-mcp-server
+  ports:
+    - port: 8080
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: no-pods-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://no-pods-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080/mcp
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/no-pods-mcp-server --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  wait mcpserver/no-pods-mcp-server \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+NO_PODS_MESSAGE="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/no-pods-mcp-server \
+  -o jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].message}')"
+grep --fixed-strings --quiet "cannot connect to no-pods-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080; check that the Service has ready pods" <<<"${NO_PODS_MESSAGE}" ||
+  fail "the message for a Service without ready pods is '${NO_PODS_MESSAGE}'"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  delete mcpserver/no-pods-mcp-server service/no-pods-mcp-server --wait=true --timeout=60s >/dev/null
 
 log "starting Gateway port-forward"
 start_gateway_port_forward
@@ -517,6 +595,66 @@ kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" get pod "${TRAFFIC
   --output jsonpath='{.metadata.labels.app\.kubernetes\.io/name}' 2>/dev/null | grep --fixed-strings --quiet gateway ||
   fail "/v1/traffic instance '${TRAFFIC_INSTANCE}' is not a Gateway pod"
 
+# Verifies SPEC-0024-R04, SPEC-0024-R05, and SPEC-0024-R12: the echo call
+# appears in the dashboards' history for its route and tool within a
+# minute, without its arguments, and unknown ranges are refused.
+log "verifying console history"
+history_has_echo() {
+  HISTORY="$(curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" \
+    "${GATEWAY_URL}/v1/history?range=1h&route=${SERVER_ID}")" &&
+    printf '%s' "${HISTORY}" | jq --exit-status --arg route "${SERVER_ID}" '
+      .scope.route == $route and (.points | map(.ok) | add) >= 1 and
+      (.tools | any(.route == $route and .tool == "echo" and .calls >= 1))' >/dev/null &&
+    curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" \
+      "${GATEWAY_URL}/v1/history?range=24h&route=${SERVER_ID}&tool=echo" |
+    jq --exit-status '(.points | map(.ok + .toolError + .upstreamError + .other) | add) >= 1' >/dev/null
+}
+for _ in $(seq 1 30); do
+  history_has_echo && break
+  sleep 2
+done
+history_has_echo || fail "/v1/history does not record the echo tool call for ${SERVER_ID}"
+if grep --fixed-strings --quiet "secret-argument" <<<"${HISTORY}"; then
+  fail "/v1/history contains tool arguments"
+fi
+HISTORY_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/history?range=7d")"
+[ "${HISTORY_STATUS}" = "400" ] || fail "/v1/history?range=7d answered HTTP ${HISTORY_STATUS}, want 400"
+
+# Verifies SPEC-0020-R09: the Gateway lists an unreachable server's failing
+# discovery once discoveryFailingFor (30s here) has passed, and drops the
+# alert when the server is deleted.
+log "verifying console alerts"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: alerting-mcp-server
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://alerting-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+MANIFEST
+ALERTING_ID="${E2E_NAMESPACE}.alerting-mcp-server"
+ALERT_FILTER='.alerts | any(.name == "DiscoveryFailing" and .scope.route == $route and (.resolvedAt | not)
+  and (.runbookURL | endswith("/KavryntMCPToolDiscoveryFailing.md")))'
+alerts_match() {
+  curl --fail --silent --show-error --cookie "${CONSOLE_COOKIES}" "${GATEWAY_URL}/v1/alerts" |
+    jq --exit-status --arg route "${ALERTING_ID}" "$1" >/dev/null
+}
+for _ in $(seq 1 60); do
+  alerts_match "${ALERT_FILTER}" && break
+  sleep 2
+done
+alerts_match "${ALERT_FILTER}" || fail "/v1/alerts does not list DiscoveryFailing for ${ALERTING_ID}"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" \
+  delete mcpserver/alerting-mcp-server --wait=true --timeout=60s >/dev/null
+for _ in $(seq 1 30); do
+  alerts_match '.alerts | any(.scope.route == $route) | not' && break
+  sleep 2
+done
+alerts_match '.alerts | any(.scope.route == $route) | not' ||
+  fail "/v1/alerts still lists ${ALERTING_ID} after it was deleted"
+
 # The console in a real browser: login, keyboard, layout, and traffic views.
 # test/console-smoke/smoke.mjs cites the requirements it verifies. CI sets
 # E2E_BROWSER=1; locally it runs when its dependencies are installed.
@@ -550,6 +688,15 @@ METADATA_STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' -
 [ "${METADATA_STATUS}" = "502" ] ||
   fail "Gateway answered a request to a metadata endpoint with HTTP ${METADATA_STATUS}, want 502"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}"   wait mcpserver/metadata-endpoint   --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=DiscoveryFailed --timeout=60s
+# Verifies SPEC-0027-R07 and SPEC-0027-R11: the message names the kind of
+# address the egress policy refuses, and not the address.
+METADATA_MESSAGE="$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpserver/metadata-endpoint \
+  -o jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].message}')"
+grep --fixed-strings --quiet "the egress policy refuses cloud metadata addresses for MCP endpoints" <<<"${METADATA_MESSAGE}" ||
+  fail "the message for a cloud metadata endpoint is '${METADATA_MESSAGE}'"
+if grep --fixed-strings --quiet "169.254.169.254" <<<"${METADATA_MESSAGE}"; then
+  fail "the message for a cloud metadata endpoint contains the address: ${METADATA_MESSAGE}"
+fi
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}"   delete mcpserver/metadata-endpoint --wait=true --timeout=60s >/dev/null
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${METADATA_ID}\") == null" 30
 
@@ -694,7 +841,7 @@ printf '%s' "${SERVERS_JSON}" | jq --exit-status --arg route "${SECURED_ID}" \
   fail "/v1/servers does not report the stored credential as available"
 for output in "${SERVERS_JSON}" "$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")" \
   "$(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" get mcpservers -o yaml)" \
-  "$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 --selector app.kubernetes.io/instance=kavrynt)"; do
+  "$(control_logs app.kubernetes.io/instance=kavrynt)"; do
   if grep --fixed-strings --quiet "${UPSTREAM_SECRET_VALUE}" <<<"${output}"; then
     fail "the upstream credential appears in an API response, status, or log"
   fi
@@ -768,6 +915,199 @@ log "rolling restart: $(grep '^progress' <<<"${LOAD_LOG}" | tail -n 1)"
 stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_url "${GATEWAY_URL}/readyz"
+
+# Verifies SPEC-0026-R03, SPEC-0026-R04, SPEC-0026-R05, SPEC-0026-R09, and
+# SPEC-0026-R10: a stateful MCP server with three replicas keeps ten agent
+# sessions of twenty calls through the Gateway replicas with MCPSession;
+# without it, sessions are lost and recorded as session_not_found.
+log "verifying MCP session affinity with a stateful three-replica server"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: stateful-mcp-server
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: stateful-mcp-server
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: stateful-mcp-server
+    spec:
+      automountServiceAccountToken: false
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 65532
+        seccompProfile:
+          type: RuntimeDefault
+      containers:
+        - name: mcp-server
+          image: ${SAMPLE_IMAGE}
+          imagePullPolicy: Never
+          env:
+            - name: STATEFUL
+              value: "true"
+          ports:
+            - name: http
+              containerPort: 8080
+          readinessProbe:
+            httpGet:
+              path: /healthz
+              port: http
+          securityContext:
+            allowPrivilegeEscalation: false
+            capabilities:
+              drop: [ALL]
+            readOnlyRootFilesystem: true
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: stateful-mcp-server
+spec:
+  selector:
+    app.kubernetes.io/name: stateful-mcp-server
+  ports:
+    - name: http
+      port: 8080
+      targetPort: http
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: stateful-affinity
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://stateful-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  sessionAffinity: MCPSession
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: stateful-plain
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://stateful-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+MANIFEST
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" rollout status deployment/stateful-mcp-server --timeout=120s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/stateful-affinity --for=condition=Ready --timeout=60s
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/stateful-affinity \
+  --for=jsonpath='{.status.conditions[?(@.type=="ToolsDiscovered")].reason}'=Discovered --timeout=120s ||
+  fail "the Operator did not discover the tools of a stateful server with session affinity"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${E2E_NAMESPACE}.stateful-affinity\") != null"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${E2E_NAMESPACE}.stateful-plain\") != null"
+# Every replica must see the route before the agents start.
+sleep 5
+
+# run_sessions runs ten agents with twenty calls each against a route from
+# inside the cluster, a new connection per request, and prints the summary.
+run_sessions() {
+  local name="$1" route="$2"
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: v1
+kind: Pod
+metadata:
+  name: ${name}
+spec:
+  restartPolicy: Never
+  automountServiceAccountToken: false
+  securityContext:
+    runAsNonRoot: true
+    runAsUser: 65532
+    seccompProfile:
+      type: RuntimeDefault
+  containers:
+    - name: sessions
+      image: ${SAMPLE_IMAGE}
+      imagePullPolicy: Never
+      args:
+        - sessions
+        - -url
+        - http://kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local:8080/mcp/${E2E_NAMESPACE}.${route}
+      securityContext:
+        allowPrivilegeEscalation: false
+        capabilities:
+          drop: [ALL]
+        readOnlyRootFilesystem: true
+MANIFEST
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait "pod/${name}" \
+    --for=jsonpath='{.status.phase}'=Succeeded --timeout=180s >/dev/null ||
+    fail "the session client ${name} did not finish: $(kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" logs "pod/${name}" | tail -n 5)"
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" logs "pod/${name}"
+}
+AFFINITY_LOG="$(run_sessions sessions-affinity stateful-affinity)"
+grep --quiet '^done sessions=10 ok=200 failed=0$' <<<"${AFFINITY_LOG}" ||
+  fail "sessions failed with session affinity: $(grep -E '^(FAIL|done)' <<<"${AFFINITY_LOG}" | head -n 5)"
+log "session affinity: $(tail -n 1 <<<"${AFFINITY_LOG}")"
+PLAIN_LOG="$(run_sessions sessions-plain stateful-plain)"
+grep --quiet '^done .* failed=0$' <<<"${PLAIN_LOG}" &&
+  fail "a stateful three-replica server kept every session without session affinity; the test cannot tell affinity apart"
+log "without session affinity: $(tail -n 1 <<<"${PLAIN_LOG}")"
+# The port-forwarded replica served part of those requests.
+curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
+  grep --quiet "outcome=\"session_not_found\",route=\"${E2E_NAMESPACE}.stateful-plain\"" ||
+  fail "lost sessions were not recorded as session_not_found"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
+  mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
+  --wait=false >/dev/null
+
+# Verifies SPEC-0029-R01, SPEC-0029-R02, SPEC-0029-R04, and SPEC-0029-R08:
+# only MCP methods and the route's own path reach a server, an endpoint in
+# another namespace is not routed, and neither is an unlisted token
+# exchange audience.
+log "verifying the Gateway forwards only MCP requests and endpoints stay in their namespace"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-plain
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-cross
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local:8080/mcp
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-audience
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  tokenExchange:
+    audience: https://unlisted.e2e.test
+MANIFEST
+SCOPE_ID="${E2E_NAMESPACE}.scope-plain"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SCOPE_ID}\") != null"
+HEADERS="$(curl --silent --output /dev/null --dump-header - --request PUT "${GATEWAY_URL}/mcp/${SCOPE_ID}" --data '{}')"
+grep --quiet --ignore-case '^HTTP/[0-9.]* 405' <<<"${HEADERS}" && grep --quiet --ignore-case '^allow: GET, POST, DELETE' <<<"${HEADERS}" ||
+  fail "a PUT to an MCP route was not refused with 405 and Allow: ${HEADERS}"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' "${GATEWAY_URL}/mcp/${SCOPE_ID}/debug/headers")"
+[ "${STATUS}" = "404" ] || fail "a path below a route without forwardSubpaths answered HTTP ${STATUS}, want 404"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-cross \
+  --for=jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'=EndpointNotAllowed --timeout=60s ||
+  fail "an endpoint in another namespace was not refused with EndpointNotAllowed"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-audience \
+  --for=jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'=AudienceNotAllowed --timeout=60s ||
+  fail "an unlisted token exchange audience was not refused with AudienceNotAllowed"
+curl --fail --silent --show-error "${GATEWAY_URL}/v1/routes" |
+  jq --exit-status --arg cross "${E2E_NAMESPACE}.scope-cross" --arg audience "${E2E_NAMESPACE}.scope-audience" \
+    '.routes | map(.name) | (index($cross) == null and index($audience) == null)' >/dev/null ||
+  fail "the Gateway routes a server whose endpoint or audience is not allowed"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/scope-plain mcpserver/scope-cross mcpserver/scope-audience --wait=false >/dev/null
 
 # Verifies SPEC-0008-R08 and SPEC-0008-R11: deleting the Operator leader lets
 # the standby replica reconcile new servers.
@@ -867,6 +1207,7 @@ MANIFEST
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" rollout status deployment/e2e-issuer --timeout=120s
 
 log "enabling MCP client authentication"
+TICKETS_AUDIENCE="https://tickets.e2e.test"
 helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --kube-context "${KUBE_CONTEXT}" \
   --namespace "${CONTROL_NAMESPACE}" \
@@ -875,6 +1216,7 @@ helm upgrade kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --set gateway.auth.resourceURL="${RESOURCE_URL}" \
   --set-json "gateway.auth.issuers=[{\"issuer\":\"${ISSUER_URL}\",\"allowHTTP\":true,\"tokenExchange\":{\"clientID\":\"kavrynt-gateway\",\"clientSecretKey\":\"client-secret\"}}]" \
   --set gateway.auth.tokenExchangeSecret=kavrynt-token-exchange \
+  --set-json "global.tokenExchangeAudiences={\"${E2E_NAMESPACE}\":[\"${TICKETS_AUDIENCE}\"]}" \
   --set "gateway.auth.requiredScopes={mcp:tools}" \
   --wait --timeout 180s >/dev/null
 kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
@@ -939,15 +1281,13 @@ curl --silent "${GATEWAY_URL}/v1/session" | jq --exit-status '.mcpAuth == true' 
 curl --fail --silent --show-error "${GATEWAY_URL}/v1/routes" |
   jq --exit-status --arg route "${SERVER_ID}" '(.routes | map(.name) | index($route) != null) and all(.routes[]; has("endpoint") | not)' >/dev/null ||
   fail "/v1/routes lists endpoints while MCP client authentication is on"
-if kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt | grep --fixed-strings --quiet "${TOKEN}"; then
+if control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt | grep --fixed-strings --quiet "${TOKEN}"; then
   fail "the Gateway logged an access token"
 fi
 
 # Verifies SPEC-0015-R09 and SPEC-0015-R10: a server that needs a token for
 # its own audience gets the caller's exchanged token, never the caller's.
 log "verifying token exchange for a server with its own audience"
-TICKETS_AUDIENCE="https://tickets.e2e.test"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" apply -f - >/dev/null <<MANIFEST
 apiVersion: kavrynt.io/v1alpha1
 kind: MCPServer
@@ -957,6 +1297,7 @@ spec:
   version: 0.0.1
   transport: http
   endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
+  forwardSubpaths: true
   tokenExchange:
     audience: ${TICKETS_AUDIENCE}
     scopes: [tickets:read]
@@ -981,8 +1322,7 @@ FORWARDED_CLAIMS="$(printf '%s' "${FORWARDED_TOKEN}" | cut -d. -f2 | tr '_-' '/+
 printf '%s' "${FORWARDED_CLAIMS}" | jq --exit-status --arg aud "${TICKETS_AUDIENCE}" \
   '.aud == $aud and .sub == "e2e-user" and .act.sub == "e2e-agent" and .scope == "tickets:read"' >/dev/null ||
   fail "the exchanged token does not carry the server's audience and the caller: ${FORWARDED_CLAIMS}"
-GATEWAY_LOGS="$(kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
+GATEWAY_LOGS="$(control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt)"
 for value in "${TICKETS_CALLER}" "${FORWARDED_TOKEN}" "${EXCHANGE_CLIENT_SECRET}"; do
   if grep --fixed-strings --quiet "${value}" <<<"${GATEWAY_LOGS}$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"; then
     fail "a token or the client secret appears in the Gateway logs or metrics"
@@ -1065,8 +1405,7 @@ log "verifying audit events and their chains"
 STATUS="$(mcp_status)"
 [ "${STATUS}" = "401" ] || fail "a call without a token answered HTTP ${STATUS}, want 401"
 sleep 2
-kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" logs --tail=-1 --prefix=false \
-  --selector app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
+control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
 grep '"type":"kavrynt.audit.v1"' "${TEMP_DIR}/gateway-audit.log" | jq --slurp --exit-status '
   any(.[]; .client_id == "e2e-agent" and .tool == "echo" and .decision == "allow" and .outcome == "ok" and .status == 200) and
   any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 403) and
@@ -1120,7 +1459,7 @@ wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 # - UPGRADE_FROM_VERSION, the previous release: kavryctl upgrade to the build
 #   under test and kavryctl rollback to it.
 LEGACY_FROM_VERSION="${LEGACY_FROM_VERSION:-0.0.5-beta.1}"
-UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.1}"
+UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.2}"
 UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
 LOCAL_IMAGE_ARGS=(
   --kube-context "${KUBE_CONTEXT}"

@@ -7,6 +7,8 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"net/netip"
+	"reflect"
 	"strings"
 	"sync"
 	"testing"
@@ -119,7 +121,7 @@ func tool(name string) map[string]any {
 
 func listTools(t *testing.T, server *fakeServer) (Result, error) {
 	t.Helper()
-	return New("test", server).ListTools(context.Background(), endpoint, nil)
+	return New("test", server).ListTools(context.Background(), endpoint, netip.AddrPort{}, nil)
 }
 
 func TestListToolsOverJSON(t *testing.T) {
@@ -282,7 +284,7 @@ func TestListToolsErrorsNeverEchoServerText(t *testing.T) {
 				http.Error(w, "upstream-secret", http.StatusUnauthorized)
 				return true
 			},
-			want: "initialize returned HTTP 401",
+			want: "initialize returned HTTP 401; the server needs a credential: set spec.credential for a stored key, or spec.tokenExchange for the caller's own token",
 		},
 		{
 			name: "redirect is not followed",
@@ -321,7 +323,7 @@ func TestListToolsErrorsNeverEchoServerText(t *testing.T) {
 				fmt.Fprint(w, "<html>")
 				return true
 			},
-			want: "initialize: unsupported response content type",
+			want: "initialize: the answer is neither application/json nor text/event-stream; the endpoint does not look like an MCP Streamable HTTP endpoint",
 		},
 		{
 			name: "invalid session ID",
@@ -406,7 +408,7 @@ func TestListToolsSendsTheCredentialHeader(t *testing.T) {
 	server.sessionID = "session-1"
 	header := http.Header{}
 	header.Set("X-API-Key", "stored-secret")
-	if _, err := New("test", server).ListTools(context.Background(), endpoint, header); err != nil {
+	if _, err := New("test", server).ListTools(context.Background(), endpoint, netip.AddrPort{}, header); err != nil {
 		t.Fatal(err)
 	}
 	if len(server.requests) < 3 {
@@ -415,6 +417,93 @@ func TestListToolsSendsTheCredentialHeader(t *testing.T) {
 	for i, req := range server.requests {
 		if got := req.Header.Values("X-API-Key"); len(got) != 1 || got[0] != "stored-secret" {
 			t.Fatalf("request %d (%s) X-API-Key = %q", i, server.methods[i], got)
+		}
+	}
+}
+
+// Verifies SPEC-0028-R01: only the four hints, only as JSON booleans, and
+// only under their exact names, are recorded; a malformed annotations value
+// keeps the tool.
+func TestListToolsRecordsBehaviorHints(t *testing.T) {
+	server := newFakeServer(
+		map[string]any{"name": "search", "annotations": map[string]any{"readOnlyHint": true, "openWorldHint": false, "title": "Search"}},
+		map[string]any{"name": "delete_all", "annotations": map[string]any{"destructiveHint": true, "idempotentHint": true}},
+		map[string]any{"name": "odd", "annotations": map[string]any{"readOnlyHint": "yes", "ReadOnlyHint": true, "destructiveHint": nil, "dangerous": true}},
+		map[string]any{"name": "bare"},
+		map[string]any{"name": "array", "annotations": []any{true}},
+	)
+	result, err := listTools(t, server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := map[string]map[string]bool{
+		"search":     {"readOnlyHint": true, "openWorldHint": false},
+		"delete_all": {"destructiveHint": true, "idempotentHint": true},
+		"odd":        {},
+		"bare":       {},
+		"array":      {},
+	}
+	if len(result.Tools) != len(want) {
+		t.Fatalf("tools = %+v, want %d", result.Tools, len(want))
+	}
+	for _, tool := range result.Tools {
+		if got := tool.Annotations.Hints(); !reflect.DeepEqual(got, want[tool.Name]) {
+			t.Errorf("%s hints = %v, want %v", tool.Name, got, want[tool.Name])
+		}
+		if len(want[tool.Name]) == 0 && tool.Annotations != nil {
+			t.Errorf("%s records empty annotations %+v; absent hints must be absent", tool.Name, tool.Annotations)
+		}
+	}
+}
+
+// Verifies SPEC-0028-R02: tools that fit MaxStatusBytes without their hints
+// are truncated once the hints count.
+func TestListToolsCountsAnnotationsTowardStatusSize(t *testing.T) {
+	description := strings.Repeat("é", 630) // 1260 bytes
+	hints := map[string]any{"readOnlyHint": true, "destructiveHint": false, "idempotentHint": true, "openWorldHint": false}
+	var tools []any
+	for i := 0; i < mcpmeta.MaxToolsPerServer; i++ {
+		tools = append(tools, map[string]any{"name": fmt.Sprintf("tool-%03d", i), "description": description, "annotations": hints})
+	}
+	if bare := mcpmeta.MaxToolsPerServer * (len("tool-000") + len(description)); bare > MaxStatusBytes {
+		t.Fatalf("the tools take %d bytes without hints; the test needs them to fit %d", bare, MaxStatusBytes)
+	}
+	result, err := listTools(t, newFakeServer(tools...))
+	if err != nil {
+		t.Fatal(err)
+	}
+	if !result.Truncated || len(result.Tools) == mcpmeta.MaxToolsPerServer || statusSize(result.Tools) > MaxStatusBytes {
+		t.Fatalf("truncated %v, tools %d, size %d; the hints must count toward %d", result.Truncated, len(result.Tools), statusSize(result.Tools), MaxStatusBytes)
+	}
+	if result.Tools[0].Annotations == nil {
+		t.Fatal("the kept tools lost their hints")
+	}
+}
+
+// Verifies SPEC-0028-R02.
+func TestStatusSizeCountsAnnotations(t *testing.T) {
+	bare := []kavryntv1alpha1.MCPServerTool{{Name: "search"}}
+	hinted := []kavryntv1alpha1.MCPServerTool{{Name: "search", Annotations: &kavryntv1alpha1.MCPServerToolAnnotations{ReadOnlyHint: new(true), DestructiveHint: new(false)}}}
+	if statusSize(hinted) <= statusSize(bare) {
+		t.Fatalf("status size with hints = %d, without = %d; hints must count toward MaxStatusBytes", statusSize(hinted), statusSize(bare))
+	}
+}
+
+// Verifies SPEC-0026-R09: given a pod, every request of the session goes to
+// it, with the endpoint's host in Host.
+func TestListToolsAtOneAddress(t *testing.T) {
+	server := newFakeServer(tool("echo"))
+	server.sessionID = "s-1"
+	pod := netip.MustParseAddrPort("10.0.0.7:8080")
+	if _, err := New("test", server).ListTools(context.Background(), endpoint, pod, nil); err != nil {
+		t.Fatal(err)
+	}
+	if len(server.requests) < 4 {
+		t.Fatalf("%d requests, want initialize, initialized, tools/list, and DELETE", len(server.requests))
+	}
+	for _, r := range server.requests {
+		if r.URL.Host != "10.0.0.7:8080" || r.Host != "demo.default.svc:8080" || r.URL.Path != "/mcp" {
+			t.Fatalf("%s %s went to %s with Host %q", r.Method, r.URL.Path, r.URL.Host, r.Host)
 		}
 	}
 }

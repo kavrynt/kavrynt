@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"net/url"
 	"regexp"
+	"strconv"
 	"strings"
 
 	"k8s.io/apimachinery/pkg/util/validation"
@@ -44,6 +45,15 @@ func (in *MCPServer) Validate() error {
 	}
 	if in.Spec.TokenExchange != nil {
 		problems = append(problems, validateTokenExchange(in.Spec.TokenExchange, in.Spec.Transport, in.Spec.Credential != nil)...)
+	}
+	switch in.Spec.SessionAffinity {
+	case "", SessionAffinityNone:
+	case SessionAffinityMCPSession:
+		if _, ok := ServiceEndpoint(in.Spec.Endpoint); !ok {
+			problems = append(problems, "spec.endpoint must name a Kubernetes Service (http://<service>.<namespace>.svc[.<cluster-domain>]) when spec.sessionAffinity is MCPSession")
+		}
+	default:
+		problems = append(problems, "spec.sessionAffinity must be one of: None, MCPSession")
 	}
 
 	if len(problems) > 0 {
@@ -110,6 +120,34 @@ func validateTokenExchange(exchange *MCPServerTokenExchange, transport string, h
 		}
 	}
 	return problems
+}
+
+// ServiceEndpoint returns the Service an http endpoint names by its cluster
+// DNS name, <service>.<namespace>.svc[.<cluster-domain>], and the port it
+// uses (SPEC-0026-R02). Other endpoints, https among them, report false: the
+// Gateway connects to a pod's address, which a certificate for the Service
+// name would not cover.
+func ServiceEndpoint(endpoint string) (ServiceRef, bool) {
+	parsed, err := url.ParseRequestURI(endpoint)
+	if err != nil || parsed.Scheme != "http" || parsed.User != nil {
+		return ServiceRef{}, false
+	}
+	labels := strings.Split(strings.ToLower(parsed.Hostname()), ".")
+	if len(labels) < 3 || labels[2] != "svc" {
+		return ServiceRef{}, false
+	}
+	for _, label := range labels {
+		if len(validation.IsDNS1123Label(label)) > 0 {
+			return ServiceRef{}, false
+		}
+	}
+	port := 80
+	if raw := parsed.Port(); raw != "" {
+		if port, err = strconv.Atoi(raw); err != nil || port < 1 || port > 65535 {
+			return ServiceRef{}, false
+		}
+	}
+	return ServiceRef{Namespace: labels[1], Name: labels[0], Port: port}, true
 }
 
 func validateEndpoint(endpoint string) error {

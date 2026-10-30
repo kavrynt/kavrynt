@@ -67,14 +67,14 @@ tests:
       - contains:
           path: spec.template.spec.containers[0].args
           content: --console-session-ttl=12h
-      - equal:
+      - contains:
           path: spec.template.spec.containers[0].volumeMounts
-          value:
-            - name: console-auth
-              mountPath: /etc/kavrynt/console-auth
-              readOnly: true
+          content:
+            name: console-auth
+            mountPath: /etc/kavrynt/console-auth
+            readOnly: true
       - equal:
-          path: spec.template.spec.volumes[0].secret.secretName
+          path: spec.template.spec.volumes[1].secret.secretName
           value: kavrynt-gateway-console-admin
 
   # Verifies SPEC-0005-R13.
@@ -90,7 +90,7 @@ tests:
           count: 0
         template: charts/gateway/templates/console-auth-secret.yaml
       - equal:
-          path: spec.template.spec.volumes[0].secret.secretName
+          path: spec.template.spec.volumes[1].secret.secretName
           value: team-console-admin
         template: charts/gateway/templates/deployment.yaml
       - contains:
@@ -110,6 +110,9 @@ tests:
             - apiGroups: [kavrynt.io]
               resources: [mcpservers]
               verbs: [get, list, watch]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
+              verbs: [get, list, watch]
         documentIndex: 0
 
   # Verifies SPEC-0005-R03.
@@ -127,8 +130,10 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --console-auth=false
         template: charts/gateway/templates/deployment.yaml
-      - notExists:
-          path: spec.template.spec.volumes
+      # Only the console alert thresholds are mounted (SPEC-0020-R03).
+      - equal:
+          path: spec.template.spec.volumes[*].name
+          value: console-alerts
         template: charts/gateway/templates/deployment.yaml
 
   - it: has no login when the console is off
@@ -160,3 +165,21 @@ tests:
     asserts:
       - failedTemplate:
           errorPattern: "additional properties 'passwrd' not allowed"
+
+  # Verifies SPEC-0030-R01.
+  - it: passes trusted proxies to the Gateway only when set
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.console.auth.trustedProxies: [10.0.0.0/8, "fd00::/8"]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --console-trusted-proxies=10.0.0.0/8,fd00::/8
+
+  # Verifies SPEC-0030-R01.
+  - it: rejects a trusted proxy that is not a CIDR
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.console.auth.trustedProxies: [10.0.0.1]
+    asserts:
+      - failedTemplate: {}

@@ -11,19 +11,36 @@ global:
   # Operator; neither gets RBAC on Secrets. Empty: no credentials.
   upstreamCredentials:
     secretName: ""
+  # Which namespaces MCPServer endpoints may reach (SPEC-0029). An endpoint
+  # that names a Service in another namespace is not Ready
+  # (EndpointNotAllowed) unless a pair here allows it.
+  endpoints:
+    # - from: team-a
+    #   to: shared-tools
+    crossNamespace: []
+    # The cluster's Service and Pod CIDRs. IP endpoints (and pod DNS names)
+    # inside them are not Ready, since the Operator cannot tell which
+    # namespace they belong to. Empty: not checked.
+    clusterCIDRs: []
+  # Token exchange audiences (spec.tokenExchange.audience) the MCPServers of
+  # each namespace may request; "*" applies to all namespaces. Servers that
+  # ask for another audience are not Ready (AudienceNotAllowed), and the
+  # Gateway exchanges no token for them. Empty: token exchange is refused.
+  #   team-a: [https://tickets.example.com]
+  tokenExchangeAudiences: {}
 
 gateway:
   fullnameOverride: kavrynt-gateway
   image:
     repository: kavrynt/gateway
-    tag: 1.0.0-beta.2
+    tag: 1.0.0-beta.3
     pullPolicy: IfNotPresent
 
 operator:
   fullnameOverride: kavrynt-operator
   image:
     repository: kavrynt/operator
-    tag: 1.0.0-beta.2
+    tag: 1.0.0-beta.3
     pullPolicy: IfNotPresent
 
 # NetworkPolicies that keep MCP traffic on the Gateway path, so clients
@@ -72,8 +89,66 @@ metrics:
     latencyP95Seconds: 5
     # KavryntMCPServerNotReady: how long an MCPServer may stay not Ready.
     notReadyFor: 10m
+    # KavryntMCPToolErrorsHigh: share of a tool's tools/call requests that end
+    # in tool_error or rpc_error over 10 minutes, for tools with at least
+    # minToolRequestsPerSecond.
+    toolErrorRatio: 0.2
+    minToolRequestsPerSecond: 0.02
+    # KavryntMCPToolDiscoveryFailing: how long tool discovery of a Ready
+    # MCPServer may fail.
+    discoveryFailingFor: 15m
     # KavryntCloudSyncStale (only with operator.cloud.enabled).
     cloudSyncStaleSeconds: 600
+    # KavryntAuditDeliveryStale (only with gateway.audit.cloud.enabled): how
+    # long audit events may wait without Kavrynt Cloud accepting a batch.
+    auditDeliveryStaleSeconds: 600
     # Where runbook_url points; empty uses this repository at the chart's
     # release tag.
     runbookBaseURL: ""
+  # Notifications for the alerts above (SPEC-0022): an AlertmanagerConfig
+  # that sends this release's alerts to Slack, email, Microsoft Teams, or a
+  # webhook. Requires prometheusRule.enabled, the Prometheus Operator's
+  # AlertmanagerConfig CRD (v0.82 or later for Teams), and an Alertmanager
+  # that selects the config with alertmanagerConfigMatcherStrategy type None:
+  # alerts about an MCPServer carry its namespace, not this release's.
+  # Secrets are referenced by name and key in the release namespace; values
+  # never hold a URL or password.
+  notifications:
+    enabled: false
+    # Labels on the AlertmanagerConfig, for alertmanagerConfigSelector.
+    labels: {}
+    groupWait: 30s
+    groupInterval: 5m
+    repeatInterval: 4h
+    # Each receiver below is on once its Secret name (email: to) is set, and
+    # gets the alerts whose severity is in its severities.
+    slack:
+      webhookSecret:
+        name: ""
+        key: url
+      # Empty uses the webhook's own channel.
+      channel: ""
+      severities: [critical, warning]
+    email:
+      to: []
+      # Empty from and smarthost use the Alertmanager's global SMTP settings.
+      from: ""
+      smarthost: ""
+      authUsername: ""
+      authPasswordSecret:
+        name: ""
+        key: password
+      requireTLS: true
+      severities: [critical, warning]
+    msteams:
+      webhookSecret:
+        name: ""
+        key: url
+      severities: [critical, warning]
+    # Alertmanager's JSON webhook payload, for example to a PagerDuty or
+    # incident tool bridge.
+    webhook:
+      urlSecret:
+        name: ""
+        key: url
+      severities: [critical, warning]

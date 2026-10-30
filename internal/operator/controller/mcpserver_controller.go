@@ -2,14 +2,18 @@ package controller
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"net/http"
+	"net/netip"
 	"slices"
 	"sync"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
@@ -36,9 +40,15 @@ const (
 	maxConcurrentReconciles = 4
 )
 
-// ToolDiscoverer lists an MCP server's tools.
+// ToolDiscoverer lists an MCP server's tools, from one pod when pod is
+// valid.
 type ToolDiscoverer interface {
-	ListTools(ctx context.Context, endpoint string, header http.Header) (discovery.Result, error)
+	ListTools(ctx context.Context, endpoint string, pod netip.AddrPort, header http.Header) (discovery.Result, error)
+}
+
+// SessionEndpoints lists the ready pods of a Service (SPEC-0026-R09).
+type SessionEndpoints interface {
+	Ready(ctx context.Context, service kavryntv1alpha1.ServiceRef) ([]mcpsession.Endpoint, error)
 }
 
 // MCPServerReconciler validates MCPServer resources and reports whether the
@@ -63,6 +73,14 @@ type MCPServerReconciler struct {
 	// Credentials holds the stored credentials of servers that declare
 	// spec.credential; discovery sends them like the Gateway (SPEC-0011-R08).
 	Credentials upstreamcred.Store
+
+	// SessionEndpoints gives the pods of servers with session affinity, so
+	// a discovery session stays on one of them (SPEC-0026-R09).
+	SessionEndpoints SessionEndpoints
+
+	// Scope limits the endpoints and token exchange audiences a namespace
+	// may use (SPEC-0029). Nil checks neither.
+	Scope *scope.Policy
 
 	// now is the clock; tests replace it.
 	now func() time.Time
@@ -98,7 +116,7 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		return ctrl.Result{}, nil
 	}
 
-	status := r.desiredStatus(&server)
+	status, retry := r.desiredStatus(ctx, &server)
 	recordReady(req.NamespacedName, apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady))
 	var result ctrl.Result
 	if r.Discoverer != nil {
@@ -109,6 +127,10 @@ func (r *MCPServerReconciler) Reconcile(ctx context.Context, req ctrl.Request) (
 		status.ServerInfo = nil
 		apimeta.RemoveStatusCondition(&status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
 	}
+	if retry > 0 && (result.RequeueAfter == 0 || retry < result.RequeueAfter) {
+		result.RequeueAfter = retry
+	}
+	recordToolsDiscovered(req.NamespacedName, apimeta.FindStatusCondition(status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered))
 
 	if statusUnchanged(server.Status, status) {
 		return result, nil
@@ -137,7 +159,7 @@ func statusUnchanged(current, desired kavryntv1alpha1.MCPServerStatus) bool {
 // reconcile again; zero means not needed.
 func (r *MCPServerReconciler) applyTools(ctx context.Context, key types.NamespacedName, server *kavryntv1alpha1.MCPServer, status *kavryntv1alpha1.MCPServerStatus) time.Duration {
 	if !apimeta.IsStatusConditionTrue(status.Conditions, kavryntv1alpha1.ConditionReady) {
-		r.forget(key)
+		r.forgetAttempt(key)
 		status.Tools = nil
 		status.ServerInfo = nil
 		apimeta.SetStatusCondition(&status.Conditions, metav1.Condition{
@@ -170,6 +192,24 @@ func (r *MCPServerReconciler) applyTools(ctx context.Context, key types.Namespac
 	condition.ObservedGeneration = server.Generation
 	apimeta.SetStatusCondition(&status.Conditions, condition)
 	return max(attempt.next.Sub(now), time.Second)
+}
+
+// sessionPod returns the pod a discovery session of a server with session
+// affinity goes to: the first ready pod of its Service. The error names the
+// Service, never a pod.
+func (r *MCPServerReconciler) sessionPod(ctx context.Context, server *kavryntv1alpha1.MCPServer) (netip.AddrPort, error) {
+	service, ok := kavryntv1alpha1.ServiceEndpoint(server.Spec.Endpoint)
+	if !ok || r.SessionEndpoints == nil {
+		return netip.AddrPort{}, errors.New("session affinity needs the endpoint's Service, which the Operator cannot read")
+	}
+	pods, err := r.SessionEndpoints.Ready(ctx, service)
+	if err != nil {
+		return netip.AddrPort{}, fmt.Errorf("list the pods of Service %s/%s: %w", service.Namespace, service.Name, err)
+	}
+	if len(pods) == 0 {
+		return netip.AddrPort{}, fmt.Errorf("no ready pod of Service %s/%s to list tools from", service.Namespace, service.Name)
+	}
+	return pods[0].Addr, nil
 }
 
 // discover lists the server's tools and records its reported serverInfo. On
@@ -209,8 +249,12 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 			header.Set(credential.HeaderName(), credential.HeaderValue(value))
 		}
 	}
+	var pod netip.AddrPort
+	if err == nil && server.Spec.SessionAffinity == kavryntv1alpha1.SessionAffinityMCPSession {
+		pod, err = r.sessionPod(ctx, server)
+	}
 	if err == nil {
-		result, err = r.Discoverer.ListTools(ctx, server.Spec.Endpoint, header)
+		result, err = r.Discoverer.ListTools(ctx, server.Spec.Endpoint, pod, header)
 	}
 	if err == nil {
 		attempt.next = now.Add(refresh)
@@ -247,11 +291,18 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 	return attempt
 }
 
+// forget drops everything kept for a deleted MCPServer, including its metrics.
 func (r *MCPServerReconciler) forget(key types.NamespacedName) {
+	r.forgetAttempt(key)
+	forgetReady(key)
+	forgetToolsDiscovered(key)
+}
+
+// forgetAttempt drops the last discovery of a server that still exists.
+func (r *MCPServerReconciler) forgetAttempt(key types.NamespacedName) {
 	r.mu.Lock()
 	delete(r.attempts, key)
 	r.mu.Unlock()
-	forgetReady(key)
 }
 
 func (r *MCPServerReconciler) clock() time.Time {
@@ -261,7 +312,9 @@ func (r *MCPServerReconciler) clock() time.Time {
 	return time.Now()
 }
 
-func (r *MCPServerReconciler) desiredStatus(server *kavryntv1alpha1.MCPServer) kavryntv1alpha1.MCPServerStatus {
+// desiredStatus returns the status the server should have, and how soon to
+// check it again when a check could not be completed.
+func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavryntv1alpha1.MCPServer) (kavryntv1alpha1.MCPServerStatus, time.Duration) {
 	status := kavryntv1alpha1.MCPServerStatus{
 		ObservedGeneration: server.Generation,
 		Conditions:         append([]metav1.Condition(nil), server.Status.Conditions...),
@@ -299,10 +352,44 @@ func (r *MCPServerReconciler) desiredStatus(server *kavryntv1alpha1.MCPServer) k
 		ready.Reason = kavryntv1alpha1.ReasonNamespaceNotWatched
 		ready.Message = fmt.Sprintf("Gateway does not watch namespace %q; add it to global.watchNamespaces", server.Namespace)
 	}
+	var retry time.Duration
+	if ready.Status == metav1.ConditionTrue && r.Scope != nil {
+		retry = r.checkScope(ctx, server, &ready)
+	}
 
 	apimeta.SetStatusCondition(&status.Conditions, accepted)
 	apimeta.SetStatusCondition(&status.Conditions, ready)
-	return status
+	return status, retry
+}
+
+// scopeRetryDelay is when an endpoint whose namespace could not be read is
+// checked again; scopeRecheckInterval is when one allowed only because its
+// namespace does not exist is, in case the namespace is created.
+const (
+	scopeRetryDelay      = 30 * time.Second
+	scopeRecheckInterval = 5 * time.Minute
+)
+
+// checkScope makes ready False when the server's endpoint or token exchange
+// audience is not allowed for its namespace (SPEC-0029-R04, R08). It
+// returns when to check again when a namespace could not be read; the
+// server stays not Ready until then.
+func (r *MCPServerReconciler) checkScope(ctx context.Context, server *kavryntv1alpha1.MCPServer, ready *metav1.Condition) time.Duration {
+	if err := r.Scope.Endpoint(ctx, server.Namespace, server.Spec.Endpoint); err != nil {
+		ready.Status, ready.Reason, ready.Message = metav1.ConditionFalse, kavryntv1alpha1.ReasonEndpointNotAllowed, err.Error()
+		if errors.Is(err, scope.ErrNamespaceUnknown) {
+			return scopeRetryDelay
+		}
+		return 0
+	}
+	if exchange := server.Spec.TokenExchange; exchange != nil && !r.Scope.Audiences.Allowed(server.Namespace, exchange.Audience) {
+		ready.Status, ready.Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonAudienceNotAllowed
+		ready.Message = fmt.Sprintf("spec.tokenExchange.audience %q is not allowed for namespace %q; add it to global.tokenExchangeAudiences", exchange.Audience, server.Namespace)
+	}
+	if scope.DependsOnNamespace(server.Spec.Endpoint) {
+		return scopeRecheckInterval
+	}
+	return 0
 }
 
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {

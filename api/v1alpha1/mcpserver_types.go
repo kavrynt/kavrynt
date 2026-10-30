@@ -31,6 +31,12 @@ const (
 	// exchange, so the Operator, which has no caller, does not list its tools
 	// (SPEC-0015-R10).
 	ReasonCallerTokenRequired = "CallerTokenRequired" // #nosec G101 -- a condition reason, not a credential.
+	// ReasonEndpointNotAllowed: the endpoint reaches another namespace, or
+	// a cluster address, that the platform team did not allow (SPEC-0029).
+	ReasonEndpointNotAllowed = "EndpointNotAllowed"
+	// ReasonAudienceNotAllowed: spec.tokenExchange.audience is not allowed
+	// for the server's namespace (SPEC-0029).
+	ReasonAudienceNotAllowed = "AudienceNotAllowed"
 
 	// DescriptionAnnotation holds an optional human-readable description.
 	DescriptionAnnotation = "kavrynt.io/description"
@@ -51,6 +57,27 @@ type MCPServerSpec struct {
 	// for one issued to this server (RFC 8693, SPEC-0015). It excludes
 	// Credential.
 	TokenExchange *MCPServerTokenExchange `json:"tokenExchange,omitempty"`
+	// SessionAffinity is None (or empty) or MCPSession, which sends every
+	// request of an MCP session to the pod that started it (SPEC-0026).
+	SessionAffinity string `json:"sessionAffinity,omitempty"`
+	// ForwardSubpaths makes the Gateway forward requests for paths below
+	// the route to the same paths below the endpoint (SPEC-0029-R03).
+	ForwardSubpaths bool `json:"forwardSubpaths,omitempty"`
+}
+
+const (
+	// SessionAffinityNone forwards every request to the endpoint as is.
+	SessionAffinityNone = "None"
+	// SessionAffinityMCPSession pins each Mcp-Session-Id to one pod of the
+	// endpoint's Service.
+	SessionAffinityMCPSession = "MCPSession"
+)
+
+// ServiceRef names a Service port by the Service's namespace and name.
+type ServiceRef struct {
+	Namespace string
+	Name      string
+	Port      int
 }
 
 // MCPServerTokenExchange names the token the Gateway asks the caller's
@@ -125,9 +152,59 @@ func CopyServerInfo(info *MCPServerInfo) *MCPServerInfo {
 
 // MCPServerTool is one tool reported by an MCP server.
 type MCPServerTool struct {
-	Name        string                `json:"name"`
-	Description string                `json:"description,omitempty"`
-	InputSchema *runtime.RawExtension `json:"inputSchema,omitempty"`
+	Name        string                    `json:"name"`
+	Description string                    `json:"description,omitempty"`
+	InputSchema *runtime.RawExtension     `json:"inputSchema,omitempty"`
+	Annotations *MCPServerToolAnnotations `json:"annotations,omitempty"`
+}
+
+// MCPServerToolAnnotations are the behavior hints an MCP server reports for
+// a tool (SPEC-0028). They are the server's own claims and untrusted. A nil
+// hint was not reported, which differs from false.
+type MCPServerToolAnnotations struct {
+	ReadOnlyHint    *bool `json:"readOnlyHint,omitempty"`
+	DestructiveHint *bool `json:"destructiveHint,omitempty"`
+	IdempotentHint  *bool `json:"idempotentHint,omitempty"`
+	OpenWorldHint   *bool `json:"openWorldHint,omitempty"`
+}
+
+// Hints returns the reported hints by their MCP names, without the absent
+// ones; it is empty, never nil, for nil annotations.
+func (a *MCPServerToolAnnotations) Hints() map[string]bool {
+	hints := map[string]bool{}
+	if a == nil {
+		return hints
+	}
+	for name, hint := range map[string]*bool{
+		"readOnlyHint":    a.ReadOnlyHint,
+		"destructiveHint": a.DestructiveHint,
+		"idempotentHint":  a.IdempotentHint,
+		"openWorldHint":   a.OpenWorldHint,
+	} {
+		if hint != nil {
+			hints[name] = *hint
+		}
+	}
+	return hints
+}
+
+// Copy returns a deep copy of a.
+func (a *MCPServerToolAnnotations) Copy() *MCPServerToolAnnotations {
+	if a == nil {
+		return nil
+	}
+	clone := func(hint *bool) *bool {
+		if hint == nil {
+			return nil
+		}
+		return new(*hint)
+	}
+	return &MCPServerToolAnnotations{
+		ReadOnlyHint:    clone(a.ReadOnlyHint),
+		DestructiveHint: clone(a.DestructiveHint),
+		IdempotentHint:  clone(a.IdempotentHint),
+		OpenWorldHint:   clone(a.OpenWorldHint),
+	}
 }
 
 type MCPServer struct {
@@ -185,6 +262,7 @@ func CopyTools(tools []MCPServerTool) []MCPServerTool {
 		if tool.InputSchema != nil {
 			out[i].InputSchema = tool.InputSchema.DeepCopy()
 		}
+		out[i].Annotations = tool.Annotations.Copy()
 	}
 	return out
 }

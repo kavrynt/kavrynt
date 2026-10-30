@@ -20,7 +20,7 @@ topologySpreadConstraints: []
 
 image:
   repository: kavrynt/gateway
-  tag: 1.0.0-beta.2
+  tag: 1.0.0-beta.3
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -99,6 +99,21 @@ audit:
   # With a full queue: reject (refuse new MCP requests with 503; no call is
   # served without its record) or drop (serve them, count the lost events).
   onOverflow: reject
+  # Deliver the events to Kavrynt Cloud as well (SPEC-0017), in batches over
+  # HTTPS with the cluster token, so their chains can be checked outside the
+  # cluster. Events include the caller's subject and client ID. Standard
+  # output keeps every event. Use the same URL and Secret as operator.cloud.
+  cloud:
+    enabled: false
+    # Kavrynt Cloud base URL; https only.
+    url: ""
+    tokenSecret:
+      # Secret in the release namespace holding the cluster token.
+      name: ""
+      key: token
+    # Undelivered events kept while Cloud is unreachable; when full, the
+    # oldest are dropped and counted.
+    bufferSize: 100000
 
 # Tool authorization policy (SPEC-0012): every MCP request is allowed or
 # denied by Rego policy evaluated in the Gateway (Open Policy Agent). The
@@ -122,8 +137,7 @@ console:
   # /v1/traffic), like Argo CD's initial admin password. Username: admin.
   # Password: kubectl -n <namespace> get secret <release>-gateway-console-admin
   #   -o jsonpath='{.data.password}' | base64 -d
-  # It does not protect MCP routes: anyone who can reach the Gateway can still
-  # call every routed tool (client authentication is not implemented yet).
+  # It does not protect MCP routes; MCP client authentication (auth) does.
   auth:
     enabled: true
     # Secret with keys "password" and "sessionKey" to use instead of the
@@ -133,6 +147,22 @@ console:
     existingSecret: ""
     # Session lifetime; changing the password also ends every session.
     sessionTTL: 12h
+    # CIDRs of the proxies (Ingress controller, load balancer) in front of
+    # the Gateway. Failed logins from them count against the client their
+    # X-Forwarded-For names, not against the proxy (SPEC-0030). List only
+    # the proxies: an address listed here can name any client.
+    trustedProxies: []
+  # Dashboards (SPEC-0024): each replica keeps 24 hours of its own calls in
+  # memory, about 29 KiB per route and 23 KiB per tool (about 27 MiB for
+  # 300 routes with the default cap).
+  history:
+    # Tools charted on their own, across routes; further tools count as
+    # their route's "other" tool.
+    maxTools: 500
+  # Grafana base URL (http or https) the dashboards link for cluster-wide
+  # history, for example https://grafana.example.com. Empty names the
+  # Grafana dashboards (metrics.dashboard.enabled) instead.
+  grafanaURL: ""
 
 # MCP traffic metrics on /metrics: requests, outcomes, and latency per MCP
 # server, method, and tool. Metadata only; bodies are never recorded.
@@ -144,14 +174,19 @@ metrics:
     enabled: false
     interval: 30s
     labels: {}
-  # ConfigMap with the "Kavrynt MCP Traffic" Grafana dashboard, picked up by
-  # the Grafana dashboard sidecar through the labels below.
+  # ConfigMap with the "Kavrynt MCP Traffic" and "Kavrynt MCP Server" Grafana
+  # dashboards, picked up by the Grafana dashboard sidecar through the labels
+  # below.
   dashboard:
     enabled: false
     # Namespace the sidecar watches; empty uses the release namespace.
     namespace: ""
     labels:
       grafana_dashboard: "1"
+    # Your own dashboards, released with the chart: file name (<name>.json)
+    # to dashboard JSON, as a string (--set-file) or an object. Each becomes
+    # a ConfigMap with the labels above.
+    extra: {}
 
 podSecurityContext:
   runAsNonRoot: true

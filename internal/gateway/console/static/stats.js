@@ -1,6 +1,6 @@
-// Everything the console computes from /v1/servers and /v1/traffic: server
-// state, attention lists, per-tool statistics, the tool catalog, filters, and
-// the diagnostics text. Pure functions with no DOM access, so they run under
+// Everything the console computes from /v1/servers, /v1/traffic, and
+// /v1/alerts: server state, attention lists, per-tool statistics, the tool
+// catalog, filters, alert order, and the diagnostics text. Pure functions with no DOM access, so they run under
 // Node's test runner (test/console) as well as in the browser.
 //
 // Server and traffic data are untrusted. Nothing here renders them; views
@@ -28,7 +28,7 @@
   const OUTCOMES = {
     ok: {
       cls: "ok",
-      definition: "The server answered without a JSON-RPC or tool error. Event-stream responses are not inspected and count as ok unless the HTTP status is an error.",
+      definition: "The server answered without a JSON-RPC or tool error, in JSON or in an event stream. Also the normal answers to a feature the server does not offer: 405 to the optional GET event stream or to ending a session, and method not found to server/discover.",
     },
     tool_error: {
       cls: "warn",
@@ -40,7 +40,7 @@
     },
     client_error: {
       cls: "warn",
-      definition: "The server answered with HTTP 4xx, for example 405 when a client opens the optional GET event stream and the server does not offer one.",
+      definition: "The server answered with HTTP 4xx, for example 404 when the endpoint path is wrong or 400 for a request it cannot read.",
     },
     upstream_error: {
       cls: "bad",
@@ -85,6 +85,10 @@
     exchange_failed: {
       cls: "bad",
       definition: "The server gets per-caller tokens by token exchange, and the caller's authorization server did not issue one (502), could not be reached (503), or MCP client authentication is off (503). The server was not called.",
+    },
+    session_not_found: {
+      cls: "warn",
+      definition: "The request named an MCP session the server does not know (404), or, with session affinity, a pod that is no longer ready. The client starts a new session. Often a server with session state and more than one replica: set spec.sessionAffinity: MCPSession or run one replica.",
     },
     auth_unavailable: {
       cls: "bad",
@@ -242,6 +246,20 @@
       .sort((a, b) => rank[a.health.cls] - rank[b.health.cls] || a.server.route.localeCompare(b.server.route));
   }
 
+  // sessionLoss reports a server without session affinity whose recent
+  // requests named sessions the server did not know, with the fixes
+  // (SPEC-0026-R11), or null.
+  function sessionLoss(server, traffic) {
+    if (server.sessionAffinity === "MCPSession") return null;
+    const count = (traffic || []).filter((r) => r.route === server.route && r.outcome === "session_not_found").length;
+    if (!count) return null;
+    return {
+      count,
+      message: "Its MCP sessions are being lost: " + count + (count === 1 ? " recent request" : " recent requests") +
+        " named a session the server did not know. A server that keeps session state needs every request of a session on one pod: set spec.sessionAffinity: MCPSession, or run one replica.",
+    };
+  }
+
   // overview returns the Overview tiles (SPEC-0002-R01).
   function overview(servers, traffic) {
     const stats = summarize(traffic);
@@ -297,6 +315,7 @@
         entries.push({
           tool: tool.name,
           description: tool.description || "",
+          annotations: tool.annotations,
           route: server.route,
           routed: server.routed,
           state: serverState(server),
@@ -380,5 +399,84 @@
     return ms === null || ms === undefined ? "–" : String(Math.round(ms * 100) / 100);
   }
 
-  Object.assign(exports, { TRAFFIC_WINDOW, SCOPE_NOTE, scopeNote, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
+  // ALERTS describes the conditions the Gateway evaluates (SPEC-0020), in the
+  // words of the Gateway component documentation. traffic marks the ones
+  // each replica computes from its own calls. A Go test keeps the keys equal
+  // to the Gateway's condition names.
+  const ALERTS = {
+    ServerNotReady: {
+      title: "Server not Ready",
+      traffic: false,
+      definition: "The MCPServer's Ready condition has not been True for notReadyFor (10 minutes by default). The Gateway does not route it.",
+    },
+    DiscoveryFailing: {
+      title: "Tool discovery failing",
+      traffic: false,
+      definition: "The Operator has not been able to list the tools of this Ready server for discoveryFailingFor (15 minutes by default).",
+    },
+    UpstreamErrors: {
+      title: "Upstream errors",
+      traffic: true,
+      definition: "Over errorRatio (5%) of the route's calls in the last 10 minutes ended in upstream_error, upstream_unreachable, or timeout, for 5 minutes.",
+    },
+    ToolErrors: {
+      title: "Tool errors",
+      traffic: true,
+      definition: "Over toolErrorRatio (20%) of the tool's calls in the last 10 minutes ended in tool_error or rpc_error, for 10 minutes.",
+    },
+    SlowRoute: {
+      title: "Slow route",
+      traffic: true,
+      definition: "The route's p95 latency in the last 10 minutes has been over latencyP95Seconds (5 s) for 15 minutes.",
+    },
+  };
+
+  const SEVERITY_RANK = { critical: 0, warning: 1 };
+
+  function timestamp(value) {
+    const t = Date.parse(value);
+    return Number.isNaN(t) ? 0 : t;
+  }
+
+  // sortAlerts splits /v1/alerts into active alerts, critical before warning
+  // and then oldest first, and resolved ones, most recently resolved first
+  // (SPEC-0020-R06).
+  function sortAlerts(alerts) {
+    const list = Array.isArray(alerts) ? alerts.filter((a) => a && typeof a.name === "string") : [];
+    const rank = (a) => (a.severity in SEVERITY_RANK ? SEVERITY_RANK[a.severity] : 2);
+    const active = list.filter((a) => !a.resolvedAt)
+      .sort((a, b) => rank(a) - rank(b) || timestamp(a.since) - timestamp(b.since));
+    const resolved = list.filter((a) => a.resolvedAt)
+      .sort((a, b) => timestamp(b.resolvedAt) - timestamp(a.resolvedAt));
+    return { active, resolved };
+  }
+
+  // activeAlertCount is the number shown in the navigation (SPEC-0020-R07).
+  function activeAlertCount(alerts) {
+    return sortAlerts(alerts).active.length;
+  }
+
+  // alertLink is where an alert's scope links to, as formatHash arguments:
+  // a tool's calls in the Traffic view, a traffic alert's server traffic,
+  // otherwise the server (SPEC-0020-R06).
+  function alertLink(alert) {
+    const scope = (alert && alert.scope) || {};
+    const route = String(scope.route || "");
+    if (scope.tool) return { page: "traffic", rest: [], params: { route, tool: String(scope.tool) } };
+    if (ALERTS[alert.name] && ALERTS[alert.name].traffic) return { page: "servers", rest: [route, "traffic"], params: {} };
+    return { page: "servers", rest: [route], params: {} };
+  }
+
+  // alertTitle names an alert's condition; unknown names are shown as sent.
+  function alertTitle(alert) {
+    return ALERTS[alert.name] ? ALERTS[alert.name].title : String(alert.name || "Alert");
+  }
+
+  // isRunbookURL accepts only https links, so an alert can never carry a
+  // javascript: URL into the page.
+  function isRunbookURL(value) {
+    return typeof value === "string" && /^https:\/\/[^\s]+$/.test(value);
+  }
+
+  Object.assign(exports, { ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL, sessionLoss, TRAFFIC_WINDOW, SCOPE_NOTE, scopeNote, OUTCOMES, FAILING_MIN_REQUESTS, FAILING_MIN_RATE, isFailure, outcomeClass, percentile, summarize, operation, toolSummary, routeSummary, failingTools, filterTraffic, distinct, condition, serverState, serverHealth, versionInfo, attention, overview, filterServers, catalog, searchCatalog, stripQuery, diagnostics });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).stats = {}));

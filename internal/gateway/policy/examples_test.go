@@ -23,6 +23,19 @@ func authenticated(input Input, clientID string) Input {
 	return input
 }
 
+// hinted sets the tool fields the Gateway takes from the route's last
+// discovery.
+func hinted(input Input, discovered bool, annotations map[string]bool) Input {
+	input.ToolDiscovered, input.ToolAnnotations = discovered, annotations
+	return input
+}
+
+// untrusted moves input to a server the example does not trust.
+func untrusted(input Input) Input {
+	input.Route = Route{Namespace: "team-b", Name: "scraper"}
+	return input
+}
+
 // Verifies SPEC-0012-R11.
 func TestExamplePolicies(t *testing.T) {
 	ctx := context.Background()
@@ -52,6 +65,17 @@ func TestExamplePolicies(t *testing.T) {
 		{"read-only.rego", stream, true},
 		{"read-only.rego", authenticated(search, "support-agent"), false},
 		{"read-only.rego", Input{Route: route, HTTPMethod: "POST"}, false},
+
+		// Verifies SPEC-0028-R09.
+		{"read-only-tools.rego", list, true},
+		{"read-only-tools.rego", stream, true},
+		{"read-only-tools.rego", hinted(search, true, map[string]bool{"readOnlyHint": true}), true},
+		{"read-only-tools.rego", hinted(deleteAll, true, map[string]bool{"destructiveHint": true}), false},
+		{"read-only-tools.rego", hinted(deleteAll, true, map[string]bool{"readOnlyHint": false}), false},
+		{"read-only-tools.rego", hinted(search, false, map[string]bool{}), false},
+		{"read-only-tools.rego", hinted(search, true, map[string]bool{}), false},
+		{"read-only-tools.rego", untrusted(hinted(search, true, map[string]bool{"readOnlyHint": true})), false},
+		{"read-only-tools.rego", untrusted(list), true},
 	}
 	engines := map[string]*Engine{}
 	for _, tc := range cases {

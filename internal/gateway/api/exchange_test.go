@@ -23,6 +23,7 @@ import (
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/model"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/scope"
 )
 
 const (
@@ -160,5 +161,27 @@ func TestTokenExchangeNeedsClientAuthentication(t *testing.T) {
 	handler.exchangeWithoutAuth.Range(func(any, any) bool { logged++; return true })
 	if logged != 1 {
 		t.Fatalf("the misconfiguration was recorded for %d routes, want 1", logged)
+	}
+}
+
+// Verifies SPEC-0029-R08: the Gateway exchanges tokens only for audiences
+// allowed for the route's namespace, and otherwise asks the authorization
+// server nothing.
+func TestExchangeOnlyForAllowedAudiences(t *testing.T) {
+	exchanges := 0
+	handler, received, caller := exchangeHandler(t, io.Discard, func() (*http.Response, error) {
+		exchanges++
+		return tokenAnswer(http.StatusOK, `{"access_token":"`+exchangedValue+`","token_type":"Bearer","expires_in":300}`)()
+	})
+	handler.EnableTokenExchangeAudiences(scope.Audiences{"team-b": {"https://tickets.example.com"}})
+	rr := callRoute(handler, "/mcp/team-a.tickets", caller)
+	if rr.Code != http.StatusServiceUnavailable || exchanges != 0 || len(*received) != 0 {
+		t.Fatalf("unlisted audience: %d after %d exchanges and %d upstream requests, want 503 and none", rr.Code, exchanges, len(*received))
+	}
+	requireSeries(t, get(handler, "/metrics").Body.String(), `outcome="exchange_failed",route="team-a.tickets"`)
+
+	handler.EnableTokenExchangeAudiences(scope.Audiences{"*": {"https://tickets.example.com"}})
+	if rr := callRoute(handler, "/mcp/team-a.tickets", caller); rr.Code != http.StatusOK || exchanges != 1 {
+		t.Fatalf("allowed audience: %d after %d exchanges", rr.Code, exchanges)
 	}
 }

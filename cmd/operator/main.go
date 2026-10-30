@@ -1,7 +1,9 @@
 package main
 
 import (
+	"context"
 	"flag"
+	"fmt"
 	"log/slog"
 	"os"
 	"strings"
@@ -9,15 +11,21 @@ import (
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/build"
 	"github.com/kavrynt/kavrynt/internal/operator/cloudsync"
 	"github.com/kavrynt/kavrynt/internal/operator/controller"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
+	corev1 "k8s.io/api/core/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
+	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
 	metricsserver "sigs.k8s.io/controller-runtime/pkg/metrics/server"
@@ -37,6 +45,10 @@ func main() {
 		cloudInterval     time.Duration
 		allowLoopback     bool
 		credentialsDir    string
+		gatewayNamespace  string
+		crossNamespace    string
+		clusterCIDRs      string
+		exchangeAudiences string
 	)
 
 	flag.StringVar(&metricsAddr, "metrics-bind-address", ":8080", "Metrics bind address")
@@ -47,6 +59,10 @@ func main() {
 	flag.DurationVar(&toolRefresh, "tool-refresh-interval", controller.DefaultToolRefreshInterval, "How often tools are listed again")
 	flag.BoolVar(&allowLoopback, "allow-loopback-endpoints", false, "Allow tool discovery against endpoints that resolve to loopback addresses (local development only)")
 	flag.StringVar(&credentialsDir, "upstream-credentials-dir", os.Getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR"), "Directory of the mounted upstream credentials Secret, for discovering the tools of MCP servers that declare spec.credential")
+	flag.StringVar(&gatewayNamespace, "gateway-namespace", os.Getenv("POD_NAMESPACE"), "Namespace of the Gateway, where single-label endpoint hosts resolve")
+	flag.StringVar(&crossNamespace, "endpoint-cross-namespace", "", "Comma-separated from:to namespace pairs whose MCPServers in from may use endpoints in to")
+	flag.StringVar(&clusterCIDRs, "cluster-cidrs", "", "Comma-separated Service and Pod CIDRs; IP endpoints inside them are not Ready")
+	flag.StringVar(&exchangeAudiences, "token-exchange-audiences", "", `JSON object from namespace (or "*") to the token exchange audiences its MCPServers may request; empty allows none`)
 	flag.BoolVar(&cloudSync, "cloud-sync", false, "Send the MCPServer inventory to Kavrynt Cloud")
 	flag.StringVar(&cloudURL, "cloud-url", "", "Kavrynt Cloud base URL (https)")
 	flag.StringVar(&cloudTokenFile, "cloud-token-file", cloudsync.DefaultTokenFile, "File holding the Kavrynt Cloud cluster token; read before every sync")
@@ -77,15 +93,22 @@ func main() {
 		os.Exit(1)
 	}
 
+	policy, err := endpointScope(gatewayNamespace, crossNamespace, clusterCIDRs, exchangeAudiences, mgr.GetAPIReader())
+	if err != nil {
+		slog.Error("invalid endpoint scope", "error", err)
+		os.Exit(1)
+	}
 	reconciler := &controller.MCPServerReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
 		GatewayNamespaces:   splitList(gatewayNamespaces),
 		ToolRefreshInterval: toolRefresh,
 		Credentials:         upstreamcred.Store{Dir: credentialsDir},
+		Scope:               policy,
 	}
 	if toolDiscovery {
 		reconciler.Discoverer = discovery.New(build.Version, egress.Transport(allowLoopback))
+		reconciler.SessionEndpoints = mcpsession.Endpoints{Reader: mgr.GetAPIReader(), AllowLoopback: allowLoopback}
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {
 		slog.Error("unable to create controller", "error", err)
@@ -133,4 +156,39 @@ func splitList(value string) []string {
 		}
 	}
 	return items
+}
+
+// endpointScope builds the endpoint and audience rules from the flags
+// (SPEC-0029). Namespaces are read uncached, one at a time.
+func endpointScope(gatewayNamespace, crossNamespace, clusterCIDRs, audiences string, reader client.Reader) (*scope.Policy, error) {
+	// Without it, single-label hosts, which resolve in the Gateway's
+	// namespace, would pass as external names.
+	if len(validation.IsDNS1123Label(gatewayNamespace)) > 0 {
+		return nil, fmt.Errorf("--gateway-namespace (or POD_NAMESPACE) must name the Gateway's namespace, got %q", gatewayNamespace)
+	}
+	policy := &scope.Policy{
+		GatewayNamespace: gatewayNamespace,
+		NamespaceExists: func(ctx context.Context, name string) (bool, error) {
+			err := reader.Get(ctx, client.ObjectKey{Name: name}, &corev1.Namespace{})
+			if apierrors.IsNotFound(err) {
+				return false, nil
+			}
+			return err == nil, err
+		},
+	}
+	var err error
+	if policy.CrossNamespace, err = scope.ParseNamespacePairs(crossNamespace); err != nil {
+		return nil, fmt.Errorf("--endpoint-cross-namespace: %w", err)
+	}
+	for _, cidr := range splitList(clusterCIDRs) {
+		prefix, err := scope.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("--cluster-cidrs: %w", err)
+		}
+		policy.ClusterCIDRs = append(policy.ClusterCIDRs, prefix)
+	}
+	if policy.Audiences, err = scope.ParseAudiences(audiences); err != nil {
+		return nil, fmt.Errorf("--token-exchange-audiences: %w", err)
+	}
+	return policy, nil
 }

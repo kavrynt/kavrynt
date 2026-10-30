@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-LOCAL_VERSION ?= 1.0.0-beta.2-local
+LOCAL_VERSION ?= 1.0.0-beta.3-local
 IMAGES := gateway operator
 CHART := charts/kavrynt
 # The chart refuses to render without MCP client authentication settings or
@@ -30,7 +30,7 @@ help:
 	@printf "  make helm-template  Render the Helm chart\n"
 	@printf "  make helm-unittest  Run the chart unit tests (helm-unittest)\n"
 	@printf "  make helm-plugins   Install the pinned helm-unittest plugin\n"
-	@printf "  make alerts-test    Test the alert rules with promtool and check their runbooks (needs Docker)\n"
+	@printf "  make alerts-test    Test the alert rules (promtool, runbooks) and notifications (amtool) (needs Docker)\n"
 	@printf "  make build          Build kavryctl, gateway, and operator binaries\n"
 	@printf "  make docker-build   Build local runtime images\n"
 	@printf "  make e2e-kind       Run the disposable Kind end-to-end workflow\n"
@@ -51,11 +51,13 @@ release-contract:
 spec-check:
 	bash ./scripts/verify-specs.sh
 
-# Alert rules: runbook coverage and promtool tests (SPEC-0010). promtool runs
-# from the pinned Prometheus image.
+# Alert rules: runbook coverage and promtool tests (SPEC-0010); notifications:
+# amtool checks of the AlertmanagerConfig (SPEC-0022). Both tools run from
+# pinned images.
 .PHONY: alerts-test
 alerts-test:
 	bash ./scripts/test-alerts.sh
+	bash ./scripts/test-notifications.sh
 
 .PHONY: spec-new
 spec-new:

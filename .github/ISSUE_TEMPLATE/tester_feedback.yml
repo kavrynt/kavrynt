@@ -1,0 +1,49 @@
+name: Tester feedback
+description: You tried Kavrynt (for example with docs/TESTING.md). Tell us what worked, what did not, and what you need.
+labels: [feedback]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for testing Kavrynt. Short answers are fine. Remove secrets, tokens, and internal hostnames from anything you paste.
+        Do not report security vulnerabilities here. Use [private vulnerability reporting](https://github.com/kavrynt/kavrynt/security/advisories/new) instead.
+  - type: input
+    id: version
+    attributes:
+      label: Kavrynt version
+      placeholder: 1.0.0-beta.3
+    validations:
+      required: true
+  - type: input
+    id: platform
+    attributes:
+      label: Kubernetes platform and version
+      placeholder: Kind 0.27 / EKS 1.33 / k3d / OpenShift 4.18 ...
+    validations:
+      required: true
+  - type: checkboxes
+    id: steps
+    attributes:
+      label: Which runbook steps worked?
+      options:
+        - label: Install
+        - label: Register an MCP server (Ready, tools discovered)
+        - label: Call tools through the Gateway
+        - label: Console
+        - label: Policy and audit
+        - label: My own MCP server
+        - label: Client authentication with my identity provider
+  - type: textarea
+    id: problems
+    attributes:
+      label: What did not work or was confusing?
+      description: The command, what you expected, and what happened.
+  - type: textarea
+    id: needs
+    attributes:
+      label: What would you need before using Kavrynt for real?
+  - type: textarea
+    id: logs
+    attributes:
+      label: Relevant output or logs
+      render: text

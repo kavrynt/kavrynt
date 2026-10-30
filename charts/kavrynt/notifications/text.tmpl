@@ -1,0 +1,15 @@
+{{ range .Alerts -}}
+{{ .Labels.alertname }} ({{ .Labels.severity }}, {{ .Status }})
+{{- if .Labels.route }}
+Server: {{ .Labels.route }}
+{{- else if .Labels.name }}
+Server: {{ .Labels.namespace }}/{{ .Labels.name }}
+{{- end }}
+{{- if .Labels.tool }}
+Tool: {{ .Labels.tool }}
+{{- end }}
+{{ .Annotations.summary }}
+{{ .Annotations.description }}
+Runbook: {{ .Annotations.runbook_url }}
+
+{{ end -}}

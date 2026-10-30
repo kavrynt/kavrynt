@@ -18,6 +18,16 @@ type Route struct {
 	// TokenExchange is set when the server gets each caller's exchanged
 	// token (SPEC-0015).
 	TokenExchange *kavryntv1alpha1.MCPServerTokenExchange `json:"-"`
+	// Tools maps each tool of the server's last successful discovery to
+	// its recorded behavior hints, for the policy input (SPEC-0028). It is
+	// never modified after the route is built.
+	Tools map[string]map[string]bool `json:"-"`
+	// SessionAffinity sends every request of an MCP session to the pod of
+	// the endpoint's Service that started it (SPEC-0026).
+	SessionAffinity bool `json:"-"`
+	// ForwardSubpaths forwards /mcp/<route>/<suffix> to the endpoint path
+	// plus the suffix; without it only the route itself is (SPEC-0029).
+	ForwardSubpaths bool `json:"-"`
 }
 
 // ServerTokenExchange tells the console that a server gets per-caller
@@ -54,7 +64,9 @@ type Server struct {
 	Credential *ServerCredential `json:"credential,omitempty"`
 	// TokenExchange is set for servers that declare spec.tokenExchange.
 	TokenExchange *ServerTokenExchange `json:"tokenExchange,omitempty"`
-	CreatedAt     time.Time            `json:"createdAt"`
+	// SessionAffinity is None or MCPSession (SPEC-0026).
+	SessionAffinity string    `json:"sessionAffinity"`
+	CreatedAt       time.Time `json:"createdAt"`
 }
 
 // ServerInfo is an MCP server's reported name and version.
@@ -77,4 +89,6 @@ type Tool struct {
 	Name        string          `json:"name"`
 	Description string          `json:"description,omitempty"`
 	InputSchema json.RawMessage `json:"inputSchema,omitempty"`
+	// Annotations are the recorded behavior hints by MCP name (SPEC-0028).
+	Annotations map[string]bool `json:"annotations,omitempty"`
 }

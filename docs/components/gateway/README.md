@@ -7,9 +7,21 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 
 - Watches `MCPServer` resources through a read-only informer cache
   (`internal/gateway/kube`). A server gets a route when the operator reports
-  `Ready=True`, the spec passes validation, and the transport is `http`.
-- Route path: `/mcp/<namespace>.<name>[/<suffix>]`. Suffix and query string are
-  appended to the endpoint URL.
+  `Ready=True` for the current spec (the condition's `observedGeneration`
+  equals the generation, so a changed spec waits for the Operator), the
+  spec passes validation, and the transport is `http`.
+  A request for a registered server without a route answers `404` saying
+  why: it uses the `stdio` transport, or it is not Ready. A `stdio` server
+  can run behind a Streamable HTTP bridge in its own pod and be registered
+  with the bridge's `http` endpoint
+  ([example](../../../examples/stdio-bridge/filesystem.yaml)); `kavryctl
+  validate` and `register` warn about `stdio` manifests.
+- Route path: `/mcp/<namespace>.<name>`. Only `POST`, `GET`, and `DELETE`
+  are forwarded, what MCP Streamable HTTP uses; other methods get `405`
+  with `Allow: GET, POST, DELETE` (SPEC-0029). The query string is appended
+  to the endpoint URL. A path below the route (`/mcp/<route>/<suffix>`)
+  gets `404` unless the server sets `spec.forwardSubpaths: true`, which
+  appends the suffix to the endpoint path, without `.` or `..` segments.
 - Endpoints are restricted to absolute `http`/`https` URLs without credentials
   or fragments.
 - Egress guard: the Gateway never connects to unspecified, link-local
@@ -20,7 +32,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   requests return `502`.
 - Upstream redirects are passed to the client, never followed.
 - MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
-  `400` and outcome `protocol_error` before anything is forwarded: an
+  `400` and outcome `protocol_error` before anything is forwarded (for a
+  `POST`, as a JSON-RPC error with code `-32600` and the request's `id`,
+  `null` for a batch): an
   `MCP-Protocol-Version` other than `2024-11-05`, `2025-03-26`,
   `2025-06-18`, `2025-11-25`, or `2026-07-28` (the answer lists them); a
   JSON-RPC batch (an array body); an `Mcp-Method` header that names another
@@ -51,7 +65,8 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - No token passthrough: `Authorization`, `Cookie`, and `Proxy-Authorization`
   are always removed before forwarding, along with hop-by-hop headers and
   headers named in `Connection`. Upstream `Set-Cookie` is dropped because
-  every route shares the Gateway origin. Extra headers can be stripped with
+  every route shares the Gateway origin, and `Server` and `X-Powered-By`
+  because they disclose the upstream's software. Extra headers can be stripped with
   `--strip-request-headers`.
 - Upstream credentials: for a server that declares `spec.credential`, the
   Gateway sends the credential stored for it in the upstream credentials
@@ -76,6 +91,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
 - Every `/mcp/` response carries `X-Request-Id`.
 - Token exchange (see below): servers that declare `spec.tokenExchange` get
   the caller's token exchanged for one with their own audience.
+- Session affinity (opt-in per server, see below): servers that declare
+  `spec.sessionAffinity: MCPSession` get every request of an MCP session on
+  the pod that started it.
 - Not implemented: approvals. See ADR-0003.
 
 ## Upstream credentials
@@ -161,13 +179,60 @@ and reports each gap, reordering, or altered event. The chain is
 tamper-evident, not tamper-proof: ship events out of the cluster with your
 log pipeline (filter on `"type":"kavrynt.audit.v1"`).
 
+**What verify proves.** A chain that verifies has every event of each
+instance it shows, unaltered and in order, from `seq` 1 up to its last
+event. It cannot show:
+
+- events cut off the end of a chain: a log truncated after event N verifies
+  like one that ended there;
+- an instance whose events are all missing;
+- a chain rewritten by someone who can write the log: the hashes use no
+  key, so recomputing every hash after an edit gives a chain that verifies.
+
+These are limits of a hash chain without an anchor outside the log. Keep a
+copy where the Gateway's log writers cannot change it, soon after the
+events are written: your log pipeline, or audit delivery to Kavrynt Cloud
+(below). Then compare each instance's last `seq` in the copy with the
+events you verify, and verify the copy, not only the cluster's logs.
+
 **Back-pressure.** Up to `--audit-queue-size` (10,000) events wait to be
 written. When the queue is full, `--audit-on-overflow=reject` (default)
 answers new MCP requests `503` without forwarding them, so no call is served
 without its record; `drop` serves them and counts the lost events. Metrics:
 `kavrynt_gateway_audit_events_total`, `kavrynt_gateway_audit_overflow_total{action}`,
 `kavrynt_gateway_audit_queue_length`. Queued events are written on graceful
-shutdown. Delivery to Kavrynt Cloud is not implemented.
+shutdown.
+
+**Delivery to Kavrynt Cloud** (SPEC-0017, opt-in). With `--audit-cloud-url`
+(chart: `gateway.audit.cloud`) the Gateway also sends every written event to
+Kavrynt Cloud, so the chains can be checked outside the cluster. Events
+leave the cluster with the caller's `subject`, `client_id`, and `issuer`
+(personal data); never arguments, results, or tokens. Standard output keeps
+every event either way.
+
+- `POST <url>/v1/sync/audit-events` with `Authorization: Bearer <cluster
+  token>` and `{"events": [...]}`: at most 500 events and 1 MiB per batch,
+  sent when a batch is full and at least every 10 seconds, in `seq` order.
+  The kavrynt-cloud ingestion service must serve this endpoint; until it
+  does, delivery fails and `KavryntAuditDeliveryStale` fires.
+- Only an answer `2xx` removes events. Anything else retries the same events
+  with exponential backoff and jitter (1 s up to 5 min), or `Retry-After` on
+  `429` and `503`, so Cloud can receive an event twice; `instance` and `seq`
+  identify it.
+- Undelivered events wait in a buffer of `--audit-cloud-buffer-size`
+  (100,000). When it is full the oldest are dropped from delivery and
+  counted; MCP requests are never delayed by delivery.
+- The token is read from `--audit-cloud-token-file` before every attempt
+  (a rotated Secret needs no restart) and never logged. Requests use HTTPS
+  only, follow no redirects, time out after 30 s, and refuse link-local,
+  cloud metadata, and loopback addresses like MCP traffic.
+- Metrics: `kavrynt_gateway_audit_delivery_total{result}` (`delivered`,
+  `throttled`, `rejected`, `server_error`, `network`, `token`),
+  `kavrynt_gateway_audit_delivery_buffer_length`,
+  `kavrynt_gateway_audit_delivery_dropped_total`, and
+  `kavrynt_gateway_audit_delivery_last_success_timestamp_seconds`.
+- At shutdown, after writing its queue, the Gateway makes one last delivery
+  attempt within `--shutdown-timeout`.
 
 ## Tool authorization policy
 
@@ -188,9 +253,21 @@ Input:
 | `http_method` | `POST`, `GET`, `DELETE` |
 | `mcp_method` | JSON-RPC method of a `POST`; empty for other methods and for JSON-RPC responses |
 | `tool` | `params.name` of `tools/call`; empty otherwise |
+| `tool_annotations` | For `tools/call`, the behavior hints the Operator recorded for `tool` on this route (`readOnlyHint`, `destructiveHint`, `idempotentHint`, `openWorldHint`), absent hints left out; `{}` otherwise |
+| `tool_discovered` | `true` when `tool` is among the route's tools and the discovery of the current spec succeeded (`ToolsDiscovered` is `True` for the `MCPServer`'s generation); `false` otherwise |
 | `time` | Request time, RFC 3339, UTC |
 
-Tool arguments are never part of the input. A denied request gets `403` with
+Tool arguments are never part of the input. `tool_annotations` and
+`tool_discovered` come only from the `MCPServer` status, never from the
+request. **Hints are the MCP server's own claims:** a malicious or buggy
+server can call a destructive tool read-only, so decide on them only for
+servers whose code you trust. A hint the server did not report is absent,
+not `false`; MCP's defaults for absent hints are `readOnlyHint: false`,
+`destructiveHint: true`, `idempotentHint: false`, `openWorldHint: true`. The
+policy sees hints only once a discovery of the current spec has succeeded:
+after a failed discovery or a spec change, every tool has
+`tool_annotations: {}` and `tool_discovered: false`, and so does a tool the
+server added since the last discovery. A denied request gets `403` with
 a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
 policy's `reason` with control characters removed and at most 200
 characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
@@ -199,23 +276,43 @@ read (not a single JSON object, over 1 MiB, `tools/call` without a string
 gets `400`. None of these reach the MCP server.
 
 A policy that does not compile stops the Gateway at start, naming the file
-and line. Changes are picked up within about 10 seconds of the kubelet
-updating the mount; an update that does not compile is logged and counted in
+and line. An update that does not compile is logged and counted in
 `kavrynt_gateway_policy_load_failures_total`, and the previous policy stays in
 force. `kavrynt_gateway_policy_info{revision}` names the active revision (the
 SHA-256 of the files) on each replica, and
-`kavrynt_gateway_policy_decisions_total{result}` counts decisions. Policies
+`kavrynt_gateway_policy_decisions_total{result}` counts decisions.
+
+**How long a change takes.** A ConfigMap change is not in force at once.
+The kubelet updates the mounted files after up to its sync period (one
+minute by default) plus its cache delay, and the Gateway checks the files
+every 10 seconds, so expect one to two minutes; about 66 seconds was
+measured on Kind. Replicas switch independently. Until a replica switches,
+it decides with the previous policy, so a call the new policy denies can
+still succeed there: tightening a policy is not immediate. To check:
+
+```bash
+kubectl -n kavrynt-system logs deploy/kavrynt-gateway | grep 'policy loaded'
+```
+
+or compare `kavrynt_gateway_policy_info{revision}` across replicas with
+`sha256sum` of the policy files; each audit event's `policy_revision` names
+the policy that decided it. To apply a change at once, for example during
+an incident, restart the Gateway after editing the ConfigMap:
+`kubectl -n kavrynt-system rollout restart deploy/kavrynt-gateway`. New pods
+mount the current ConfigMap and load it before they are ready. Policies
 cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
 [`examples/policy`](../../examples/policy) (allow authenticated callers, a
-per-client tool allow-list, read-only methods).
+per-client tool allow-list, read-only methods, and read-only tools of
+trusted servers by their reported hints).
 
 **Filtered tool lists.** With `--policy-filter-tools-list` (chart:
 `gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
 only the tools the policy would let the same caller call (SPEC-0016): for
-each tool the policy is asked with `mcp_method: tools/call` and `tool: <name>`
-and the caller's other input. Every other field of the answer (`nextCursor`,
+each tool the policy is asked with `mcp_method: tools/call`, `tool: <name>`,
+that tool's recorded `tool_annotations` and `tool_discovered` (not the
+annotations in the answer), and the caller's other input. Every other field of the answer (`nextCursor`,
 `_meta`, the kept tools as sent) is unchanged; in an event stream only the
 response event is changed. The Gateway asks the server for an uncompressed
 answer. If the evaluations take longer than 500 ms together, the answer is
@@ -281,7 +378,8 @@ issuer's tokens fail (`503`); `/readyz` is not affected.
 the route's resource URI. Authorization servers that support RFC 8707
 resource indicators do this from the client's `resource` parameter; others
 need an audience configured per route. Opaque tokens and token introspection
-are not supported.
+are not supported. [Setting up MCP client authentication](../../AUTH-SETUP.md)
+walks through Keycloak.
 
 **Effects elsewhere.** `/v1/routes` lists names, versions, and transports
 only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's
@@ -337,6 +435,25 @@ no redirects, and pass the egress guard. Your authorization server decides
 which audiences the Gateway may ask for, and may add the acting client as
 `act`.
 
+The Gateway uses one OAuth client for every route, so the authorization
+server cannot tell which route asks for an audience. The platform team
+therefore lists the audiences each namespace's servers may request, in
+`global.tokenExchangeAudiences` (`--token-exchange-audiences`, a JSON
+object; `"*"` applies to every namespace):
+
+```yaml
+global:
+  tokenExchangeAudiences:
+    team-a: [https://tickets.example.com]
+```
+
+A server whose audience is not listed for its namespace is not `Ready`
+(`AudienceNotAllowed`), so the Gateway removes its route and its calls get
+`404` once the Gateway has synced. Until then, and whenever the Gateway's
+own list does not allow the audience, the Gateway exchanges no token: the
+call gets `503` (`exchange_failed`) without a request to the authorization
+server. With the default, an empty list, no audience is allowed.
+
 | Case | Status | Outcome |
 | --- | --- | --- |
 | The authorization server refuses, or answers without a bearer `access_token` | `502 token exchange failed` | `exchange_failed` |
@@ -349,6 +466,56 @@ or responses. The Operator does not list the tools of such a server (it has
 no caller): `ToolsDiscovered=False` with reason `CallerTokenRequired`, and
 `Ready` is unaffected. `/v1/servers` shows `tokenExchange: {audience}`.
 
+## Session affinity
+
+MCP Streamable HTTP lets a server start a session in its `initialize`
+answer (`Mcp-Session-Id`), and servers built with the official SDKs keep
+that session in memory. Behind a Service with several replicas, the
+requests of one session then land on different pods, which answer `404`
+(`session_not_found`). `sessionAffinity: ClientIP` on the Service does not
+help, since every request comes from a Gateway pod. Declare
+`spec.sessionAffinity: MCPSession` (SPEC-0026):
+
+```yaml
+spec:
+  transport: http
+  endpoint: http://search.team-a.svc.cluster.local:8080/mcp
+  sessionAffinity: MCPSession
+```
+
+- The endpoint must be `http` and name a Service by its cluster DNS name
+  (`<service>.<namespace>.svc[.<cluster-domain>]`); otherwise the server is
+  not `Accepted` (`InvalidSpec`). The Gateway connects to a pod's address,
+  so a certificate for the Service name would not verify; use a mesh for
+  TLS between the Gateway and pods.
+- A request without `Mcp-Session-Id` goes to the next ready pod of the
+  Service, from its EndpointSlices in the namespaces the Gateway watches,
+  with the Service host in `Host`. When the answer starts a session, the
+  client gets `<tag>.<session ID>`, where the tag is derived from the pod's
+  UID and names neither its address nor its name. Every later request of
+  the session (`POST`, the `GET` stream, `DELETE`) goes to that pod with
+  the server's own session ID, from any Gateway replica: the replicas share
+  nothing.
+- A session whose pod is no longer ready, or a session ID the Gateway did
+  not issue, gets `404` without being forwarded, so the client starts a new
+  session. A session is not moved to another pod.
+- New sessions with no ready pod, or a Service in a namespace the Gateway
+  does not watch, get `503`. Pods that are not ready, not serving, or
+  terminating are not used. Pod addresses pass the same egress checks as
+  any endpoint.
+- The Service must have one port. EndpointSlices list target ports, so with
+  several the Gateway cannot tell which one the endpoint's Service port
+  maps to without reading the Service; it uses none, and new sessions get
+  `503`.
+- The Operator lists such a server's tools from one ready pod.
+- The Gateway reads EndpointSlices (`get`, `list`, `watch`) in the
+  namespaces it watches and keeps them in its cache; the Operator may
+  `list` them.
+
+Without session affinity, a server that keeps session state needs one
+replica. Its lost sessions are counted as `session_not_found`, and the
+console's server page says so.
+
 ## High availability
 
 The Gateway keeps no state that replicas must share: routes come from the
@@ -359,7 +526,8 @@ PodDisruptionBudget and soft spread across nodes and zones.
 `examples/helm/values-production.yaml` is the tested profile.
 
 Per replica, by design: recent traffic (`/v1/traffic`, which names the
-replica in `instance`) and the console login limiter (five failed logins a
+replica in `instance`), the traffic conditions of the console alerts
+(`/v1/alerts`), and the console login limiter (five failed logins a
 minute per client address, per replica). Use `/metrics` in Prometheus for the
 cluster-wide view.
 
@@ -374,6 +542,8 @@ cluster-wide view.
 | `GET /v1/routes` | Current route table: name, version, transport, and the endpoint without credentials, query, or fragment (no endpoint while MCP client authentication is on) |
 | `GET /v1/servers` | Every watched `MCPServer`: conditions, discovered tools, the `serverInfo` it reported, whether it is routed. Leaves out `command`, `args`, `environment`, and the endpoint query. Needs a console session when console login is on |
 | `GET /v1/traffic` | `instance` (this replica's name) and `requests`: the last 500 proxied requests on this replica, newest first: route, method, tool, outcome, status, latency, sizes. Needs a console session when console login is on |
+| `GET /v1/alerts` | `instance`, `evaluatedAt`, and `alerts`: the [console alerts](#console-alerts) that are active, then those resolved in the last hour: `name`, `severity`, `scope` (`route`, optional `tool`), `summary`, `since`, `resolvedAt`, `runbookURL`. Needs a console session when console login is on |
+| `GET /v1/history?range=1h\|6h\|24h[&route=<route>[&tool=<tool>]]` | The [dashboards'](#console-dashboards) history of this replica for all routes, a route, or a tool: `instance`, `scope`, `range`, `stepSeconds`, `start`, `end`, `since`, `points` (`time`, `ok`, `toolError`, `upstreamError`, `other`, `errorRate`, `p50Ms`, `p95Ms`, and outside a tool `bytesIn`, `bytesOut`), `routes` and `tools` totals (`calls`, `errors`, `errorRate`, `p95Ms`), the console `alerts` active in the range, and `grafanaURL`. `400` for another `range`, a route that is not routed, a tool without a route, or a malformed tool name. Needs a console session when console login is on |
 | `GET`, `POST`, `DELETE /v1/session` | Console login: report the session (or `{"enabled":false}`) and `mcpAuth`, sign in with `{"username":"admin","password":"..."}` as JSON, sign out |
 | `GET /.well-known/oauth-protected-resource/mcp/<route>` | Protected Resource Metadata of a route (RFC 9728), only with MCP client authentication |
 | `GET /ui/` | Web console (`--console`); `/` redirects here |
@@ -383,24 +553,30 @@ cluster-wide view.
 
 A read-only web console served by the Gateway itself, enabled by default
 (chart: `console.enabled`). It needs no extra RBAC and no external assets;
-everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
-`/version`.
+everything it shows comes from `/v1/servers`, `/v1/traffic`, `/v1/alerts`,
+`/v1/history`, `/readyz`, and `/version`.
 
 - **Overview** (the landing page): Gateway readiness and version, counts of
   servers, routed servers, and tools, and recent request volume, error rate,
   and p95 latency. **Needs attention** lists servers that are not routed,
   whose tool discovery failed, or whose recent requests mostly fail (at
-  least half of at least five), with the reason. **Failing tools** lists the
-  five tools with the most failed calls.
+  least half of at least five), with the reason, and links to the Alerts
+  page. **Failing tools** lists the five tools with the most failed calls.
+- **Dashboard**: charts of the last hour, 6 hours, or 24 hours for all
+  servers, one server, or one tool, with the busiest and most failing
+  servers and tools (see [Console dashboards](#console-dashboards)).
 - **Servers**: every `MCPServer` with its health, recent request count and
   error rate, declared and reported version (marked when they differ),
-  conditions, and discovered tools with input schemas. A connect
+  conditions, and discovered tools with input schemas. Its **Dashboard** tab
+  charts the server and lists each tool's calls, errors, error rate, and
+  p95 for the range; choosing a tool charts that tool. A connect
   panel gives the route URL and ready-to-paste MCP client, Python agent, and
   curl snippets. **Copy diagnostics** copies a metadata-only summary
   (conditions, tools, recent traffic; no tool inputs or results, and the
   endpoint's query string redacted) for an issue or a chat.
 - **Tools**: every discovered tool across all servers, searchable by name,
-  description, and route, with a link to try it in the Playground.
+  description, and route, with its reported behavior hints and a link to
+  try it in the Playground. A server's Tools tab shows the same hints.
 - **Playground**: opens an MCP session (`initialize`, `tools/list`) through
   the Gateway route, builds a form from each tool's input schema, and calls
   tools (`tools/call`) or any raw JSON-RPC method. JSON and event-stream
@@ -409,6 +585,10 @@ everything it shows comes from `/v1/servers`, `/v1/traffic`, `/readyz`, and
   route, method, tool, and outcome, with per-tool calls, error rate, and
   p50/p95 latency, 100 rows at a time. **What do the outcomes mean?**
   explains each outcome (see below).
+- **Alerts**: the [console alerts](#console-alerts) that are active, critical
+  before warning and oldest first, then those resolved in the last hour,
+  each with when it started, a link to its server or tool, and its runbook.
+  The navigation shows the number of active alerts on every page.
 
 Filters are part of the URL, so a filtered view can be shared as a link.
 Polling stops while the browser tab is hidden. Traffic covers only the
@@ -420,6 +600,68 @@ kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 # open http://localhost:18080/ui/ and sign in as admin with:
 kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
+
+### Console dashboards
+
+Each Gateway replica keeps its own calls of the last 24 hours in memory: per
+route, calls by outcome class, latency in the buckets of
+`kavrynt_gateway_mcp_request_duration_seconds`, and bytes in and out; per
+tool, `tools/call` requests by outcome class and latency. Points are one
+minute apart for the last hour and five minutes apart for 6 and 24 hours.
+The classes are `ok`, `toolError` (`tool_error`, `rpc_error`),
+`upstreamError` (`upstream_error`, `upstream_unreachable`, `timeout`), and
+`other` (every other outcome, such as calls the Gateway refused). The error
+rate is the share of calls that are not `ok`; p50 and p95 are computed like
+`histogram_quantile`.
+
+The Dashboard page and each server's Dashboard tab chart requests per
+minute by class, error rate, p50 and p95 latency, and bytes per second
+(not for a tool: bytes are counted per route, as in the metrics). The
+console alerts that started or resolved in the range are marked with
+dashed lines and listed under the charts; resolved alerts are kept for 24
+hours for this, while `/v1/alerts` lists only the last hour. Hovering a
+chart, or focusing it and using the arrow keys, shows its values; a table
+of the same numbers is there for screen readers. The range and scope are
+part of the URL.
+
+The numbers are this replica's since it started: a restart begins the
+history again, and replicas do not add up their calls. For cluster-wide
+or longer history, use the Grafana dashboards (chart:
+`metrics.dashboard.enabled`), which the page links when
+`console.grafanaURL` (`--grafana-url`) is set.
+
+Memory is fixed by the number of routes and tools: about 29 KiB per route
+and 23 KiB per tool. Tools are charted on their own up to
+`console.history.maxTools` (`--history-max-tools`, default 500) across
+routes; calls to further tools count as their route's `other` tool. With
+the default and 300 routes the history takes about 27 MiB. Routes of
+deleted `MCPServer`s are dropped within a minute.
+
+### Console alerts
+
+The Gateway evaluates five conditions every 15 seconds, with the same
+thresholds as the chart's Prometheus alerts, so teams without Prometheus see
+the same problems. The umbrella chart writes the thresholds from
+`metrics.prometheusRule` into the ConfigMap `<release>-console-alerts`, which
+the Gateway mounts and rereads when it changes (`--alerts-config`), whether
+or not the rules are installed.
+
+| Condition | Holds when | For | Runbook |
+| --- | --- | --- | --- |
+| `ServerNotReady` | The `MCPServer`'s `Ready` is not `True` | `notReadyFor` (10m) | `KavryntMCPServerNotReady` |
+| `DiscoveryFailing` | A `Ready` server's `ToolsDiscovered` is `False` with `DiscoveryFailed` or `CredentialUnavailable` | `discoveryFailingFor` (15m) | `KavryntMCPToolDiscoveryFailing` |
+| `UpstreamErrors` | Over `errorRatio` (5%) of a route's calls in the last 10 minutes ended in `upstream_error`, `upstream_unreachable`, or `timeout` | 5m | `KavryntMCPUpstreamErrorsHigh` |
+| `ToolErrors` | Over `toolErrorRatio` (20%) of a tool's `tools/call` requests in the last 10 minutes ended in `tool_error` or `rpc_error` | 10m | `KavryntMCPToolErrorsHigh` |
+| `SlowRoute` | A route's p95 latency in the last 10 minutes is over `latencyP95Seconds` (5s) | 15m | `KavryntMCPLatencyHigh` |
+
+Route conditions need `minRequestsPerSecond` (0.05, 30 calls in 10 minutes),
+tool conditions `minToolRequestsPerSecond` (0.02, 12 calls). Unlike
+`KavryntMCPLatencyHigh`, `SlowRoute` also needs that minimum. All are
+`warning`. Status conditions start at their condition's
+`lastTransitionTime`, so every replica reports them alike. Traffic
+conditions count this replica's own calls; Prometheus sums every replica.
+Resolved alerts are kept for an hour in memory; alerts about a deleted
+`MCPServer` are removed. They carry route and tool names and counts only.
 
 ### Console login
 
@@ -436,9 +678,23 @@ the Gateway's service account has no RBAC on Secrets.
 - To change the password, update the Secret's `password` key. Every session
   ends once the kubelet updates the mount (about a minute); no restart is
   needed.
-- After five failed logins from one address within a minute, logins from
-  that address get `429` until the minute has passed. Behind an Ingress the
-  address is the Ingress, so the limit applies to everyone.
+- After five failed logins from one client within a minute, logins from
+  that client get `429` until the minute has passed. The client is the
+  connection's address. Behind an Ingress or load balancer that is the
+  proxy, so the limit applies to everyone, unless the proxy's CIDRs are in
+  `gateway.console.auth.trustedProxies` (`--console-trusted-proxies`): for
+  requests from them, the client is the right-most `X-Forwarded-For`
+  address that is not a trusted proxy (SPEC-0030). A header with no such
+  address counts against the proxy, and `X-Forwarded-For` from other
+  addresses is ignored. List only the proxies: an address listed there can
+  name any client. Each trusted proxy must overwrite `X-Forwarded-For`, or
+  append the address of the peer it received the request from; a proxy
+  that passes on a client's header unchanged lets that client pick a new
+  address for every attempt.
+- The limiter tracks at most 10,000 clients per replica. When it is full it
+  forgets clients whose minute has passed, then the oldest one that is not
+  refused, never a refused one; with only refused clients left, further
+  clients share one limit until room frees up.
 - Failed and successful logins are logged with the client address. The
   password and session tokens are never logged.
 - GitOps and `helm template` renders cannot look up the existing Secret and
@@ -489,16 +745,75 @@ tool arguments, and results are never recorded.
   stored upstream credential is missing or not pinned to its endpoint;
   `denied` (`403`) when the tool authorization policy refuses the call;
   `protocol_error` (`400`) when the request is not well-formed MCP
-  Streamable HTTP; and `exchange_failed` (`502`/`503`) when the caller's
-  token could not be exchanged for the server. JSON responses up
-  to 1 MiB are inspected; event streams are not.
+  Streamable HTTP; `exchange_failed` (`502`/`503`) when the caller's
+  token could not be exchanged for the server; and `session_not_found`
+  (`404`) when a request with `Mcp-Session-Id` names a session the server
+  does not know or, with session affinity, a pod that is no longer ready
+  (it was `client_error` before `session_not_found` existed). JSON responses up
+  to 1 MiB are inspected, and so are event-stream answers to a `POST`, event
+  by event (events up to 1 MiB), until the one that answers the request.
+  The answers the MCP specification gives for a feature a server does not
+  offer count as `ok`: `405` to the optional `GET` event stream or to a
+  `DELETE` that ends a session, and JSON-RPC "method not found"
+  (`-32601`) to the `server/discover` probe.
 
 The chart adds `prometheus.io/*` scrape annotations by default
 (`gateway.metrics.scrapeAnnotations`). Optional: a Prometheus Operator
 `ServiceMonitor` (`gateway.metrics.serviceMonitor.enabled`), the
-"Kavrynt MCP Traffic" Grafana dashboard as a sidecar-labelled ConfigMap
-(`gateway.metrics.dashboard.enabled`), and alerting rules with runbooks
-(`metrics.prometheusRule.enabled`; see [docs/runbooks](../../runbooks/README.md)).
+"Kavrynt MCP Traffic" and "Kavrynt MCP Server" Grafana dashboards and your
+own as sidecar-labelled ConfigMaps (`gateway.metrics.dashboard.*`), and
+alerting rules with runbooks (`metrics.prometheusRule.enabled`; see
+[docs/runbooks](../../runbooks/README.md)).
+
+## Metrics reference
+
+Every metric the Gateway exports on `/metrics`, besides the Go runtime
+(`go_*`) and process (`process_*`) metrics. Labels are bounded: no metric
+carries a caller identity, tool arguments, or results. The Operator's metrics
+are in the [Operator reference](../operator/README.md#metrics-reference).
+
+| Metric | Type | Labels and bounds |
+| --- | --- | --- |
+| `kavrynt_gateway_mcp_requests_total` | counter | `route` (one per routed `MCPServer`, `<namespace>.<name>`), `method` (50 per route, then `other`), `tool` (200 per route, then `other`; `none`, `invalid`), `outcome` (the list above) |
+| `kavrynt_gateway_mcp_request_duration_seconds` | histogram | as `kavrynt_gateway_mcp_requests_total`; buckets 5 ms to 30 s |
+| `kavrynt_gateway_mcp_bytes_total` | counter | `route`, `direction` (`in`, `out`) |
+| `kavrynt_gateway_requests_total` | counter | none; every HTTP request the Gateway received |
+| `kavrynt_gateway_proxied_requests_total` | counter | none; requests proxied to an MCP server to completion |
+| `kavrynt_gateway_stripped_credential_requests_total` | counter | none; proxied requests whose `Authorization`, `Cookie`, or `Proxy-Authorization` was removed |
+| `kavrynt_gateway_routes` | gauge | none; routes served now |
+| `kavrynt_gateway_route_sync_success_total` | counter | none |
+| `kavrynt_gateway_route_sync_failure_total` | counter | none |
+| `kavrynt_gateway_audit_events_total` | counter | none; with audit on |
+| `kavrynt_gateway_audit_overflow_total` | counter | `action` (`reject`, `drop`); with audit on |
+| `kavrynt_gateway_audit_queue_length` | gauge | none; with audit on |
+| `kavrynt_gateway_audit_delivery_total` | counter | `result` (`delivered`, `throttled`, `rejected`, `server_error`, `network`, `token`); with audit delivery to Kavrynt Cloud |
+| `kavrynt_gateway_audit_delivery_buffer_length` | gauge | none; with audit delivery |
+| `kavrynt_gateway_audit_delivery_dropped_total` | counter | none; with audit delivery |
+| `kavrynt_gateway_audit_delivery_last_success_timestamp_seconds` | gauge | none; Unix time, the Gateway's start until the first accepted batch; with audit delivery |
+| `kavrynt_gateway_policy_decisions_total` | counter | `result` (`allow`, `deny`, `error`); with a policy |
+| `kavrynt_gateway_policy_load_failures_total` | counter | none; with a policy |
+| `kavrynt_gateway_policy_info` | gauge | `revision` (the active policy only, value 1); with a policy |
+| `kavrynt_gateway_policy_filtered_tools_total` | counter | `route`; with a policy |
+
+Each Gateway replica exports its own series; sum over `instance` for the
+whole Gateway. Example PromQL for custom panels:
+
+```promql
+# Error rate per MCP server
+sum by (route) (rate(kavrynt_gateway_mcp_requests_total{outcome!="ok"}[5m]))
+  / sum by (route) (rate(kavrynt_gateway_mcp_requests_total[5m]))
+
+# p95 latency per tool of one server
+histogram_quantile(0.95, sum by (tool, le) (rate(
+  kavrynt_gateway_mcp_request_duration_seconds_bucket{route="team-a.search", method="tools/call"}[5m])))
+
+# Tool calls per minute, by tool
+sum by (route, tool) (rate(kavrynt_gateway_mcp_requests_total{method="tools/call"}[5m])) * 60
+```
+
+Calls per client are not in metrics, which carry no identity. Count them
+from the audit events (`gateway.audit`), for example in your log pipeline
+grouped by `client_id` or `subject`.
 
 ## Flags
 
@@ -510,9 +825,11 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers |
 | `--allowed-origins` | none (chart: `config.allowedOrigins`) | Comma-separated browser origins accepted besides loopback (`KAVRYNT_ALLOWED_ORIGINS`) |
 | `--console` | `true` (chart: `console.enabled`) | Serve the web console at `/ui/` |
-| `--console-auth` | `true` (chart: `console.auth.enabled`) | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic` (with `--console`). MCP routes are not affected |
+| `--console-auth` | `true` (chart: `console.auth.enabled`) | Require the console admin login for the console, `/v1/servers`, `/v1/traffic`, and `/v1/alerts` (with `--console`). MCP routes are not affected |
 | `--console-auth-dir` | none (chart: the mounted admin Secret) | Directory with the `password` and `sessionKey` files (`KAVRYNT_CONSOLE_AUTH_DIR`). Required with `--console-auth` |
 | `--console-session-ttl` | `12h` (chart: `console.auth.sessionTTL`) | Console session lifetime |
+| `--token-exchange-audiences` | none allowed (chart: `global.tokenExchangeAudiences`) | JSON object from namespace (or `"*"`) to the audiences tokens may be exchanged for (`KAVRYNT_TOKEN_EXCHANGE_AUDIENCES`) |
+| `--console-trusted-proxies` | empty (chart: `console.auth.trustedProxies`) | Comma-separated CIDRs of proxies whose `X-Forwarded-For` names the client for the console login limit |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
 | `--auth` | `false` (chart: `auth.enabled`, default `true`) | Require a bearer access token for the route on every `/mcp/` request |
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
@@ -522,16 +839,23 @@ The chart adds `prometheus.io/*` scrape annotations by default
 | `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
 | `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |
 | `--audit-on-overflow` | `reject` (chart: `audit.onOverflow`) | With a full queue: `reject` new MCP requests (`503`) or `drop` their events |
+| `--audit-cloud-url` | none (chart: `audit.cloud.url` with `audit.cloud.enabled`) | Kavrynt Cloud base URL (https) to deliver audit events to; needs `--audit` (`KAVRYNT_AUDIT_CLOUD_URL`) |
+| `--audit-cloud-token-file` | `/etc/kavrynt/audit-cloud/token` (chart: the mounted `audit.cloud.tokenSecret`) | Cluster token file (`KAVRYNT_AUDIT_CLOUD_TOKEN_FILE`) |
+| `--audit-cloud-buffer-size` | `100000` (chart: `audit.cloud.bufferSize`) | Undelivered events kept; the oldest are dropped when full |
 | `--policy-dir` | none (chart: the mounted `gateway.policy.configMap`) | Directory of the tool authorization policy (`.rego` files); every MCP request is then decided by it (`KAVRYNT_POLICY_DIR`) |
 | `--upstream-credentials-dir` | none (chart: the mounted `global.upstreamCredentials.secretName`) | Directory of the upstream credentials Secret (`KAVRYNT_UPSTREAM_CREDENTIALS_DIR`) |
 | `--shutdown-delay` | `5s` (chart: `config.shutdownDelay`) | How long to keep serving after `/readyz` starts failing on shutdown |
 | `--shutdown-timeout` | `10s` (chart: `config.shutdownTimeout`) | How long to wait for in-flight requests once the server stops accepting connections |
 | `--strict-protocol` | `true` (chart: `config.strictProtocol`) | Refuse requests that are not well-formed MCP Streamable HTTP; `false` forwards them |
-| `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` |
+| `--instance` | `KAVRYNT_INSTANCE`, else the hostname (chart: the pod name) | Name of this replica in `/v1/traffic` and `/v1/alerts` |
+| `--history-max-tools` | `500` (chart: `console.history.maxTools`) | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool |
+| `--grafana-url` | none (chart: `console.grafanaURL`) | Grafana base URL (http or https, no credentials, query, or fragment) the dashboards link for cluster-wide history (`KAVRYNT_GRAFANA_URL`) |
+| `--alerts-config` | none: the defaults (chart: the mounted `<release>-console-alerts`) | JSON file with the console alert thresholds, reread when it changes (`KAVRYNT_ALERTS_CONFIG`) |
 
 Kubernetes access comes from the in-cluster service account (or `KUBECONFIG`
 when run locally). The chart grants only `get`, `list`, `watch` on
-`mcpservers.kavrynt.io`.
+`mcpservers.kavrynt.io` and, for session affinity,
+`endpointslices.discovery.k8s.io`.
 
 ## Run locally
 

@@ -129,6 +129,17 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .nav a:hover { background: rgba(255, 255, 255, .06); text-decoration: none; }
 .nav a.active { background: var(--sidebar-active); color: #fff; }
 .nav-icon { width: 18px; text-align: center; opacity: .85; }
+.nav-count {
+  margin-left: auto;
+  min-width: 20px;
+  padding: 0 6px;
+  border-radius: 10px;
+  background: var(--warn-soft);
+  color: var(--warn);
+  font-size: 12px;
+  font-weight: 600;
+  text-align: center;
+}
 .sidebar-foot { margin-top: auto; padding: 14px 18px; font-size: 12px; border-top: 1px solid rgba(255, 255, 255, .08); }
 .gw-status { display: flex; align-items: center; gap: 8px; }
 .gw-version { color: var(--sidebar-muted); margin-top: 4px; word-break: break-all; }
@@ -359,6 +370,13 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .outcomes summary { margin: 0 0 8px; font-size: 13px; }
 .outcomes .kv { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); padding: 12px 16px; }
 .attention { list-style: none; margin: 0; padding: 0; }
+.panel-actions { display: flex; align-items: center; gap: 10px; }
+.alert-list { list-style: none; margin: 0; padding: 0; }
+.alert-item { padding: 10px 16px; border-bottom: 1px solid var(--border); }
+.alert-item:last-child { border-bottom: none; }
+.alert-item p { margin: 4px 0 0 16px; overflow-wrap: anywhere; }
+.alert-item.resolved strong { color: var(--muted); }
+.alert-line { display: flex; align-items: center; gap: 8px; flex-wrap: wrap; }
 .attention li { padding: 10px 16px; border-bottom: 1px solid var(--border); }
 .attention li:last-child { border-bottom: none; }
 .attention p { margin: 4px 0 0 16px; font-size: 13px; overflow-wrap: anywhere; }
@@ -383,6 +401,35 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .bar { height: 6px; background: var(--surface-2); border-radius: 3px; overflow: hidden; min-width: 60px; }
 .bar > span { display: block; height: 100%; background: var(--accent); }
 .bar.bad > span { background: var(--bad); }
+
+/* Dashboards (SPEC-0024): inline SVG charts coloured with the theme tokens
+   only. A series' c-<token> class sets --c, which bars, lines, and legend
+   swatches use. */
+.chart-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 340px), 1fr)); gap: 0 16px; }
+.chart-host, .chart-grid > *, .top-grid > * { min-width: 0; }
+.chart { display: block; max-width: 100%; overflow: visible; }
+.chart:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.chart .grid { stroke: var(--border); stroke-width: 1; }
+.chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
+/* Not .bar: that class sets a height, which would override the rect's. */
+.chart .column { fill: var(--c); }
+.chart .line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.chart .before-since { fill: var(--surface-2); }
+.chart .cursor { stroke: var(--text); stroke-width: 1; }
+.chart .mark { stroke-width: 1.5; stroke-dasharray: 4 3; }
+.chart .mark-start { stroke: var(--bad); }
+.chart .mark-resolved { stroke: var(--ok); }
+.c-ok { --c: var(--ok); }
+.c-warn { --c: var(--warn); }
+.c-bad { --c: var(--bad); }
+.c-info { --c: var(--info); }
+.c-accent { --c: var(--accent); }
+.legend { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0 0 8px; padding: 0; color: var(--muted); font-size: 12px; }
+.legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+.chart-readout { margin: 6px 0 0; min-height: 1.4em; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
+.top-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
+.dash-toolbar { margin-bottom: 14px; }
+.sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0; }
 
 @media (max-width: 900px) {
   .shell { flex-direction: column; }

@@ -1,0 +1,454 @@
+{
+  "uid": "kavrynt-mcp-server",
+  "title": "Kavrynt MCP Server",
+  "description": "One MCP server: readiness, tool discovery, traffic, errors, and latency per tool. Metadata only.",
+  "tags": [
+    "kavrynt",
+    "mcp"
+  ],
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "refresh": "30s",
+  "time": {
+    "from": "now-1h",
+    "to": "now"
+  },
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Data source",
+        "type": "datasource",
+        "query": "prometheus"
+      },
+      {
+        "name": "namespace",
+        "label": "Namespace",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(kavrynt_operator_mcpserver_ready, namespace)",
+          "refId": "namespace"
+        },
+        "definition": "label_values(kavrynt_operator_mcpserver_ready, namespace)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1
+      },
+      {
+        "name": "name",
+        "label": "MCP server",
+        "type": "query",
+        "datasource": {
+          "type": "prometheus",
+          "uid": "${datasource}"
+        },
+        "query": {
+          "query": "label_values(kavrynt_operator_mcpserver_ready{namespace=\"$namespace\"}, name)",
+          "refId": "name"
+        },
+        "definition": "label_values(kavrynt_operator_mcpserver_ready{namespace=\"$namespace\"}, name)",
+        "refresh": 2,
+        "includeAll": false,
+        "multi": false,
+        "sort": 1
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "title": "Ready",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 0,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(kavrynt_operator_mcpserver_ready{namespace=\"$namespace\",name=\"$name\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Ready",
+                  "color": "green",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Not ready",
+                  "color": "red",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Unknown",
+                  "color": "text",
+                  "index": 2
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "The MCPServer's Ready condition as the Operator reports it. The Gateway routes only Ready servers."
+    },
+    {
+      "id": 2,
+      "title": "Tools discovered",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 6,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "max(kavrynt_operator_mcpserver_tools_discovered{namespace=\"$namespace\",name=\"$name\"})",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "mappings": [
+            {
+              "type": "value",
+              "options": {
+                "1": {
+                  "text": "Discovered",
+                  "color": "green",
+                  "index": 0
+                }
+              }
+            },
+            {
+              "type": "value",
+              "options": {
+                "0": {
+                  "text": "Failing",
+                  "color": "orange",
+                  "index": 1
+                }
+              }
+            },
+            {
+              "type": "special",
+              "options": {
+                "match": "null",
+                "result": {
+                  "text": "Not listed",
+                  "color": "text",
+                  "index": 2
+                }
+              }
+            }
+          ]
+        },
+        "overrides": []
+      },
+      "options": {
+        "colorMode": "background",
+        "graphMode": "none"
+      },
+      "description": "Whether the Operator could list the server's tools. No data: discovery is off, the server is not Ready, or it needs the caller's token."
+    },
+    {
+      "id": 3,
+      "title": "Requests / s",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 12,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(kavrynt_gateway_mcp_requests_total{route=\"$namespace.$name\"}[$__rate_interval]))",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "MCP requests to this server through every Gateway replica."
+    },
+    {
+      "id": 4,
+      "title": "Error rate",
+      "type": "stat",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 4,
+        "w": 6,
+        "x": 18,
+        "y": 0
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum(rate(kavrynt_gateway_mcp_requests_total{route=\"$namespace.$name\",outcome!=\"ok\"}[$__rate_interval])) / clamp_min(sum(rate(kavrynt_gateway_mcp_requests_total{route=\"$namespace.$name\"}[$__rate_interval])), 1e-9)",
+          "legendFormat": "",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percentunit"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "Share of requests whose outcome is not ok."
+    },
+    {
+      "id": 5,
+      "title": "Requests / s by outcome",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 0,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(kavrynt_gateway_mcp_requests_total{route=\"$namespace.$name\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "Requests by outcome: ok, tool_error, rpc_error, upstream_error, timeout, and the Gateway's own refusals."
+    },
+    {
+      "id": 6,
+      "title": "Errors / s by outcome",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 12,
+        "x": 12,
+        "y": 4
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (outcome) (rate(kavrynt_gateway_mcp_requests_total{route=\"$namespace.$name\",outcome!=\"ok\"}[$__rate_interval]))",
+          "legendFormat": "{{outcome}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "reqps"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "Requests that did not end ok, by outcome."
+    },
+    {
+      "id": 7,
+      "title": "Latency by tool",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 0,
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.5, sum by (tool, le) (rate(kavrynt_gateway_mcp_request_duration_seconds_bucket{route=\"$namespace.$name\",method=\"tools/call\"}[$__rate_interval])))",
+          "legendFormat": "p50 {{tool}}",
+          "refId": "A"
+        },
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "histogram_quantile(0.95, sum by (tool, le) (rate(kavrynt_gateway_mcp_request_duration_seconds_bucket{route=\"$namespace.$name\",method=\"tools/call\"}[$__rate_interval])))",
+          "legendFormat": "p95 {{tool}}",
+          "refId": "B"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "s"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "p50 and p95 latency of tools/call per tool, from receiving the request to the end of the upstream response."
+    },
+    {
+      "id": 8,
+      "title": "Top failing tools",
+      "type": "bargauge",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 9,
+        "w": 12,
+        "x": 12,
+        "y": 12
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "topk(10, sum by (tool) (increase(kavrynt_gateway_mcp_requests_total{route=\"$namespace.$name\",method=\"tools/call\",outcome=~\"tool_error|rpc_error\"}[$__range])) > 0)",
+          "legendFormat": "{{tool}}",
+          "refId": "A",
+          "instant": true
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "short"
+        },
+        "overrides": []
+      },
+      "options": {
+        "orientation": "horizontal",
+        "displayMode": "basic"
+      },
+      "description": "Tools with the most tools/call requests ending in tool_error or rpc_error over the selected range."
+    },
+    {
+      "id": 9,
+      "title": "Bytes / s",
+      "type": "timeseries",
+      "datasource": {
+        "type": "prometheus",
+        "uid": "${datasource}"
+      },
+      "gridPos": {
+        "h": 8,
+        "w": 24,
+        "x": 0,
+        "y": 21
+      },
+      "targets": [
+        {
+          "datasource": {
+            "type": "prometheus",
+            "uid": "${datasource}"
+          },
+          "expr": "sum by (direction) (rate(kavrynt_gateway_mcp_bytes_total{route=\"$namespace.$name\"}[$__rate_interval]))",
+          "legendFormat": "{{direction}}",
+          "refId": "A"
+        }
+      ],
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps"
+        },
+        "overrides": []
+      },
+      "options": {},
+      "description": "Request (in) and response (out) body bytes proxied to and from this server."
+    }
+  ]
+}

@@ -65,7 +65,7 @@ make demo-down          # delete the cluster
       with the password step 1 prints.
 - [ ] Decide whether to connect a real agent (see below), and test it on the
       same network.
-- [ ] Confirm `1.0.0-beta.2` is published (`gh release view v1.0.0-beta.2`)
+- [ ] Confirm `1.0.0-beta.3` is published (`gh release view v1.0.0-beta.3`)
       and its `make e2e-release` run passed. See
       [Questions to prepare for](#questions-to-prepare-for).
 
@@ -119,7 +119,8 @@ claude mcp add --transport http incidents http://127.0.0.1:18080/mcp/team-sre.in
 
 SDK clients also open the optional `GET` event stream, which the demo servers
 do not offer. The Gateway records that request as `http_get` with outcome
-`client_error`, so the console shows a non-zero error rate. That is expected.
+`ok`, since `405` is the answer the MCP specification gives for it, so it
+does not raise the console's error rate.
 
 ## Questions to prepare for
 

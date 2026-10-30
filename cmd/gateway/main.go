@@ -10,6 +10,8 @@ import (
 	"fmt"
 	"log/slog"
 	"net/http"
+	"net/netip"
+	"net/url"
 	"os"
 	"os/signal"
 	"strings"
@@ -17,15 +19,19 @@ import (
 	"time"
 
 	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/gateway/alerts"
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
 	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/auth"
 	"github.com/kavrynt/kavrynt/internal/gateway/build"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
 	"github.com/kavrynt/kavrynt/internal/gateway/console"
+	"github.com/kavrynt/kavrynt/internal/gateway/history"
 	"github.com/kavrynt/kavrynt/internal/gateway/kube"
 	"github.com/kavrynt/kavrynt/internal/gateway/policy"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	ctrl "sigs.k8s.io/controller-runtime"
 )
@@ -40,7 +46,9 @@ func main() {
 	requestTimeout := flag.Duration("request-timeout", api.DefaultRequestTimeout, "Upstream request timeout (event streams: until response headers)")
 	allowedOrigins := flag.String("allowed-origins", getenv("KAVRYNT_ALLOWED_ORIGINS", ""), "Comma-separated browser origins (scheme://host[:port]) allowed besides loopback; requests from other origins are rejected")
 	consoleEnabled := flag.Bool("console", true, "Serve the read-only web console at /ui/")
-	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic (with --console); MCP routes are not affected")
+	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic, /v1/alerts (with --console); MCP routes are not affected")
+	exchangeAudiences := flag.String("token-exchange-audiences", getenv("KAVRYNT_TOKEN_EXCHANGE_AUDIENCES", ""), `JSON object from namespace (or "*") to the audiences tokens may be exchanged for; empty allows none`)
+	consoleTrustedProxies := flag.String("console-trusted-proxies", getenv("KAVRYNT_CONSOLE_TRUSTED_PROXIES", ""), "Comma-separated CIDRs of proxies whose X-Forwarded-For names the client for the console login limit")
 	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
 	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
 	authEnabled := flag.Bool("auth", false, "Require a bearer access token for the route on every /mcp/ request (MCP client authentication)")
@@ -51,6 +59,9 @@ func main() {
 	auditEnabled := flag.Bool("audit", false, "Write one audit event per MCP request as a JSON line on standard output")
 	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
 	auditOverflow := flag.String("audit-on-overflow", audit.Reject, "With a full audit queue: reject (refuse new MCP requests with 503) or drop (serve them, count the lost events)")
+	auditCloudURL := flag.String("audit-cloud-url", getenv("KAVRYNT_AUDIT_CLOUD_URL", ""), "Kavrynt Cloud base URL (https) to deliver audit events to, besides standard output; needs --audit")
+	auditCloudTokenFile := flag.String("audit-cloud-token-file", getenv("KAVRYNT_AUDIT_CLOUD_TOKEN_FILE", "/etc/kavrynt/audit-cloud/token"), "File with the Kavrynt Cloud cluster token, read before every delivery")
+	auditCloudBuffer := flag.Int("audit-cloud-buffer-size", audit.DefaultCloudBuffer, "Undelivered audit events kept for Kavrynt Cloud; when full, the oldest are dropped (standard output keeps them)")
 	policyDir := flag.String("policy-dir", getenv("KAVRYNT_POLICY_DIR", ""), "Directory of the mounted tool authorization policy (.rego files defining data.kavrynt.authz.decision); every MCP request is then allowed or denied by it")
 	policyFilterToolsList := flag.Bool("policy-filter-tools-list", false, "With --policy-dir, list in each tools/list answer only the tools the policy lets the caller call")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
@@ -58,16 +69,24 @@ func main() {
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
-	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic, normally the pod name")
+	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic and /v1/alerts, normally the pod name")
+	historyMaxTools := flag.Int("history-max-tools", history.DefaultMaxTools, "Tools whose calls the console dashboards keep apart, across routes; further tools count as their route's other tool")
+	grafanaURL := flag.String("grafana-url", getenv("KAVRYNT_GRAFANA_URL", ""), "Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the dashboards instead")
+	alertsConfig := flag.String("alerts-config", getenv("KAVRYNT_ALERTS_CONFIG", ""), "JSON file with the console alert thresholds, reread when it changes; the chart writes it from metrics.prometheusRule (missing: the defaults)")
 	flag.Usage = func() {
 		_, _ = fmt.Fprintf(flag.CommandLine.Output(), "Usage:\n  gateway [--watch-namespaces ns1,ns2]\n\n")
 		flag.PrintDefaults()
 	}
 	flag.Parse()
 
-	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL)
+	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL, *consoleTrustedProxies)
 	if err != nil {
 		slog.Error("configure console login", "error", err)
+		os.Exit(1)
+	}
+
+	if err := checkHistoryFlags(*historyMaxTools, *grafanaURL); err != nil {
+		slog.Error("configure console dashboards", "error", err)
 		os.Exit(1)
 	}
 
@@ -126,7 +145,23 @@ func main() {
 		}
 		handler.EnableAudit(auditWriter)
 	}
+	auditShipper, err := newAuditShipper(*auditEnabled, *auditCloudURL, *auditCloudTokenFile, *auditCloudBuffer, *allowLoopback)
+	if err != nil {
+		slog.Error("configure audit delivery to Kavrynt Cloud", "error", err)
+		os.Exit(1)
+	}
+	if auditShipper != nil {
+		auditWriter.SetSink(auditShipper)
+		handler.EnableAuditDelivery(auditShipper)
+	}
 	handler.EnableUpstreamCredentials(upstreamcred.Store{Dir: *upstreamCredentialsDir})
+	handler.EnableSessionAffinity(mcpsession.Endpoints{Reader: routeCache, AllowLoopback: *allowLoopback})
+	audiences, err := scope.ParseAudiences(*exchangeAudiences)
+	if err != nil {
+		slog.Error("invalid --token-exchange-audiences", "error", err)
+		os.Exit(1)
+	}
+	handler.EnableTokenExchangeAudiences(audiences)
 	if *consoleEnabled {
 		handler.EnableConsole(console.Handler())
 	}
@@ -151,6 +186,16 @@ func main() {
 
 	if policyEngine != nil {
 		go policyEngine.Watch(ctx, policyReloadInterval)
+	}
+	alertConfig := func() alerts.Config { return alerts.DefaultConfig(build.Version) }
+	if *alertsConfig != "" {
+		alertConfig = alerts.FileConfig(*alertsConfig, alerts.DefaultConfig(build.Version), slog.Default())
+	}
+	go handler.EnableAlerts(alertConfig).Run(ctx, alerts.EvaluationInterval, table.Servers)
+	go handler.EnableHistory(*historyMaxTools).Run(ctx, history.PruneInterval, table.Servers)
+	handler.SetGrafanaURL(strings.TrimRight(*grafanaURL, "/"))
+	if auditShipper != nil {
+		go auditShipper.Run(ctx)
 	}
 
 	errCh := make(chan error, 2)
@@ -198,6 +243,14 @@ func main() {
 		}
 		cancelFlush()
 	}
+	if auditShipper != nil {
+		// One last delivery; standard output already has every event.
+		deliverCtx, cancelDeliver := context.WithTimeout(context.Background(), *shutdownTimeout)
+		if err := auditShipper.Flush(deliverCtx); err != nil {
+			slog.Warn("audit events not delivered to Kavrynt Cloud at shutdown", "error", err, "waiting", auditShipper.Len())
+		}
+		cancelDeliver()
+	}
 	slog.Info("gateway stopped")
 	os.Exit(exitCode)
 }
@@ -217,10 +270,51 @@ func shutdown(handler *api.Handler, server *http.Server, delay, timeout time.Dur
 	return server.Shutdown(ctx)
 }
 
+// newAuditShipper returns the audit delivery to Kavrynt Cloud (SPEC-0017),
+// or nil without a Cloud URL. Its requests follow the egress guard
+// (SPEC-0017-R06).
+func newAuditShipper(auditEnabled bool, url, tokenFile string, buffer int, allowLoopback bool) (*audit.Shipper, error) {
+	if strings.TrimSpace(url) == "" {
+		return nil, nil
+	}
+	if !auditEnabled {
+		return nil, errors.New("--audit-cloud-url needs --audit: only written audit events are delivered")
+	}
+	if buffer <= 0 {
+		return nil, fmt.Errorf("--audit-cloud-buffer-size must be positive, got %d", buffer)
+	}
+	return audit.NewShipper(audit.CloudConfig{
+		URL:       url,
+		TokenFile: tokenFile,
+		Buffer:    buffer,
+		Version:   build.Version,
+		Transport: egress.Transport(allowLoopback),
+	})
+}
+
+// maxHistoryTools bounds --history-max-tools: each tool keeps about 23 KiB.
+const maxHistoryTools = 10000
+
+// checkHistoryFlags refuses a tool cap outside 1 to maxHistoryTools and a
+// Grafana URL that is not a plain http or https URL (SPEC-0024-R10).
+func checkHistoryFlags(maxTools int, grafanaURL string) error {
+	if maxTools < 1 || maxTools > maxHistoryTools {
+		return fmt.Errorf("--history-max-tools must be 1 to %d, got %d", maxHistoryTools, maxTools)
+	}
+	if grafanaURL == "" {
+		return nil
+	}
+	u, err := url.Parse(grafanaURL)
+	if err != nil || (u.Scheme != "http" && u.Scheme != "https") || u.Host == "" || u.User != nil || u.RawQuery != "" || u.Fragment != "" {
+		return fmt.Errorf("--grafana-url must be an http or https URL without credentials, query, or fragment, got %q", grafanaURL)
+	}
+	return nil
+}
+
 // newConsoleAuth returns the console admin login, or nil when the console or
 // its login is off. Login without a credentials directory is refused rather
 // than leaving the console open by accident (SPEC-0005-R11).
-func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Duration) (*auth.Authenticator, error) {
+func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Duration, trustedProxies string) (*auth.Authenticator, error) {
 	if !consoleEnabled || !authEnabled {
 		return nil, nil
 	}
@@ -230,7 +324,17 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 	if ttl <= 0 {
 		return nil, fmt.Errorf("--console-session-ttl must be positive, got %s", ttl)
 	}
-	return auth.New(dir, ttl), nil
+	var proxies []netip.Prefix
+	for _, cidr := range splitList(trustedProxies) {
+		prefix, err := scope.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("--console-trusted-proxies: %w", err)
+		}
+		proxies = append(proxies, prefix)
+	}
+	a := auth.New(dir, ttl)
+	a.TrustProxies(proxies)
+	return a, nil
 }
 
 // warnUnauthenticated says at start that MCP routes are open when client

@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-24 |
 | Issue | to be opened |
@@ -34,12 +34,16 @@ stays `Ready` by design, so `KavryntMCPServerNotReady` does not fire either.
 ## Requirements
 
 - **SPEC-0021-R01** The Operator MUST export
-  `kavrynt_operator_mcpserver_tools_discovered{namespace,name}` (1 when
-  `ToolsDiscovered` is `True`, 0 when `False`, removed with the `MCPServer`).
+  `kavrynt_operator_mcpserver_tools_discovered{namespace,name}`: 1 when
+  `ToolsDiscovered` is `True`, 0 when it is `False` because discovery failed
+  (`DiscoveryFailed`, `CredentialUnavailable`), and no series when discovery
+  is off, not attempted (`NotRoutable`, `CallerTokenRequired`), or the
+  `MCPServer` is deleted.
 - **SPEC-0021-R02** The PrometheusRule MUST include `KavryntMCPToolErrorsHigh`:
-  per route and tool, the share of `tool_error` and `rpc_error` outcomes over
-  10 minutes above `toolErrorRatio` (default 0.2) with at least
-  `minToolRequestsPerSecond` traffic, for 10 minutes, severity `warning`.
+  per route and tool, the share of `tools/call` requests with a `tool_error`
+  or `rpc_error` outcome over 10 minutes above `toolErrorRatio` (default 0.2)
+  with at least `minToolRequestsPerSecond` (default 0.02) `tools/call`
+  traffic, for 10 minutes, severity `warning`.
 - **SPEC-0021-R03** The PrometheusRule MUST include
   `KavryntMCPToolDiscoveryFailing`: a `Ready` server whose tools-discovered
   metric is 0 for `discoveryFailingFor` (default 15 minutes), severity
@@ -70,7 +74,14 @@ Additive.
 
 Runbooks, chart README alert table, Operator component doc (metrics).
 
-## Open questions
+## Decisions
 
-- Should `rpc_error` count (it includes caller mistakes such as unknown
-  methods)?
+- `rpc_error` counts, but only for `tools/call`: a tool whose calls answer
+  JSON-RPC errors is broken for agents, while unknown methods and other
+  caller mistakes outside tool calls do not raise the alert.
+- Servers with token exchange export no tools-discovered series: the
+  Operator never lists their tools (SPEC-0015-R10), and a 0 would raise
+  `KavryntMCPToolDiscoveryFailing` for as long as they exist.
+- Servers that are not `Ready` export no tools-discovered series either: the
+  Operator does not try to list them, and `KavryntMCPServerNotReady` already
+  covers them, so a 0 would read as a second, wrong problem on dashboards.

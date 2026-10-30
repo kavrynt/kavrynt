@@ -36,10 +36,12 @@ and `operator` repositories are archived and must not receive new changes.
   replaces the in-cluster Registry (removed in `0.0.2-beta.1`).
 - [ADR-0003](docs/ADR-0003-Runtime-Authorization.md): Gateway authorization
   design. Implemented: no token passthrough, MCP client authentication
-  (SPEC-0006, on by default in the chart per SPEC-0014), static upstream
+  (SPEC-0006, on by default in the chart per SPEC-0014), endpoint scope
+  (SPEC-0029), static upstream
   credentials (SPEC-0011), tool authorization policy (SPEC-0012, opt-in),
-  audit events (SPEC-0013, opt-in, stdout only), and token exchange
-  (SPEC-0015). Not yet: approvals, audit delivery to Kavrynt Cloud.
+  audit events (SPEC-0013, opt-in), their delivery to Kavrynt Cloud
+  (SPEC-0017, opt-in; the Cloud ingestion endpoint lives in kavrynt-cloud),
+  and token exchange (SPEC-0015). Not yet: approvals.
 - [ADR-0004](docs/ADR-0004-Apache-2.0-License.md): the runtime is licensed
   under Apache-2.0 from the release after `0.0.4-beta.1`.
 - Identity planes and the system threat model live in `kavrynt-cloud`
@@ -68,32 +70,73 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   binary with checks before (release, chart version, CRD ownership;
   `--adopt-crd`) and after (every server routed before is routed again).
 - The Operator lists the tools of `Ready` servers (MCP `tools/list`, bounded)
-  into `status.tools` with a `ToolsDiscovered` condition that never affects
-  `Ready`, and records the reported `serverInfo` name and version in
-  `status.serverInfo`.
+  into `status.tools`, with their MCP behavior hints, and sets a
+  `ToolsDiscovered` condition that never affects `Ready`, and records the reported `serverInfo` name and version in
+  `status.serverInfo`. A failed discovery shows in `kubectl get`'s
+  `Discovery` column and `kavryctl list`'s `TOOLS`, with a message that
+  names the cause and never quotes the server or a resolved address
+  (SPEC-0027).
 - Opt-in Operator connector (`cloud.enabled`) sends full inventory snapshots
   (servers and tools) to Kavrynt Cloud `POST /v1/sync/mcpservers` with a
   cluster token from a Secret. Traffic rollups are not uploaded yet.
 - Gateway watches `Ready` servers and proxies **HTTP only** at
   `/mcp/<namespace>.<name>`. `stdio` manifests validate but are not proxied.
+  Only `POST`, `GET`, and `DELETE` and the route's own path are forwarded,
+  sub-paths only with `spec.forwardSubpaths` (SPEC-0029).
+- Endpoint scope (SPEC-0029): an endpoint that reaches another namespace
+  (Service names, short names, and, with `global.endpoints.clusterCIDRs`,
+  cluster addresses) is not `Ready` (`EndpointNotAllowed`) unless
+  `global.endpoints.crossNamespace` allows the pair; a token exchange
+  audience not in `global.tokenExchangeAudiences` for the namespace is not
+  `Ready` (`AudienceNotAllowed`) and the Gateway exchanges nothing for it.
+- `MCPServer.spec.sessionAffinity: MCPSession` (SPEC-0026): for an `http`
+  Service endpoint, the Gateway sends each MCP session to the pod that
+  started it (a pod tag in front of `Mcp-Session-Id`, from read-only
+  EndpointSlices, no shared state), answers `404` for sessions of pods that
+  are gone, and the Operator discovers from one pod. Lost sessions are
+  `session_not_found` for every server.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
-  forwarding and drops upstream `Set-Cookie`.
+  forwarding and drops upstream `Set-Cookie`, `Server`, and `X-Powered-By`.
 - Gateway and Operator discovery refuse link-local, cloud metadata, and
   loopback addresses at dial time (`internal/egress`); the Gateway passes
   redirects to the client, rejects `..` path segments, cross-origin browser
   requests (`--allowed-origins`), and Gateway loops, and sandboxes proxied
   responses with CSP.
 - Opt-in alerting rules (`metrics.prometheusRule`) for the Gateway, the
-  Operator, and MCP servers, each with a runbook in `docs/runbooks`; the
-  Operator exports `kavrynt_operator_mcpserver_ready` on a metrics Service.
+  Operator, MCP servers, and their tools (SPEC-0021: tool errors, failing
+  discovery), each with a runbook in `docs/runbooks` and labelled
+  `kavrynt_release`; opt-in notifications (`metrics.notifications`,
+  SPEC-0022) render an `AlertmanagerConfig` for Slack, email, Teams, or a
+  webhook, checked with `amtool`; the Operator exports
+  `kavrynt_operator_mcpserver_ready` and
+  `kavrynt_operator_mcpserver_tools_discovered` on a metrics Service.
+- Opt-in Grafana dashboards (`gateway.metrics.dashboard`, SPEC-0023): MCP
+  traffic, one MCP server, and the team's own from `extra`, all checked by
+  `test/dashboards` against the exported metrics and the metrics reference
+  in the component docs.
 - Opt-in chart NetworkPolicies (`networkPolicy`) make labelled MCP server
   pods reachable only from the Gateway and the Operator, and can limit who
   calls the Gateway.
 - Read-only web console at `/ui/` on the Gateway (overview, servers, tools,
-  playground, traffic) backed by `GET /v1/servers` and `GET /v1/traffic`.
+  playground, traffic, alerts, dashboard) backed by `GET /v1/servers`,
+  `GET /v1/traffic`, `GET /v1/alerts`, and `GET /v1/history`.
   A single `admin` login (on by default; password generated by the chart
-  into a mounted Secret) protects the console and those two endpoints only.
-  It is not client authentication.
+  into a mounted Secret) protects the console and those endpoints only.
+  It is not client authentication. Failed logins are limited per client,
+  behind `gateway.console.auth.trustedProxies` per `X-Forwarded-For`
+  client (SPEC-0030).
+- Console alerts (SPEC-0020): the Gateway evaluates five MCP conditions
+  (server not Ready, discovery failing, upstream errors, tool errors, slow
+  route) with the `metrics.prometheusRule` thresholds, from a ConfigMap the
+  umbrella chart writes, and serves them at `GET /v1/alerts` behind the
+  console login for the console's Alerts page. Traffic conditions are per
+  replica.
+- Console dashboards (SPEC-0024): each Gateway replica keeps its own calls
+  of the last 24 hours in memory (per route and tool, capped by
+  `gateway.console.history.maxTools`, lost on restart) and serves them at
+  `GET /v1/history` for the Dashboard page and each server's Dashboard tab,
+  with the console alerts of the range marked; `gateway.console.grafanaURL`
+  links the Grafana dashboards for cluster-wide history.
 - MCP client authentication (`gateway.auth`, SPEC-0006): the Gateway is an
   OAuth 2.1 resource server; every `/mcp/` request needs a bearer JWT from a
   trusted issuer whose audience is the route, and Protected Resource
@@ -111,7 +154,9 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   ConfigMap before forwarding; anything but `{"allow": true}` denies. With
   `gateway.policy.filterToolsList` (SPEC-0016), `tools/list` answers list
   only the tools the policy lets that caller call, failing closed to an
-  empty list.
+  empty list. The input carries the called tool's recorded MCP behavior
+  hints (`tool_annotations`, self-reported) and `tool_discovered`
+  (SPEC-0028).
 - Opt-in audit events (`gateway.audit`, SPEC-0013): one JSON line per `/mcp/`
   request on the Gateway's stdout (`"type":"kavrynt.audit.v1"`), SHA-256
   chained per instance, verified by `kavryctl audit verify`; never arguments,
@@ -123,7 +168,13 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   sends only that, and caches it until shortly before expiry; failures
   answer `502`/`503` (`exchange_failed`). The Operator skips tool discovery
   for such servers (`CallerTokenRequired`).
-- Not implemented: approvals, audit delivery to Kavrynt Cloud.
+- Opt-in audit delivery (`gateway.audit.cloud`, SPEC-0017): the Gateway also
+  sends written audit events to Kavrynt Cloud `POST /v1/sync/audit-events`
+  in batches (500 events, 1 MiB, every 10 s) with the cluster token from a
+  mounted Secret, retries with backoff, buffers 100,000 events (oldest
+  dropped and counted), and alerts with `KavryntAuditDeliveryStale`. The
+  Cloud side of that endpoint is not in this repository.
+- Not implemented: approvals.
   Never claim them in code comments, docs, or release notes until they are
   implemented and tested.
 
@@ -180,7 +231,7 @@ make spec-check      # specs well formed; Implemented requirements cited by test
 make spec-new NAME=x # scaffold specs/NNNN-x/spec.md
 make helm-plugins    # once: install the pinned helm-unittest plugin
 make helm-unittest   # chart unit tests (charts/kavrynt/tests)
-make alerts-test     # alert rules: runbook per alert, promtool tests (needs Docker)
+make alerts-test     # alert rules: runbook per alert, promtool tests; notifications: amtool (needs Docker)
 make build           # bin/kavryctl, bin/gateway, bin/operator
 make docker-build    # local images tagged $(LOCAL_VERSION)
 make e2e-kind        # disposable Kind cluster, full product loop (scripts/e2e-kind.sh)
@@ -272,7 +323,8 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
 1. Gateway and Operator become ready.
 2. Applying an `MCPServer` produces a `Ready` condition.
 3. The CRD rejects unsafe endpoints at admission.
-4. Gateway RBAC is read-only on `MCPServer` and has no Secret access.
+4. Gateway RBAC is read-only on `MCPServer` and EndpointSlices and has no
+   Secret access.
 5. The Operator records discovered tools in `status.tools`; a failed
    discovery leaves the server `Ready`.
 6. Gateway and `kavryctl list` expose the expected route.
@@ -283,12 +335,18 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     cloud metadata addresses; `/v1/servers` and `/v1/traffic` answer `401`
     until a login with the generated admin password; the console,
     `/v1/servers`, and `/v1/traffic` work and never expose tool arguments;
-    the console browser smoke test passes (always in CI).
+    an unreachable server appears on `/v1/alerts` as `DiscoveryFailing`
+    and disappears once deleted; a tool call appears on `/v1/history` for
+    its route and tool; the console browser smoke test, including the
+    dashboards at 360 and 1280 px, passes (always in CI).
 11. With the production profile, a Gateway rolling restart under load fails
     no MCP call, and a standby Operator takes over from a deleted leader.
     With the chart's NetworkPolicies on, a direct call to a labelled MCP
     server and a call from a namespace the Gateway policy does not allow
     both fail, while calls through the Gateway succeed.
+    A stateful three-replica server with session affinity keeps ten
+    agents' sessions through the Gateway replicas; without it, sessions
+    are lost as `session_not_found`.
     A server that needs its own token is routed and discovered with the
     stored upstream credential; an unstored one answers `503`; the value
     appears in no response, status, metric, or log.

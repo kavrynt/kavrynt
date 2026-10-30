@@ -137,7 +137,7 @@ func TestStaticFilesAreSelfContainedAndSmall(t *testing.T) {
 // Browsers run scripts served with nosniff only with a JavaScript media type.
 func TestHandlerServesScriptsAsJavaScript(t *testing.T) {
 	handler := Handler()
-	for _, path := range []string{"/app.js", "/dom.js", "/format.js", "/playground.js", "/state.js", "/stats.js"} {
+	for _, path := range []string{"/app.js", "/charts.js", "/dom.js", "/format.js", "/playground.js", "/state.js", "/stats.js"} {
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusOK || !strings.HasPrefix(rr.Header().Get("Content-Type"), "text/javascript") {
@@ -162,7 +162,7 @@ func TestIndexLoadsClassicScriptsInDependencyOrder(t *testing.T) {
 	for _, m := range regexp.MustCompile(`<script src="([a-z]+\.js)" defer></script>`).FindAllStringSubmatch(string(index), -1) {
 		order = append(order, m[1])
 	}
-	want := "format.js stats.js state.js dom.js playground.js app.js"
+	want := "format.js stats.js charts.js state.js dom.js playground.js app.js"
 	if strings.Join(order, " ") != want {
 		t.Fatalf("index.html loads %v, want %s", order, want)
 	}

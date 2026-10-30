@@ -11,11 +11,11 @@ Client CLI for `MCPServer` resources. Source: `cmd/kavryctl`,
 | `kavryctl validate <file>` | Offline validation of a YAML or JSON `MCPServer` manifest |
 | `kavryctl register [-n NS] <file>` | Create or update the `MCPServer` |
 | `kavryctl unregister [-n NS] <name>` | Delete the `MCPServer` |
-| `kavryctl list [-n NS] [-A]` | Table with readiness, Gateway route (`-` until the server is `Ready`), and tool count (`-` until the Operator has listed the tools) |
+| `kavryctl list [-n NS] [-A]` | Table with readiness, Gateway route (`-` until the server is `Ready`), and `TOOLS`: the tool count once the Operator has listed the tools, the `ToolsDiscovered` reason (such as `DiscoveryFailed` or `CallerTokenRequired`) when it could not, and `-` before it tried |
 | `kavryctl inspect [-n NS] <name>` | Full resource as JSON |
 | `kavryctl upgrade --version V` | Upgrade the Kavrynt Helm release with checks before and after (below) |
 | `kavryctl rollback [--revision N]` | Roll the release back with the same checks |
-| `kavryctl audit verify [file]` | Verify Gateway audit event chains from a file or standard input; other log lines are skipped. Prints each break (gap, reordering, altered event) and exits `1` when there is one |
+| `kavryctl audit verify [file]` | Verify Gateway audit event chains from a file or standard input; other log lines are skipped. Prints each break (gap, reordering, altered event) and exits `1` when there is one. It cannot detect events cut off the end of a chain, or a chain rewritten with recomputed hashes; see [what verify proves](../gateway/README.md#audit-events) |
 
 Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
 Without `-n`, the namespace comes from the manifest, then the kubeconfig
@@ -44,7 +44,7 @@ check after. `--dry-run` runs the checks and prints the Helm command
 without changing anything. Values are never printed.
 
 ```bash
-kavryctl upgrade --version 1.0.0-beta.2 --adopt-crd
+kavryctl upgrade --version 1.0.0-beta.3 --adopt-crd
 kavryctl rollback --revision 3
 ```
 

@@ -1,0 +1,35 @@
+# Kavrynt alerts by email (SPEC-0022), repeated every 12 hours while they
+# fire. Create the SMTP password Secret in the release namespace first:
+#
+#   kubectl -n kavrynt-system create secret generic kavrynt-alerts-smtp \
+#     --from-literal=password=...
+#
+# Leave smarthost and from empty to use the Alertmanager's global SMTP
+# settings instead. The Alertmanager must select AlertmanagerConfigs with the
+# label below and use alertmanagerConfigMatcherStrategy type None (chart
+# README, "Notifications").
+gateway:
+  metrics:
+    serviceMonitor:
+      enabled: true
+operator:
+  metrics:
+    serviceMonitor:
+      enabled: true
+metrics:
+  prometheusRule:
+    enabled: true
+  notifications:
+    enabled: true
+    labels:
+      alertmanagerConfig: kavrynt
+    repeatInterval: 12h
+    email:
+      to:
+        - platform-oncall@example.com
+      from: kavrynt-alerts@example.com
+      smarthost: smtp.example.com:587
+      authUsername: kavrynt-alerts@example.com
+      authPasswordSecret:
+        name: kavrynt-alerts-smtp
+        key: password

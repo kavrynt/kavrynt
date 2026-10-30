@@ -1,0 +1,75 @@
+suite: console alerts
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+chart:
+  version: 1.2.3
+values:
+  - values/open-routes.yaml
+tests:
+  # Verifies SPEC-0020-R03: the console alerts get the Prometheus rules'
+  # thresholds and runbook links, even with the rules off.
+  - it: writes the rules' thresholds for the Gateway
+    template: templates/console-alerts.yaml
+    set:
+      metrics.prometheusRule.errorRatio: 0.1
+      metrics.prometheusRule.minRequestsPerSecond: 0.2
+      metrics.prometheusRule.latencyP95Seconds: 2
+      metrics.prometheusRule.toolErrorRatio: 0.3
+      metrics.prometheusRule.minToolRequestsPerSecond: 0.04
+      metrics.prometheusRule.notReadyFor: 5m
+      metrics.prometheusRule.discoveryFailingFor: 30s
+      metrics.prometheusRule.runbookBaseURL: https://runbooks.example.com/kavrynt/
+    asserts:
+      - isKind:
+          of: ConfigMap
+      - equal:
+          path: metadata.name
+          value: kavrynt-console-alerts
+      - equal:
+          path: data["config.json"]
+          value: |-
+            {
+              "discoveryFailingFor": "30s",
+              "errorRatio": 0.1,
+              "latencyP95Seconds": 2,
+              "minRequestsPerSecond": 0.2,
+              "minToolRequestsPerSecond": 0.04,
+              "notReadyFor": "5m",
+              "runbookBaseURL": "https://runbooks.example.com/kavrynt",
+              "toolErrorRatio": 0.3
+            }
+
+  # Verifies SPEC-0020-R03: by default the runbooks are this repository at
+  # the chart's release tag, as in the rules.
+  - it: links the runbooks at the chart's release tag by default
+    template: templates/console-alerts.yaml
+    asserts:
+      - matchRegex:
+          path: data["config.json"]
+          pattern: '"runbookBaseURL": "https://github.com/kavrynt/kavrynt/blob/v1.2.3/docs/runbooks"'
+      - matchRegex:
+          path: data["config.json"]
+          pattern: '"notReadyFor": "10m"'
+
+  # Verifies SPEC-0020-R03: the Gateway mounts the thresholds and reads
+  # them; the mount is optional, so the subchart also starts alone.
+  - it: mounts the thresholds into the Gateway
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --alerts-config=/etc/kavrynt/alerts/config.json
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: console-alerts
+            mountPath: /etc/kavrynt/alerts
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: console-alerts
+            configMap:
+              name: kavrynt-console-alerts
+              optional: true

@@ -2,9 +2,12 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"log/slog"
 	"net"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,17 +18,17 @@ import (
 
 // Verifies SPEC-0005-R11.
 func TestConsoleLoginNeedsCredentialsDirectory(t *testing.T) {
-	if _, err := newConsoleAuth(true, true, "", time.Hour); err == nil || !strings.Contains(err.Error(), "--console-auth-dir") {
+	if _, err := newConsoleAuth(true, true, "", time.Hour, ""); err == nil || !strings.Contains(err.Error(), "--console-auth-dir") {
 		t.Fatalf("login without a directory: err = %v, want a refusal naming --console-auth-dir", err)
 	}
-	if _, err := newConsoleAuth(true, true, t.TempDir(), 0); err == nil {
+	if _, err := newConsoleAuth(true, true, t.TempDir(), 0, ""); err == nil {
 		t.Fatal("zero session lifetime accepted")
 	}
-	if a, err := newConsoleAuth(true, true, t.TempDir(), time.Hour); err != nil || a == nil {
+	if a, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, ""); err != nil || a == nil {
 		t.Fatalf("login with a directory: %v, %v", a, err)
 	}
 	for _, c := range []struct{ console, auth bool }{{false, true}, {true, false}, {false, false}} {
-		if a, err := newConsoleAuth(c.console, c.auth, "", time.Hour); err != nil || a != nil {
+		if a, err := newConsoleAuth(c.console, c.auth, "", time.Hour, ""); err != nil || a != nil {
 			t.Fatalf("console=%v auth=%v: got %v, %v; want no login and no error", c.console, c.auth, a, err)
 		}
 	}
@@ -112,5 +115,67 @@ func TestWarnsWhenMCPRoutesAreUnauthenticated(t *testing.T) {
 		if warned == authenticated {
 			t.Errorf("authenticated=%v: logged %q", authenticated, logs.String())
 		}
+	}
+}
+
+// Verifies SPEC-0017-R01 and SPEC-0017-R06: delivery needs audit, an https
+// Cloud URL, and a positive buffer, and its requests follow the egress
+// guard: a cloud metadata address is refused before any connection.
+func TestAuditShipperConfiguration(t *testing.T) {
+	if s, err := newAuditShipper(true, "", "", 10, false); s != nil || err != nil {
+		t.Fatalf("no URL: %v, %v; want nothing", s, err)
+	}
+	if _, err := newAuditShipper(false, "https://cloud.example.com", "/token", 10, false); err == nil {
+		t.Error("delivery without audit configured")
+	}
+	if _, err := newAuditShipper(true, "https://cloud.example.com", "/token", 0, false); err == nil {
+		t.Error("a zero buffer accepted")
+	}
+	if _, err := newAuditShipper(true, "http://cloud.example.com", "/token", 10, false); err == nil {
+		t.Error("an http Cloud URL accepted")
+	}
+	token := filepath.Join(t.TempDir(), "token")
+	if err := os.WriteFile(token, []byte("cluster-token"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	s, err := newAuditShipper(true, "https://169.254.169.254", token, 10, false)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.Add([]byte(`{"seq":1}`))
+	err = s.Flush(context.Background())
+	if err == nil || !strings.Contains(err.Error(), "not allowed") {
+		t.Fatalf("delivery to a metadata address = %v, want refused by the egress guard", err)
+	}
+}
+
+// Verifies SPEC-0024-R10: the Grafana URL the dashboards link is a plain
+// http or https URL, and the tool cap is bounded.
+func TestHistoryFlags(t *testing.T) {
+	for _, ok := range []string{"", "https://grafana.example.com", "http://grafana.monitoring.svc:3000/grafana/"} {
+		if err := checkHistoryFlags(500, ok); err != nil {
+			t.Errorf("--grafana-url %q refused: %v", ok, err)
+		}
+	}
+	for _, bad := range []string{"javascript:alert(1)", "grafana.example.com", "https://user:pw@grafana.example.com", "https://grafana.example.com/?orgId=1", "https://grafana.example.com/#x", "ftp://grafana.example.com"} {
+		if err := checkHistoryFlags(500, bad); err == nil {
+			t.Errorf("--grafana-url %q accepted", bad)
+		}
+	}
+	for _, n := range []int{0, -1, 10001} {
+		if err := checkHistoryFlags(n, ""); err == nil {
+			t.Errorf("--history-max-tools %d accepted", n)
+		}
+	}
+}
+
+// Verifies SPEC-0030-R01: the Gateway refuses to start with a trusted proxy
+// it cannot parse.
+func TestConsoleTrustedProxiesMustBeCIDRs(t *testing.T) {
+	if _, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, "10.0.0.0/8, fd00::/8"); err != nil {
+		t.Fatalf("valid CIDRs refused: %v", err)
+	}
+	if _, err := newConsoleAuth(true, true, t.TempDir(), time.Hour, "10.0.0.1"); err == nil || !strings.Contains(err.Error(), "--console-trusted-proxies") {
+		t.Fatalf("an address without a prefix length: err = %v", err)
 	}
 }

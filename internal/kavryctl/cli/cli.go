@@ -133,7 +133,15 @@ func runValidate(args []string, stdout, stderr io.Writer) int {
 		return 1
 	}
 	fmt.Fprintf(stdout, "valid MCPServer manifest: %s\n", server.Name)
+	warnNotRouted(stderr, server)
 	return 0
+}
+
+// warnNotRouted says when the Gateway will never route a valid server.
+func warnNotRouted(stderr io.Writer, server *kavryntv1alpha1.MCPServer) {
+	if server.Spec.Transport == "stdio" {
+		fmt.Fprintf(stderr, "warning: the Gateway does not proxy stdio servers, so %s will not be routed; run it behind a Streamable HTTP bridge and register the bridge's http endpoint (see examples/stdio-bridge)\n", server.Name)
+	}
 }
 
 // runAudit verifies Gateway audit event chains read from a file or standard
@@ -168,11 +176,19 @@ func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 1
 	}
 	if len(summary.Breaks) > 0 {
-		fmt.Fprintf(stdout, "%d events from %d instances: %d breaks\n", summary.Events, summary.Instances, len(summary.Breaks))
+		fmt.Fprintf(stdout, "%s from %s: %s\n", plural(summary.Events, "event"), plural(summary.Instances, "instance"), plural(len(summary.Breaks), "break"))
 		return 1
 	}
-	fmt.Fprintf(stdout, "%d events from %d instances: every chain verifies\n", summary.Events, summary.Instances)
+	fmt.Fprintf(stdout, "%s from %s: every chain verifies\n", plural(summary.Events, "event"), plural(summary.Instances, "instance"))
 	return 0
+}
+
+// plural returns n and noun, with an "s" unless n is 1.
+func plural(n int, noun string) string {
+	if n == 1 {
+		return "1 " + noun
+	}
+	return fmt.Sprintf("%d %ss", n, noun)
 }
 
 func runRegister(args []string, stdout, stderr io.Writer) int {
@@ -232,6 +248,7 @@ func runRegister(args []string, stdout, stderr io.Writer) int {
 	}
 
 	fmt.Fprintf(stdout, "%s MCPServer %s/%s@%s\n", action, server.Namespace, server.Name, server.Spec.Version)
+	warnNotRouted(stderr, server)
 	return 0
 }
 
@@ -316,10 +333,15 @@ func runList(args []string, stdout, stderr io.Writer) int {
 		if ready == string(metav1.ConditionTrue) {
 			route = "/mcp/" + server.RouteName()
 		}
-		// Tools are known once the Operator has listed them.
+		// Tools are known once the Operator has listed them; until then the
+		// reason says why not, so a failed discovery is not mistaken for one
+		// that has not run (SPEC-0027-R02).
 		tools := "-"
-		if apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered) {
-			tools = strconv.Itoa(len(server.Status.Tools))
+		if condition := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered); condition != nil {
+			tools = condition.Reason
+			if condition.Status == metav1.ConditionTrue {
+				tools = strconv.Itoa(len(server.Status.Tools))
+			}
 		}
 		fmt.Fprintf(tw, "%s\t%s\t%s\t%s\t%s\t%s\t%s\t%s\n",
 			server.Namespace,
@@ -392,7 +414,8 @@ Usage:
   kavryctl unregister [cluster flags] <name>
   kavryctl list       [cluster flags] [-A]
   kavryctl inspect    [cluster flags] <name>
-  kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin)
+  kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin);
+                    events cut off the end of a chain are not detected
   kavryctl upgrade  [cluster flags] --version V [--chart REF|DIR] [--values FILE] [--adopt-crd] [--dry-run]
   kavryctl rollback [cluster flags] [--revision N] [--dry-run]
                     Upgrade or roll back the Kavrynt release with helm, checking

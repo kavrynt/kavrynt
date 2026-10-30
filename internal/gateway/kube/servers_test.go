@@ -65,3 +65,19 @@ func TestServersIncludeReportedServerInfo(t *testing.T) {
 		t.Fatalf("a server without serverInfo must not carry the field: %s", encoded)
 	}
 }
+
+// Verifies SPEC-0028-R08: the console view carries each recorded hint.
+func TestServersIncludeToolHints(t *testing.T) {
+	item := server("team-a", "tickets", "http", "http://tickets:8080", "True")
+	item.Status.Tools = []kavryntv1alpha1.MCPServerTool{
+		{Name: "delete_all", Annotations: &kavryntv1alpha1.MCPServerToolAnnotations{DestructiveHint: new(true), ReadOnlyHint: new(false)}},
+		{Name: "bare"},
+	}
+	encoded, err := json.Marshal(Servers([]kavryntv1alpha1.MCPServer{item})[0].Tools)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if want := `[{"name":"delete_all","annotations":{"destructiveHint":true,"readOnlyHint":false}},{"name":"bare"}]`; string(encoded) != want {
+		t.Fatalf("tools = %s, want %s", encoded, want)
+	}
+}

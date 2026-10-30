@@ -28,6 +28,10 @@ helm template kavrynt "${ROOT_DIR}/charts/kavrynt" --namespace kavrynt-system \
   --set operator.cloud.enabled=true \
   --set operator.cloud.url=https://cloud.example.com \
   --set operator.cloud.tokenSecret.name=kavrynt-cloud-token \
+  --set gateway.audit.enabled=true \
+  --set gateway.audit.cloud.enabled=true \
+  --set gateway.audit.cloud.url=https://cloud.example.com \
+  --set gateway.audit.cloud.tokenSecret.name=kavrynt-cloud-token \
   --show-only templates/prometheusrule.yaml |
   sed -n '/^spec:/,$p' | sed -e '1d' -e 's/^  //' >"${WORK_DIR}/rules.yaml"
 cp "${ROOT_DIR}/test/alerts/rules_test.yaml" "${WORK_DIR}/"

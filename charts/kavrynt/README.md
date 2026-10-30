@@ -11,7 +11,7 @@ Kavrynt MCP Control Plane runtime chart.
 ```bash
 # With your authorization server (MCP client authentication is on by default):
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 \
+  --version 1.0.0-beta.3 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.resourceURL=https://mcp.example.com \
@@ -19,7 +19,7 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 
 # A trial without one: MCP routes accept unauthenticated calls.
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 \
+  --version 1.0.0-beta.3 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -180,14 +180,110 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 | `KavryntGatewayRouteSyncFailing` | critical | A replica's route syncs failed for 10 minutes without a success |
 | `KavryntMCPUpstreamErrorsHigh` | warning | Over `errorRatio` (5%) of a route's calls fail upstream for 10 minutes |
 | `KavryntMCPLatencyHigh` | warning | A route's p95 latency is over `latencyP95Seconds` (5s) for 15 minutes |
+| `KavryntMCPToolErrorsHigh` | warning | Over `toolErrorRatio` (20%) of a tool's calls end in `tool_error` or `rpc_error` for 10 minutes |
 | `KavryntOperatorDown` | critical | No Operator target up for 5 minutes |
 | `KavryntMCPServerNotReady` | warning | An `MCPServer` is not `Ready` for `notReadyFor` (10m) |
+| `KavryntMCPToolDiscoveryFailing` | warning | The Operator cannot list a `Ready` server's tools for `discoveryFailingFor` (15m) |
 | `KavryntCloudSyncStale` | warning | Kavrynt Cloud accepted no snapshot for `cloudSyncStaleSeconds` (600); only with the Cloud connector |
+| `KavryntAuditDeliveryStale` | warning | A Gateway replica has audit events waiting and Kavrynt Cloud accepted none for `auditDeliveryStaleSeconds` (600); only with `gateway.audit.cloud.enabled` |
+
+The console's Alerts page shows the MCP server conditions of these alerts
+without Prometheus, evaluated by the Gateway with the same
+`metrics.prometheusRule` thresholds (written to the ConfigMap
+`<release>-console-alerts` even while the rules are off); see
+[console alerts](../../docs/components/gateway/README.md#console-alerts).
 
 Set `metrics.prometheusRule.labels` to match your Prometheus `ruleSelector`,
 `alertLabels` to route alerts in Alertmanager, and `jobs` when Prometheus
-discovers the targets without the chart's ServiceMonitors. The rules are
-tested with `promtool` (`make alerts-test`).
+discovers the targets without the chart's ServiceMonitors. The Operator's
+`MCPServer` metrics carry the server's `namespace` and `name`, so scrape them
+with `honor_labels: true` (the chart's ServiceMonitor does); otherwise
+Prometheus replaces `namespace` with the Operator's. Every alert carries
+`kavrynt_release` (the release name). The rules are tested with `promtool`
+(`make alerts-test`).
+
+### Notifications
+
+`metrics.notifications` installs an `AlertmanagerConfig` that sends this
+release's alerts to Slack, email, Microsoft Teams, or a webhook (for example a
+PagerDuty bridge). Each message names the alert, its severity, whether it is
+firing or resolved, the server (and tool), what is wrong, and the runbook.
+URLs and passwords stay in Secrets in the release namespace; values only name
+them.
+
+```bash
+kubectl -n kavrynt-system create secret generic kavrynt-alerts-slack \
+  --from-literal=url=https://hooks.slack.com/services/...
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reset-then-reuse-values \
+  --values examples/helm/values-notifications-slack.yaml
+```
+
+[`values-notifications-slack.yaml`](../../examples/helm/values-notifications-slack.yaml)
+and [`values-notifications-email.yaml`](../../examples/helm/values-notifications-email.yaml)
+are tested examples. A receiver is on once its Secret (email: `to`) is set,
+and takes the severities in its `severities` list, so critical alerts can go
+to a pager webhook and warnings to Slack. Alerts are grouped by alert and
+server and repeated every `repeatInterval` (4h) while they fire.
+
+The Alertmanager must select the config and must not scope it to its own
+namespace, because alerts about an `MCPServer` carry that server's namespace.
+With kube-prometheus-stack:
+
+```yaml
+alertmanager:
+  alertmanagerSpec:
+    alertmanagerConfigSelector:
+      matchLabels:
+        alertmanagerConfig: kavrynt   # metrics.notifications.labels
+    alertmanagerConfigMatcherStrategy:
+      type: None
+```
+
+Teams needs Prometheus Operator v0.82 or later (`msteamsv2Configs`, a Teams
+workflow webhook). The configuration is checked with `amtool` in CI
+(`make alerts-test`).
+
+### Dashboards
+
+`gateway.metrics.dashboard.enabled` installs two Grafana dashboards as
+ConfigMaps for the Grafana sidecar (`gateway.metrics.dashboard.labels`,
+`grafana_dashboard: "1"` by default): "Kavrynt MCP Traffic" for every server,
+and "Kavrynt MCP Server" for one server (readiness, tool discovery, traffic,
+errors, latency per tool, failing tools, and bytes). The metrics and labels
+you can use are listed in the
+[Gateway](../../docs/components/gateway/README.md#metrics-reference) and
+[Operator](../../docs/components/operator/README.md#metrics-reference)
+metrics references.
+
+To release your own dashboards with Kavrynt, build them in Grafana, then
+**Share > Export** (leave "Export for sharing externally" off, so the
+datasource stays a variable) and save the JSON. Add each file under
+`gateway.metrics.dashboard.extra`:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reset-then-reuse-values \
+  --set gateway.metrics.dashboard.enabled=true \
+  --set-file 'gateway.metrics.dashboard.extra.team-mcp\.json=team-mcp.json'
+```
+
+or in a values file, as JSON text or YAML:
+
+```yaml
+gateway:
+  metrics:
+    dashboard:
+      enabled: true
+      extra:
+        team-mcp.json: |
+          {"title": "Team MCP", "uid": "team-mcp", "panels": []}
+```
+
+Each entry becomes a ConfigMap `<release>-gateway-dashboard-<name>` with the
+same labels, so `helm upgrade` updates it and `helm uninstall` removes it.
+File names are lower case, end in `.json`, and must be unique; a value that
+is not JSON fails the install. A ConfigMap holds at most 1 MiB.
 
 ## High availability
 
@@ -205,8 +301,8 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 The end-to-end test installs it, restarts every Gateway replica while a
 client calls tools continuously (no call may fail), and deletes the Operator
 leader (the standby must reconcile new servers). Recent traffic in the
-console and the console login limiter are per Gateway replica; use
-Prometheus for cluster-wide traffic.
+console, the console's dashboards and traffic alerts, and the console login
+limiter are per Gateway replica; use Prometheus for cluster-wide traffic.
 
 ## Backing up
 
@@ -230,11 +326,11 @@ Operator; it does not need to be restored.
 - The console has a single `admin` login. The chart generates its password
   into the Secret `kavrynt-gateway-console-admin` (kept on uninstall); read it
   with `kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d`. The login protects the console and
-  `/v1/servers`, `/v1/traffic`, not MCP routes. With `helm template` or GitOps,
+  `/v1/servers`, `/v1/traffic`, `/v1/alerts`, not MCP routes. With `helm template` or GitOps,
   set `gateway.console.auth.existingSecret`, because a render without cluster
   access generates a new password each time.
-- The Gateway has read-only access to `MCPServer` resources and no Secret
-  access. Containers run as non-root with a read-only root filesystem.
+- The Gateway has read-only access to `MCPServer` resources and, for
+  session affinity, EndpointSlices, and no Secret access. Containers run as non-root with a read-only root filesystem.
 
 See [SECURITY.md](../../SECURITY.md) for known limitations.
 
@@ -269,6 +365,23 @@ kubectl -n kavrynt-system logs -l app.kubernetes.io/name=gateway --tail=-1 --pre
 kavryctl audit verify gateway.log
 ```
 
+To also deliver the events to Kavrynt Cloud, with the same cluster token
+Secret as the Operator's connector:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
+  --namespace kavrynt-system --reset-then-reuse-values \
+  --set gateway.audit.cloud.enabled=true \
+  --set gateway.audit.cloud.url=https://<your Kavrynt Cloud URL> \
+  --set gateway.audit.cloud.tokenSecret.name=kavrynt-cloud-token
+```
+
+Events then leave the cluster, including each caller's subject and client
+ID. Standard output keeps every event; events that wait for Cloud are
+buffered (`gateway.audit.cloud.bufferSize`, 100,000) and the alert
+`KavryntAuditDeliveryStale` fires when Cloud accepts none for 10 minutes.
+Kavrynt Cloud must serve the ingestion endpoint `POST /v1/sync/audit-events`.
+
 Details: [Gateway: Audit events](../../docs/components/gateway/README.md#audit-events).
 
 ## Tool authorization policy
@@ -286,7 +399,10 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version <version> \
 Anything the policy does not allow is denied. Use it with MCP client
 authentication so decisions can name the caller. Add
 `--set gateway.policy.filterToolsList=true` so each caller's `tools/list`
-shows only the tools it may call. Details:
+shows only the tools it may call. A change to the ConfigMap takes one to two
+minutes to apply (the kubelet's mount update, then the Gateway's 10-second
+check), and until then the previous policy decides; restart the Gateway to
+apply one at once. Details:
 [Gateway: Tool authorization policy](../../docs/components/gateway/README.md#tool-authorization-policy).
 
 ## Authenticating MCP clients
@@ -313,6 +429,9 @@ authentication instead, and the Gateway logs a warning at start and the
 console shows that MCP routes are open. Agents without a valid token get `401` with a
 `resource_metadata` URL that tells them where to get one. Token rules and
 answers: [Gateway: MCP client authentication](../../docs/components/gateway/README.md#mcp-client-authentication).
+A walkthrough with Keycloak, local testing with a plain-http port-forward,
+and agents that call several servers:
+[Setting up MCP client authentication](../../docs/AUTH-SETUP.md).
 
 ### Token exchange for servers that need the user
 
@@ -387,7 +506,7 @@ applied. Check a values file with:
 
 ```bash
 helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 --values my-values.yaml >/dev/null
+  --version 1.0.0-beta.3 --values my-values.yaml >/dev/null
 ```
 
 `global` accepts additional keys for platform-injected globals.
@@ -397,6 +516,9 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | Key | Type | Default | Description |
 | --- | --- | --- | --- |
 | `global.watchNamespaces` | list | `[]` | Namespaces whose `MCPServer` resources the Gateway routes; empty means all. A list switches Gateway RBAC to per-namespace Roles, and the Operator reports servers elsewhere as not `Ready` (`NamespaceNotWatched`). |
+| `global.endpoints.crossNamespace` | list | `[]` | `from`/`to` namespace pairs whose MCPServers in `from` may use endpoints in `to`; otherwise an endpoint in another namespace is not `Ready` (`EndpointNotAllowed`) |
+| `global.endpoints.clusterCIDRs` | list | `[]` | The cluster's Service and Pod CIDRs; IP endpoints inside them are not `Ready` |
+| `global.tokenExchangeAudiences` | object | `{}` | Namespace (or `"*"`) to the `spec.tokenExchange.audience` values its MCPServers may use; others are not `Ready` (`AudienceNotAllowed`) and get no token exchange. Empty allows none |
 | `global.upstreamCredentials.secretName` | string | `""` | Secret in the release namespace with the credentials of MCP servers that declare `spec.credential`; mounted (optional) into the Gateway and the Operator, which get no Secret RBAC |
 
 ### Alerts
@@ -412,8 +534,24 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `metrics.prometheusRule.minRequestsPerSecond` | number | `0.05` | Routes with less traffic never raise it |
 | `metrics.prometheusRule.latencyP95Seconds` | number | `5` | p95 latency that raises `KavryntMCPLatencyHigh` |
 | `metrics.prometheusRule.notReadyFor` | string | `10m` | How long an `MCPServer` may be not `Ready` |
+| `metrics.prometheusRule.toolErrorRatio` | number | `0.2` | Share of a tool's calls ending in `tool_error` or `rpc_error` that raises `KavryntMCPToolErrorsHigh` |
+| `metrics.prometheusRule.minToolRequestsPerSecond` | number | `0.02` | Tools with fewer `tools/call` requests never raise it |
+| `metrics.prometheusRule.discoveryFailingFor` | string | `15m` | How long tool discovery of a `Ready` `MCPServer` may fail |
 | `metrics.prometheusRule.cloudSyncStaleSeconds` | int | `600` | Age of the last accepted Cloud snapshot that raises `KavryntCloudSyncStale` |
+| `metrics.prometheusRule.auditDeliveryStaleSeconds` | int | `600` | Age of the last accepted audit batch, with events waiting, that raises `KavryntAuditDeliveryStale` |
 | `metrics.prometheusRule.runbookBaseURL` | string | this repository at the release tag | Base of every `runbook_url` |
+| `metrics.notifications.enabled` | bool | `false` | Create the `AlertmanagerConfig` (requires `metrics.prometheusRule.enabled` and a receiver) |
+| `metrics.notifications.labels` | object | `{}` | Labels on the `AlertmanagerConfig`, for `alertmanagerConfigSelector` |
+| `metrics.notifications.groupWait` / `groupInterval` / `repeatInterval` | string | `30s` / `5m` / `4h` | Alertmanager grouping and repeat timing |
+| `metrics.notifications.slack.webhookSecret` | object | `{name: "", key: url}` | Secret key with the Slack webhook URL; a name turns Slack on |
+| `metrics.notifications.slack.channel` | string | `""` | Channel; empty uses the webhook's |
+| `metrics.notifications.email.to` | list | `[]` | Recipients; any turn email on |
+| `metrics.notifications.email.from` / `smarthost` / `authUsername` | string | `""` | SMTP settings; empty uses the Alertmanager's global ones |
+| `metrics.notifications.email.authPasswordSecret` | object | `{name: "", key: password}` | Secret key with the SMTP password |
+| `metrics.notifications.email.requireTLS` | bool | `true` | Require STARTTLS |
+| `metrics.notifications.msteams.webhookSecret` | object | `{name: "", key: url}` | Secret key with the Teams workflow webhook URL |
+| `metrics.notifications.webhook.urlSecret` | object | `{name: "", key: url}` | Secret key with a webhook URL (Alertmanager's JSON payload) |
+| `metrics.notifications.<receiver>.severities` | list | `[critical, warning]` | Severities the receiver gets |
 
 ### Network policies
 
@@ -443,7 +581,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.imagePullSecrets` | list | `[]` | Image pull secrets |
 | `gateway.serviceAccount.create` | bool | `true` | Create the Gateway service account |
 | `gateway.serviceAccount.name` | string | `""` | Service account name; generated when empty |
-| `gateway.rbac.create` | bool | `true` | Create read-only (`get`, `list`, `watch`) `MCPServer` RBAC |
+| `gateway.rbac.create` | bool | `true` | Create read-only (`get`, `list`, `watch`) RBAC on `MCPServer` resources and EndpointSlices (for session affinity) |
 | `gateway.service.type` | string | `ClusterIP` | Service type. Keep `ClusterIP` unless MCP client authentication is on. |
 | `gateway.service.port` | int | `8080` | Service port |
 | `gateway.config.addr` | string | `":8080"` | Listen address |
@@ -465,13 +603,17 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.console.auth.enabled` | bool | `true` | Require the console admin login for the console, `/v1/servers`, and `/v1/traffic`. Does not protect MCP routes |
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
 | `gateway.console.auth.sessionTTL` | string | `12h` | Console session lifetime |
+| `gateway.console.auth.trustedProxies` | list | `[]` | CIDRs of the proxies in front of the Gateway; failed console logins from them count against the client their `X-Forwarded-For` names, not the proxy |
+| `gateway.console.history.maxTools` | int | `500` | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool. Each replica keeps 24 hours in memory: about 29 KiB per route and 23 KiB per tool |
+| `gateway.console.grafanaURL` | string | `""` | Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the Grafana dashboards instead |
 | `gateway.metrics.scrapeAnnotations` | bool | `true` | Add `prometheus.io/*` pod annotations |
 | `gateway.metrics.serviceMonitor.enabled` | bool | `false` | Create a Prometheus Operator `ServiceMonitor` (requires its CRDs) |
 | `gateway.metrics.serviceMonitor.interval` | string | `30s` | Scrape interval |
 | `gateway.metrics.serviceMonitor.labels` | object | `{}` | Extra `ServiceMonitor` labels |
-| `gateway.metrics.dashboard.enabled` | bool | `false` | Create the "Kavrynt MCP Traffic" Grafana dashboard ConfigMap |
+| `gateway.metrics.dashboard.enabled` | bool | `false` | Create the "Kavrynt MCP Traffic" and "Kavrynt MCP Server" Grafana dashboard ConfigMap |
 | `gateway.metrics.dashboard.namespace` | string | `""` | Dashboard namespace; release namespace when empty |
 | `gateway.metrics.dashboard.labels` | object | `{grafana_dashboard: "1"}` | Labels the Grafana sidecar selects |
+| `gateway.metrics.dashboard.extra` | object | `{}` | Your dashboards: `<name>.json` to dashboard JSON (string or object), one ConfigMap each |
 | `gateway.podSecurityContext` | object | non-root `65532`, `RuntimeDefault` seccomp | Pod security context |
 | `gateway.securityContext` | object | no privilege escalation, all capabilities dropped, read-only root filesystem | Container security context |
 | `gateway.resources` | object | requests `25m`/`64Mi`, limits `250m`/`256Mi` | Container resources |
@@ -497,7 +639,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `operator.config.metricsBindAddress` | string | `":8080"` | Metrics listen address |
 | `operator.config.healthProbeBindAddress` | string | `":8081"` | `/healthz` and `/readyz` listen address |
 | `operator.config.leaderElect` | bool | `true` | Enable leader election |
-| `operator.config.toolDiscovery.enabled` | bool | `true` | List the tools of `Ready` servers into `status.tools`. Needs network access to each endpoint; sends no credentials. |
+| `operator.config.toolDiscovery.enabled` | bool | `true` | List the tools of `Ready` servers into `status.tools`. Needs network access to each endpoint; sends only a server's stored upstream credential (`spec.credential`), to its pinned origin. |
 | `operator.config.toolDiscovery.refreshInterval` | string | `5m` | Tool discovery refresh interval |
 | `operator.cloud.enabled` | bool | `false` | Send `MCPServer` inventory and tools to Kavrynt Cloud |
 | `operator.cloud.url` | string | `""` | Kavrynt Cloud base URL (https only) |

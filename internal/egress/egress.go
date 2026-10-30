@@ -17,9 +17,10 @@ import (
 	"time"
 )
 
-// metadataAddrs are cloud instance metadata services outside the link-local
-// range, which is blocked as a whole.
+// metadataAddrs are cloud instance metadata services. The link-local range
+// is blocked as a whole; these are named so a refusal can say why.
 var metadataAddrs = []netip.Addr{
+	netip.MustParseAddr("169.254.169.254"), // AWS, Azure, GCP, and others
 	netip.MustParseAddr("fd00:ec2::254"),   // AWS IMDS over IPv6
 	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud metadata
 }
@@ -28,23 +29,46 @@ var metadataAddrs = []netip.Addr{
 // link-local (which holds 169.254.169.254), multicast, and known metadata
 // addresses are always refused; loopback only when allowLoopback is false.
 func Allowed(addr netip.Addr, allowLoopback bool) bool {
+	return refusedKind(addr, allowLoopback) == ""
+}
+
+// refusedKind names the kind of address addr is when it is refused, and is
+// empty when it is allowed.
+func refusedKind(addr netip.Addr, allowLoopback bool) string {
 	addr = addr.Unmap()
-	switch {
-	case !addr.IsValid(), addr.IsUnspecified(), addr.IsLinkLocalUnicast(), addr.IsMulticast():
-		return false
-	case addr.IsLoopback():
-		return allowLoopback
-	}
 	for _, blocked := range metadataAddrs {
 		if addr == blocked {
-			return false
+			return "cloud metadata"
 		}
 	}
-	return true
+	switch {
+	case !addr.IsValid(), addr.IsUnspecified():
+		return "unspecified"
+	case addr.IsLinkLocalUnicast():
+		return "link-local"
+	case addr.IsMulticast():
+		return "multicast"
+	case addr.IsLoopback() && !allowLoopback:
+		return "loopback"
+	}
+	return ""
+}
+
+// RefusedError is a connection the egress policy refused. Kind names the
+// kind of address (cloud metadata, link-local, loopback, unspecified, or
+// multicast), so callers can explain the refusal without the address
+// (SPEC-0027-R07).
+type RefusedError struct {
+	Kind string
+	Addr netip.Addr
+}
+
+func (e *RefusedError) Error() string {
+	return fmt.Sprintf("egress: connections to %s (%s) are not allowed for MCP endpoints", e.Addr, e.Kind)
 }
 
 // Control is a net.Dialer Control function that refuses connections to
-// addresses Allowed rejects.
+// addresses Allowed rejects with a *RefusedError.
 func Control(allowLoopback bool) func(network, address string, _ syscall.RawConn) error {
 	return func(_, address string, _ syscall.RawConn) error {
 		host, _, err := net.SplitHostPort(address)
@@ -55,8 +79,8 @@ func Control(allowLoopback bool) func(network, address string, _ syscall.RawConn
 		if err != nil {
 			return fmt.Errorf("egress: unexpected dial address %q", address)
 		}
-		if !Allowed(addr, allowLoopback) {
-			return fmt.Errorf("egress: connections to %s are not allowed for MCP endpoints", addr)
+		if kind := refusedKind(addr, allowLoopback); kind != "" {
+			return &RefusedError{Kind: kind, Addr: addr.Unmap()}
 		}
 		return nil
 	}
@@ -66,6 +90,10 @@ func Control(allowLoopback bool) func(network, address string, _ syscall.RawConn
 // checked with Control.
 func Transport(allowLoopback bool) *http.Transport {
 	transport := http.DefaultTransport.(*http.Transport).Clone()
+	// Through a proxy the check would see only the proxy's address, and the
+	// proxy would reach any endpoint, so proxy environment variables are
+	// ignored.
+	transport.Proxy = nil
 	dialer := &net.Dialer{
 		Timeout:   30 * time.Second,
 		KeepAlive: 30 * time.Second,

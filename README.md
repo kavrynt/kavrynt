@@ -41,7 +41,7 @@ can reach the Gateway:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.2 \
+  --version 1.0.0-beta.3 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -50,6 +50,12 @@ kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080
 # console: http://localhost:18080/ui/  user: admin  password:
 kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin -o jsonpath='{.data.password}' | base64 -d
 ```
+
+**Testing Kavrynt?** Follow the [developer testing runbook](docs/TESTING.md):
+on any Kubernetes cluster, in about 30 minutes, it registers a sample MCP
+server, calls its tools through the Gateway, and tests policy, audit, and the
+console. Then tell us what worked in a
+[tester feedback issue](https://github.com/kavrynt/kavrynt/issues/new?template=tester_feedback.yml).
 
 ## Contents
 
@@ -132,7 +138,9 @@ The current MVP supports:
 - health, readiness, version, metrics, and route inspection endpoints.
 
 Manifests can describe `stdio` servers, but Gateway runtime proxying currently
-supports HTTP endpoints only.
+supports HTTP endpoints only. A `stdio` server can run behind a Streamable
+HTTP bridge and be registered with the bridge's endpoint:
+[examples/stdio-bridge](examples/stdio-bridge/filesystem.yaml).
 
 ## Install on Kubernetes
 
@@ -149,7 +157,7 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=1.0.0-beta.2
+export KAVRYNT_VERSION=1.0.0-beta.3
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
@@ -293,7 +301,9 @@ servers that are not routed, whose tool discovery failed, or whose calls are
 failing, and the tools that fail most. **Servers** and **Tools** list every
 `MCPServer` and every discovered tool; the **Playground** calls tools through
 the Gateway exactly as an agent would; **Traffic** shows recent calls with
-per-tool error rate and latency. Point your own agent at
+per-tool error rate and latency; the **Dashboard** charts requests, errors,
+latency, and bytes over the last hour, 6 hours, or day for all servers, a
+server, or a tool, with the console alerts marked. Point your own agent at
 `http://localhost:18080/mcp/<namespace>.<name>` and watch its calls arrive.
 The login protects the console only: MCP routes stay open unless MCP client
 authentication (`gateway.auth`) is on.
@@ -426,7 +436,8 @@ the current release is not production-security complete:
   out and leaves MCP routes open): each route accepts only tokens issued
   for it.
 - Gateway never forwards `Authorization`, `Cookie`, or `Proxy-Authorization`
-  to MCP servers, and drops upstream `Set-Cookie`. MCP servers that need
+  to MCP servers, and drops upstream `Set-Cookie`, `Server`, and
+  `X-Powered-By`. MCP servers that need
   their own credential get it from a Secret the platform team manages,
   pinned to the server's endpoint. Servers that need the user instead get
   the caller's token exchanged for one with their own audience (RFC 8693);
@@ -449,8 +460,9 @@ the current release is not production-security complete:
   high-availability profile is `examples/helm/values-production.yaml`.
 - The Gateway can write one audit event per MCP request (`gateway.audit`):
   caller, tool, decision, and outcome, hash-chained per instance and checked
-  with `kavryctl audit verify`. Approvals and usage services are not part of
-  the current runtime beta.
+  with `kavryctl audit verify`, and can also deliver them to Kavrynt Cloud
+  (`gateway.audit.cloud`). Approvals and usage services are not part of the
+  current runtime beta.
 
 Keep Gateway as an internal `ClusterIP` service, restrict cluster
 access, and do not expose this MVP directly to untrusted networks.
@@ -481,7 +493,7 @@ are:
 1. approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md));
 2. the console signed in through the authorization server;
-3. audit delivery to Kavrynt Cloud and usage events;
+3. audit delivery to Kavrynt Cloud end to end (the Gateway side is built) and usage events;
 4. protocol-aware routing beyond the request checks;
 5. recovery workflows (restoring into a new cluster).
 

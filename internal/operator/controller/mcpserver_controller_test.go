@@ -4,7 +4,10 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
+	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strings"
@@ -12,7 +15,10 @@ import (
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
+	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -135,10 +141,12 @@ type fakeDiscoverer struct {
 	err        error
 	calls      int
 	header     http.Header
+	pod        netip.AddrPort
 }
 
-func (f *fakeDiscoverer) ListTools(_ context.Context, _ string, header http.Header) (discovery.Result, error) {
+func (f *fakeDiscoverer) ListTools(_ context.Context, _ string, pod netip.AddrPort, header http.Header) (discovery.Result, error) {
 	f.header = header
+	f.pod = pod
 	f.calls++
 	if f.err != nil {
 		return discovery.Result{}, f.err
@@ -506,5 +514,169 @@ func TestDiscoverySkipsTokenExchangeServers(t *testing.T) {
 	}
 	if discoverer.calls != 0 {
 		t.Fatalf("discovery ran %d times for a server that needs a caller's token", discoverer.calls)
+	}
+}
+
+// Verifies SPEC-0027-R03: whatever the cause, a failed discovery keeps the
+// reason DiscoveryFailed and leaves Ready alone.
+func TestEveryDiscoveryFailureKeepsReasonAndReady(t *testing.T) {
+	for name, err := range map[string]error{
+		"refused by egress": fmt.Errorf("initialize: %w", &egress.RefusedError{Kind: "cloud metadata", Addr: netip.MustParseAddr("169.254.169.254")}),
+		"host not found":    &net.DNSError{Err: "no such host", Name: "demo.default.svc", IsNotFound: true},
+		"timeout":           fmt.Errorf("initialize: %w", context.DeadlineExceeded),
+		"HTTP 404":          errors.New("initialize returned HTTP 404"),
+	} {
+		k8sClient := newClient(t, newServer(validSpec()))
+		reconciler := newDiscoveringReconciler(k8sClient, &fakeDiscoverer{err: err}, &testClock{now: time.Now()})
+		reconcileWith(t, reconciler)
+		updated := get(t, k8sClient)
+		discovered := apimeta.FindStatusCondition(updated.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+		if discovered == nil || discovered.Reason != kavryntv1alpha1.ReasonDiscoveryFailed {
+			t.Errorf("%s: ToolsDiscovered = %+v, want reason DiscoveryFailed", name, discovered)
+		}
+		if !apimeta.IsStatusConditionTrue(updated.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+			t.Errorf("%s: discovery failure changed Ready", name)
+		}
+	}
+}
+
+// fakePods are the ready pods of the Service demo.default.
+type fakePods []mcpsession.Endpoint
+
+func (p fakePods) Ready(_ context.Context, service kavryntv1alpha1.ServiceRef) ([]mcpsession.Endpoint, error) {
+	if service != (kavryntv1alpha1.ServiceRef{Namespace: "default", Name: "demo", Port: 8080}) {
+		return nil, errors.New("unexpected service")
+	}
+	return p, nil
+}
+
+// Verifies SPEC-0026-R09: with MCPSession, discovery talks to one ready pod;
+// without one it fails and leaves the server Ready.
+func TestDiscoveryUsesOnePodWithSessionAffinity(t *testing.T) {
+	spec := validSpec()
+	spec.SessionAffinity = kavryntv1alpha1.SessionAffinityMCPSession
+	k8sClient := newClient(t, newServer(spec))
+	discoverer := &fakeDiscoverer{tools: []kavryntv1alpha1.MCPServerTool{echoTool()}}
+	clock := &testClock{now: time.Now()}
+	reconciler := newDiscoveringReconciler(k8sClient, discoverer, clock)
+	pods := fakePods{
+		{Tag: mcpsession.TagOf("uid-a"), Addr: netip.MustParseAddrPort("10.0.0.1:8080")},
+		{Tag: mcpsession.TagOf("uid-b"), Addr: netip.MustParseAddrPort("10.0.0.2:8080")},
+	}
+	reconciler.SessionEndpoints = pods
+
+	reconcileWith(t, reconciler)
+	if discoverer.calls != 1 || discoverer.pod != pods[0].Addr {
+		t.Fatalf("discovery went to %v after %d calls, want %v", discoverer.pod, discoverer.calls, pods[0].Addr)
+	}
+
+	reconciler.SessionEndpoints = fakePods{}
+	clock.now = clock.now.Add(DefaultToolRefreshInterval)
+	reconcileWith(t, reconciler)
+	server := get(t, k8sClient)
+	discovered := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
+	if discoverer.calls != 1 || discovered == nil || discovered.Reason != kavryntv1alpha1.ReasonDiscoveryFailed || !strings.Contains(discovered.Message, "no ready pod") {
+		t.Fatalf("without ready pods: %d calls, ToolsDiscovered = %+v", discoverer.calls, discovered)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("a failed discovery made the server not Ready")
+	}
+
+	// Without affinity the endpoint is used as is.
+	spec.SessionAffinity = ""
+	plain := &fakeDiscoverer{}
+	reconciler = newDiscoveringReconciler(newClient(t, newServer(spec)), plain, clock)
+	reconcileWith(t, reconciler)
+	if plain.pod.IsValid() {
+		t.Fatalf("discovery without affinity went to pod %v", plain.pod)
+	}
+}
+
+// Verifies SPEC-0029-R04: an endpoint in another namespace is accepted but
+// not Ready, so the Gateway does not route it; an allowed pair is.
+func TestEndpointsInOtherNamespacesAreNotReady(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b.svc:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{GatewayNamespace: "kavrynt-system"}}
+	reconcileWith(t, reconciler)
+
+	server := get(t, k8sClient)
+	ready := apimeta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != kavryntv1alpha1.ReasonEndpointNotAllowed || !strings.Contains(ready.Message, `namespace "team-b"`) {
+		t.Fatalf("Ready = %+v, want False with EndpointNotAllowed naming team-b", ready)
+	}
+	if !apimeta.IsStatusConditionTrue(server.Status.Conditions, kavryntv1alpha1.ConditionAccepted) {
+		t.Fatal("an endpoint in another namespace made the spec invalid")
+	}
+
+	reconciler.Scope.CrossNamespace = []scope.NamespacePair{{From: "default", To: "team-b"}}
+	reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an allowed namespace pair is not Ready")
+	}
+}
+
+// Verifies SPEC-0029-R08: a token exchange audience not allowed for the
+// namespace keeps the server from being Ready.
+func TestUnlistedAudiencesAreNotReady(t *testing.T) {
+	spec := validSpec()
+	spec.TokenExchange = &kavryntv1alpha1.MCPServerTokenExchange{Audience: "https://tickets.example.com"}
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{Audiences: scope.Audiences{"team-a": {"https://tickets.example.com"}}}}
+	reconcileWith(t, reconciler)
+	ready := apimeta.FindStatusCondition(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Status != metav1.ConditionFalse || ready.Reason != kavryntv1alpha1.ReasonAudienceNotAllowed ||
+		!strings.Contains(ready.Message, "https://tickets.example.com") || !strings.Contains(ready.Message, `namespace "default"`) {
+		t.Fatalf("Ready = %+v, want False with AudienceNotAllowed naming the audience and namespace", ready)
+	}
+
+	reconciler.Scope.Audiences["default"] = []string{"https://tickets.example.com"}
+	reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an allowed audience is not Ready")
+	}
+}
+
+// Verifies SPEC-0029-R04: when the Operator cannot read a namespace, the
+// server is not routed and the check runs again soon.
+func TestNamespaceLookupFailureIsRetried(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{
+		NamespaceExists: func(context.Context, string) (bool, error) { return false, errors.New("timeout") },
+	}}
+	result := reconcileWith(t, reconciler)
+	if result.RequeueAfter <= 0 || result.RequeueAfter > time.Minute {
+		t.Fatalf("RequeueAfter = %s, want a retry within a minute", result.RequeueAfter)
+	}
+	if apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("a server whose endpoint namespace is unknown is Ready")
+	}
+}
+
+// Verifies SPEC-0029-R04: an endpoint allowed because its namespace does
+// not exist is checked again, and refused once the namespace exists.
+func TestEndpointsAreRecheckedForNewNamespaces(t *testing.T) {
+	spec := validSpec()
+	spec.Endpoint = "http://search.team-b:8080/mcp"
+	k8sClient := newClient(t, newServer(spec))
+	exists := false
+	reconciler := &MCPServerReconciler{Client: k8sClient, Scheme: k8sClient.Scheme(), Scope: &scope.Policy{
+		NamespaceExists: func(context.Context, string) (bool, error) { return exists, nil },
+	}}
+	result := reconcileWith(t, reconciler)
+	if !apimeta.IsStatusConditionTrue(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady) {
+		t.Fatal("an external two-label name is not Ready")
+	}
+	if result.RequeueAfter <= 0 || result.RequeueAfter > 10*time.Minute {
+		t.Fatalf("RequeueAfter = %s, want a recheck within ten minutes", result.RequeueAfter)
+	}
+	exists = true
+	reconcileWith(t, reconciler)
+	ready := apimeta.FindStatusCondition(get(t, k8sClient).Status.Conditions, kavryntv1alpha1.ConditionReady)
+	if ready == nil || ready.Reason != kavryntv1alpha1.ReasonEndpointNotAllowed {
+		t.Fatalf("Ready after the namespace appeared = %+v, want EndpointNotAllowed", ready)
 	}
 }

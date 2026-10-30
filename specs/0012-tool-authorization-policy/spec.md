@@ -83,9 +83,11 @@ destructive tool off limits, or allow read-only methods only.
 ### Classification
 
 - **SPEC-0012-R09** When on, a `POST` body that cannot be classified
-  (larger than the inspection limit, not JSON, a JSON-RPC batch, or a
-  `tools/call` without a string `params.name`) MUST be denied with `400`
-  and not forwarded.
+  (larger than the inspection limit, not JSON, a JSON-RPC batch, a
+  `tools/call` without a string `params.name`, or an object in which
+  `jsonrpc`, `id`, `method`, `params`, or `params.name` appears twice or
+  under a name that matches it only case-insensitively) MUST be denied
+  with `400` and not forwarded.
 - **SPEC-0012-R10** When the request carries `Mcp-Method` or `Mcp-Name`
   headers that disagree with the body, it MUST be refused with `400` and
   not forwarded.

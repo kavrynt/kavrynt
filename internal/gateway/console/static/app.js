@@ -1,5 +1,5 @@
 // Kavrynt Console: read-only views of the Gateway's JSON endpoints
-// (/v1/servers, /v1/traffic, /readyz, /version) and a playground that calls
+// (/v1/servers, /v1/traffic, /v1/alerts, /v1/history, /readyz, /version) and a playground that calls
 // MCP tools through the Gateway's own /mcp/ routes.
 //
 // Everything shown here that comes from MCP servers (tool names,
@@ -8,18 +8,25 @@
 "use strict";
 
 (() => {
-  const { h, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
-  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock } = Kavrynt.format;
+  const { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
+  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets } = Kavrynt.format;
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
+    ALERTS, sortAlerts, activeAlertCount, alertLink, alertTitle, isRunbookURL, sessionLoss,
   } = Kavrynt.stats;
+  const {
+    RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
+    alertMarks, topLists, rangeSummary, toolRows, dashboardNote, grafanaLinks,
+  } = Kavrynt.charts;
   const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
   const TRAFFIC_POLL_MS = 2000;
   const TRAFFIC_PAGE = 100;
+  const HISTORY_POLL_MS = 30000;
+  const RESIZE_DELAY_MS = 150;
   const THEME_KEY = "kavrynt-theme";
 
   const state = {
@@ -29,6 +36,17 @@
     traffic: [],
     // Pod name of the Gateway replica whose recent traffic is shown.
     trafficInstance: "",
+    // /v1/alerts (SPEC-0020): the alerts and the replica that evaluated them.
+    alerts: [],
+    alertsInstance: "",
+    alertsLoaded: false,
+    alertsError: null,
+    // /v1/history (SPEC-0024): historyPath is the request of the dashboard
+    // on screen ("" polls nothing); history is the answer to historyFor.
+    history: null,
+    historyFor: "",
+    historyPath: "",
+    historyError: null,
     seenTrafficId: 0,
     freshIds: new Set(),
     trafficPaused: false,
@@ -75,6 +93,55 @@
     }
     state.serversLoaded = true;
     update("servers");
+  }
+
+  async function refreshAlerts() {
+    if (needsLogin()) return;
+    try {
+      const data = await getJSON("/v1/alerts");
+      state.alerts = Array.isArray(data.alerts) ? data.alerts : [];
+      state.alertsInstance = typeof data.instance === "string" ? data.instance : "";
+      state.alertsError = null;
+    } catch (err) {
+      state.alertsError = err.message;
+    }
+    state.alertsLoaded = true;
+    drawAlertCount();
+    update("alerts");
+  }
+
+  // drawAlertCount shows the number of active alerts in the navigation on
+  // every page (SPEC-0020-R07).
+  function drawAlertCount() {
+    const el = document.getElementById("alert-count");
+    const count = needsLogin() ? 0 : activeAlertCount(state.alerts);
+    el.textContent = String(count);
+    el.hidden = count === 0;
+    el.closest("a").setAttribute("aria-label", count ? "Alerts, " + count + " active" : "Alerts");
+  }
+
+  // refreshHistory loads /v1/history for the dashboard on screen, if any
+  // (SPEC-0024-R06). An answer for a scope no longer shown is dropped.
+  async function refreshHistory() {
+    const path = state.historyPath;
+    if (!path || needsLogin()) return;
+    try {
+      const data = await getJSON(path);
+      if (path !== state.historyPath) return;
+      Object.assign(state, { history: data, historyFor: path, historyError: null });
+    } catch (err) {
+      if (path !== state.historyPath) return;
+      state.historyError = err.message;
+    }
+    update("history");
+  }
+
+  // showHistory points the history poll at path and loads it; a history of
+  // another range or scope is not shown meanwhile.
+  function showHistory(path) {
+    state.historyPath = path;
+    if (state.historyFor !== path) Object.assign(state, { history: null, historyFor: "", historyError: null });
+    refreshHistory();
   }
 
   async function refreshTraffic() {
@@ -125,9 +192,11 @@
   function signedOut(message) {
     const wasSignedIn = state.auth.signedIn;
     Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
-    Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set() });
+    Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set(),
+      alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null, history: null, historyFor: "", historyPath: "", historyError: null });
     resetPlayground();
     drawUser();
+    drawAlertCount();
     render();
     if (wasSignedIn && message) toast(message);
   }
@@ -137,6 +206,7 @@
     render();
     refreshServers();
     refreshTraffic();
+    refreshAlerts();
   }
 
   async function logout() {
@@ -213,12 +283,14 @@
 
   const views = {
     overview: (root) => renderOverview(root),
-    servers: (root, rest, params) => (rest[0] ? renderServer(root, rest[0], rest[1] || "overview") : renderServers(root, params)),
+    dashboard: (root, rest, params) => renderDashboard(root, params),
+    servers: (root, rest, params) => (rest[0] ? renderServer(root, rest[0], rest[1] || "overview", params) : renderServers(root, params)),
     tools: (root, rest, params) => renderTools(root, params),
     playground: (root, rest) => renderPlayground(root, rest[0], rest[1], {
       state, refreshTraffic, rerender: render, isCurrent: () => parseHash(location.hash).page === "playground",
     }),
     traffic: (root, rest, params) => renderTraffic(root, params),
+    alerts: (root) => renderAlerts(root),
   };
 
   function render() {
@@ -240,6 +312,8 @@
     });
     const root = clear(main());
     current = { page, update: null };
+    // Only a dashboard view polls history; it sets the path again.
+    state.historyPath = "";
     current.update = views[page](root, rest, params) || null;
     root.focus({ preventScroll: true });
   }
@@ -392,8 +466,11 @@
         rateCell(row.rate),
         h("td", { class: "num", text: fmtMs(row.p95) })));
 
+      const alertCount = activeAlertCount(state.alerts);
       put(body,
-        panel("Needs attention", attentionBody, items.length ? badge(String(items.length), "warn") : badge("none", "ok")),
+        panel("Needs attention", attentionBody, h("span", { class: "panel-actions" },
+          items.length ? badge(String(items.length), "warn") : badge("none", "ok"),
+          h("a", { href: formatHash("alerts"), text: alertCount ? alertCount + (alertCount === 1 ? " active alert →" : " active alerts →") : "Alerts →" }))),
         h("section", { class: "panel" },
           h("header", {}, h("h2", { text: "Failing tools" }), h("a", { href: formatHash("traffic", [], { outcome: "errors" }), text: "All errors →" })),
           scopeNote(trafficScope(state.trafficInstance)),
@@ -404,6 +481,299 @@
 
     draw();
     return draw;
+  }
+
+  // ---------------------------------------------------------------- dashboard
+
+  // renderDashboard charts this replica's calls over the last hour, 6
+  // hours, or day for all servers, one server, or one tool, with the
+  // busiest and most failing servers and tools (SPEC-0024-R06). The range
+  // and scope are in the URL.
+  function renderDashboard(root, params) {
+    const filters = { range: parseRange(params.range), route: params.route || "", tool: (params.route && params.tool) || "" };
+    const toolbar = h("div", { class: "toolbar" });
+    const body = h("div");
+    put(root,
+      h("div", { class: "page-head" },
+        h("div", {}, h("h1", { text: "Dashboard" }),
+          h("p", { text: "MCP traffic over time: requests, errors, latency, and bytes, with the console alerts marked." })),
+        toolbar),
+      body);
+    const dash = dashboard(body, () => filters, { extra: (history) => topPanels(history, filters.range) });
+    let toolbarKey = "";
+
+    function setFilter(key, value) {
+      filters[key] = value;
+      if (key === "route") filters.tool = "";
+      setParams(filters);
+      drawToolbar();
+      dash.load();
+    }
+
+    function drawToolbar() {
+      const routes = state.servers.filter((s) => s.routed).map((s) => s.route);
+      if (filters.route) routes.push(filters.route);
+      const server = state.servers.find((s) => s.route === filters.route);
+      const tools = (server ? server.tools.map((t) => t.name) : []).concat(filters.tool ? [filters.tool] : []);
+      const options = (values, all) => [{ value: "", label: all }].concat([...new Set(values)].sort().map((v) => ({ value: v, label: v })));
+      const key = JSON.stringify([routes, tools, filters]);
+      if (key === toolbarKey) return;
+      toolbarKey = key;
+      put(clear(toolbar),
+        select("Range", filters.range, Object.entries(RANGES).map(([value, r]) => ({ value, label: r.label })), (v) => setFilter("range", v)),
+        select("Server", filters.route, options(routes, "All servers"), (v) => setFilter("route", v)),
+        filters.route ? select("Tool", filters.tool, options(tools, "All tools"), (v) => setFilter("tool", v)) : null);
+    }
+
+    drawToolbar();
+    dash.load();
+    return (what) => {
+      if (what === "servers") drawToolbar();
+      dash.update(what);
+    };
+  }
+
+  // dashboard draws /v1/history for the scope get() returns into container:
+  // the replica note, totals, charts with alert marks, the alerts of the
+  // range, and opts.extra (SPEC-0024-R06 to R10).
+  function dashboard(container, get, opts) {
+    // Where each chart's cursor is, kept across polls and resizes.
+    const cursors = new Map();
+
+    function load() {
+      const { range, route, tool } = get();
+      showHistory(historyPath(range, route, tool));
+      draw();
+    }
+
+    function draw() {
+      clear(container);
+      const history = state.historyFor === state.historyPath ? state.history : null;
+      if (state.historyError && !history) {
+        put(container, emptyState("Cannot load history", state.historyError));
+        return;
+      }
+      if (!history) {
+        put(container, emptyState("Loading…"));
+        return;
+      }
+      const { range, route } = get();
+      const start = Date.parse(history.start);
+      const end = Date.parse(history.end);
+      const since = Date.parse(history.since);
+      const summary = rangeSummary(history);
+      const links = grafanaLinks(history.grafanaURL, route);
+      put(container,
+        h("p", { class: "scope-note" }, dashboardNote(history), " · cluster-wide history: ",
+          links ? links.map((link, i) => [i ? ", " : "", h("a", { href: link.href, target: "_blank", rel: "noopener noreferrer", text: link.title })]) :
+            "the " + GRAFANA.traffic.title + " and " + GRAFANA.server.title + " Grafana dashboards (gateway.metrics.dashboard.enabled)"),
+        h("div", { class: "tiles" },
+          tile("Calls", summary.calls, RANGES[range].label.toLowerCase()),
+          tile("Error rate", fmtPct(summary.errorRate), "calls not ok", summary.errorRate > 0 ? "warn" : ""),
+          tile("Tool errors", summary.toolError, "tool_error, rpc_error"),
+          tile("Upstream failures", summary.upstreamError, "upstream_error, unreachable, timeout", summary.upstreamError ? "bad" : "")));
+      const marks = alertMarks(history.alerts, start, end);
+      const grid = h("div", { class: "chart-grid" });
+      put(container, grid);
+      // Every panel is in the grid before any chart measures its width.
+      const hosts = chartSeries(history).map((chart) => {
+        const host = h("div", { class: "chart-host" });
+        put(grid, panel(chart.title, h("div", { class: "body" }, legend(chart), host)));
+        return { host, chart };
+      });
+      for (const { host, chart } of hosts) drawChart(host, chart, { start, end, since, stepSeconds: history.stepSeconds, marks }, cursors);
+      if (marks.length) put(container, rangeAlertsPanel(marks));
+      if (opts.extra) put(container, opts.extra(history));
+    }
+
+    return {
+      load,
+      update: (what) => { if (what === "history" || what === "resize") draw(); },
+    };
+  }
+
+  function legend(chart) {
+    return h("ul", { class: "legend", "aria-hidden": "true" }, chart.series.map((s) =>
+      h("li", {}, h("span", { class: "swatch c-" + s.cls }), s.label)));
+  }
+
+  // drawChart draws a chart as inline SVG at its host's width, with a
+  // cursor that follows the pointer and the arrow keys, a readout of the
+  // values under it, and a table of the same numbers for screen readers
+  // (SPEC-0024-R08). Alert starts and resolutions are dashed lines
+  // (SPEC-0024-R09).
+  function drawChart(host, chart, ctx, cursors) {
+    const geometry = chartGeometry(chart, { width: host.clientWidth || 320, height: 170, start: ctx.start, end: ctx.end, since: ctx.since, stepSeconds: ctx.stepSeconds });
+    const { plot } = geometry;
+    const count = geometry.pointX.length;
+    const out = h("p", { class: "chart-readout", "aria-live": "polite" });
+    const cursor = svg("line", { class: "cursor", x1: 0, x2: 0, y1: plot.y, y2: plot.y + plot.h, visibility: "hidden" });
+    let index = cursors.has(chart.id) ? Math.min(cursors.get(chart.id), count - 1) : -1;
+
+    function show(i) {
+      index = i;
+      cursors.set(chart.id, i);
+      if (i < 0) {
+        cursor.setAttribute("visibility", "hidden");
+        out.textContent = count ? "Hover over the chart or focus it and use the arrow keys to read values." : "No calls recorded in this range yet.";
+        return;
+      }
+      cursor.setAttribute("x1", geometry.pointX[i]);
+      cursor.setAttribute("x2", geometry.pointX[i]);
+      cursor.setAttribute("visibility", "visible");
+      out.textContent = readout(chart, i);
+    }
+
+    const el = svg("svg", {
+      class: "chart", width: geometry.width, height: geometry.height, viewBox: "0 0 " + geometry.width + " " + geometry.height,
+      role: "img", tabindex: "0", "aria-label": chart.title + " chart; arrow keys read its values",
+      onmousemove: (e) => {
+        const box = el.getBoundingClientRect();
+        show(nearestIndex(geometry, ((e.clientX - box.left) * geometry.width) / (box.width || geometry.width)));
+      },
+      onmouseleave: () => { if (document.activeElement !== el) show(-1); },
+      onfocus: () => show(index < 0 ? count - 1 : index),
+      onblur: () => show(-1),
+      onkeydown: (e) => {
+        if (!["ArrowLeft", "ArrowRight", "Home", "End", "PageUp", "PageDown"].includes(e.key)) return;
+        e.preventDefault();
+        show(moveIndex(index, e.key, count));
+      },
+    },
+    geometry.before ? svg("rect", { class: "before-since", x: geometry.before.x, y: plot.y, width: geometry.before.w, height: plot.h },
+      svg("title", {}, "No history: before this replica started")) : null,
+    geometry.yTicks.map((t) => [
+      svg("line", { class: "grid", x1: plot.x, x2: plot.x + plot.w, y1: t.y, y2: t.y }),
+      svg("text", { class: "tick", x: plot.x - 6, y: t.y + 4, "text-anchor": "end" }, t.label)]),
+    geometry.xTicks.map((t) => svg("text", { class: "tick", x: t.x, y: geometry.height - 6, "text-anchor": "middle" }, clockLabel(t.t))),
+    geometry.bars.map((b) => svg("rect", { class: "column c-" + b.cls, x: b.x, y: b.y, width: b.w, height: b.h })),
+    geometry.lines.map((l) => svg("path", { class: "line c-" + l.cls, d: l.d })),
+    ctx.marks.map((m) => svg("line", { class: "mark mark-" + m.kind, x1: geometry.x(m.t), x2: geometry.x(m.t), y1: plot.y, y2: plot.y + plot.h },
+      svg("title", {}, alertTitle(m.alert) + (m.kind === "start" ? " started " : " resolved ") + clockLabel(m.t)))),
+    cursor);
+
+    // Tables ignore width and overflow, so the wrapper is what is hidden.
+    const table = h("div", { class: "sr-only" }, h("table", {},
+      h("caption", { text: chart.title }),
+      h("thead", {}, h("tr", {}, h("th", { scope: "col", text: "Time" }), chart.series.map((s) => h("th", { scope: "col", text: s.label })))),
+      h("tbody", {}, tableRows(chart).map((row) => h("tr", {}, row.map((cell) => h("td", { text: cell })))))));
+    put(clear(host), el, out, table);
+    show(index);
+  }
+
+  // rangeAlertsPanel lists the alert starts and resolutions the charts mark.
+  function rangeAlertsPanel(marks) {
+    return panel("Alerts in this range", h("ul", { class: "alert-list" }, marks.map((m) => {
+      const scope = m.alert.scope || {};
+      const link = alertLink(m.alert);
+      return h("li", { class: "alert-item" + (m.kind === "resolved" ? " resolved" : "") },
+        h("div", { class: "alert-line" },
+          h("span", { class: "dot " + (m.kind === "resolved" ? "ok" : "warn") }),
+          h("strong", { text: alertTitle(m.alert) }),
+          h("span", { class: "muted", text: (m.kind === "start" ? "started " : "resolved ") + clockLabel(m.t) }),
+          h("a", { class: "mono", href: formatHash(link.page, link.rest, link.params), text: String(scope.route || "") + (scope.tool ? " · " + scope.tool : "") })));
+    })), h("a", { href: formatHash("alerts"), text: "Alerts →" }));
+  }
+
+  // topPanels are the busiest and most failing servers (for all servers)
+  // and tools (unless one tool is shown), linking to their server's or
+  // tool's dashboard (SPEC-0024-R06).
+  function topPanels(history, range) {
+    const scope = history.scope || {};
+    if (scope.tool) return null;
+    const panels = [];
+    if (!scope.route) {
+      const servers = topLists(history.routes);
+      panels.push(topPanel("Busiest servers", servers.busiest, range, "No calls in this range."),
+        topPanel("Highest error rate: servers", servers.failing, range, "No server with 20 calls or more had errors."));
+    }
+    const tools = topLists(history.tools);
+    panels.push(topPanel("Busiest tools", tools.busiest, range, "No tool calls in this range."),
+      topPanel("Highest error rate: tools", tools.failing, range, "No tool with 20 calls or more had errors."));
+    return h("div", { class: "top-grid" }, panels);
+  }
+
+  function topPanel(title, rows, range, empty) {
+    const withTools = rows.some((r) => r.tool);
+    const body = rows.map((r) => h("tr", {},
+      h("td", {}, h("a", { class: "mono", href: formatHash("servers", [r.route, "dashboard"], { range, tool: r.tool || "" }), text: r.tool || r.route })),
+      withTools ? h("td", { class: "mono muted", text: r.route }) : null,
+      h("td", { class: "num", text: String(r.calls) }),
+      rateCell(typeof r.errorRate === "number" ? r.errorRate : null),
+      h("td", { class: "num", text: fmtMs(r.p95Ms) })));
+    const headers = [withTools ? "Tool" : "Server", withTools ? "Server" : null, { label: "Calls", num: true }, "Error rate", { label: "p95", num: true }].filter(Boolean);
+    return panel(title, h("div", { class: "body flush" }, table(headers, body, empty)));
+  }
+
+  // serverDashboardExtra is the per-tool table of a server's Dashboard tab,
+  // or, with a tool shown, the way back to all tools (SPEC-0024-R07).
+  function serverDashboardExtra(history, route, filters) {
+    if (filters.tool) {
+      return h("p", {}, h("a", { href: formatHash("servers", [route, "dashboard"], { range: filters.range }), text: "← All tools of " + route }));
+    }
+    const server = state.servers.find((s) => s.route === route);
+    const rows = toolRows(history.tools, server ? server.tools.map((t) => t.name) : []).map((r) => h("tr", {},
+      h("td", {}, h("a", { class: "mono", href: formatHash("servers", [route, "dashboard"], { range: filters.range, tool: r.tool }), text: r.tool })),
+      h("td", { class: "num", text: String(r.calls) }),
+      h("td", { class: "num", text: String(r.errors) }),
+      rateCell(r.errorRate),
+      h("td", { class: "num", text: fmtMs(r.p95Ms) })));
+    return panel("Per tool", h("div", { class: "body flush" },
+      table(["Tool", { label: "Calls", num: true }, { label: "Errors", num: true }, "Error rate", { label: "p95", num: true }], rows, "No tools discovered and no tool calls in this range.")),
+    h("span", { class: "muted small", text: RANGES[filters.range].label }));
+  }
+
+  // ---------------------------------------------------------------- alerts
+
+  // renderAlerts lists active alerts, then those resolved in the last hour,
+  // each linking its server or tool and its runbook (SPEC-0020-R06).
+  function renderAlerts(root) {
+    const head = h("div", { class: "page-head" },
+      h("div", {}, h("h1", { text: "Alerts" }),
+        h("p", { text: "Problems the Gateway sees now, with the same conditions and thresholds as the Prometheus alerts." })));
+    const body = h("div");
+    put(root, head, body);
+
+    function alertRow(alert) {
+      const link = alertLink(alert);
+      const scope = alert.scope || {};
+      const definition = ALERTS[alert.name] ? ALERTS[alert.name].definition : undefined;
+      return h("li", { class: "alert-item" + (alert.resolvedAt ? " resolved" : "") },
+        h("div", { class: "alert-line" },
+          h("span", { class: "dot " + (alert.resolvedAt ? "ok" : alert.severity === "critical" ? "bad" : "warn") }),
+          h("strong", { text: alertTitle(alert), title: definition }),
+          badge(String(alert.severity || ""), alert.resolvedAt ? "" : alert.severity === "critical" ? "bad" : "warn"),
+          h("a", { class: "mono", href: formatHash(link.page, link.rest, link.params), text: String(scope.route || "") + (scope.tool ? " · " + scope.tool : "") })),
+        h("p", { text: String(alert.summary || "") }),
+        h("p", { class: "muted small" },
+          h("span", { text: "Since " + ago(alert.since), title: String(alert.since || "") }),
+          alert.resolvedAt ? h("span", { text: " · resolved " + ago(alert.resolvedAt), title: String(alert.resolvedAt) }) : null,
+          isRunbookURL(alert.runbookURL) ? [" · ", h("a", { href: alert.runbookURL, target: "_blank", rel: "noopener noreferrer", text: "Runbook" })] : null));
+    }
+
+    function draw() {
+      clear(body);
+      if (state.alertsError) {
+        put(body, emptyState("Cannot load alerts", state.alertsError));
+        return;
+      }
+      if (!state.alertsLoaded) {
+        put(body, emptyState("Loading…"));
+        return;
+      }
+      const { active, resolved } = sortAlerts(state.alerts);
+      const scope = "Server and discovery alerts come from MCPServer status and are the same on every replica. Traffic alerts count " +
+        (state.alertsInstance ? "Gateway replica " + state.alertsInstance : "this Gateway replica") + "'s calls only; Prometheus alerts sum every replica.";
+      put(body,
+        scopeNote(scope),
+        panel("Active", active.length ? h("ul", { class: "alert-list" }, active.map(alertRow)) :
+          h("p", { class: "body muted", text: "No active alerts." }), badge(String(active.length), active.length ? "warn" : "ok")),
+        panel("Resolved in the last hour", resolved.length ? h("ul", { class: "alert-list" }, resolved.map(alertRow)) :
+          h("p", { class: "body muted", text: "Nothing resolved in the last hour." })));
+    }
+
+    draw();
+    return (what) => { if (what === "alerts") draw(); };
   }
 
   // ---------------------------------------------------------------- servers
@@ -505,20 +875,48 @@
 
   // ---------------------------------------------------------------- server detail
 
-  function renderServer(root, routeName, tab) {
+  function renderServer(root, routeName, tab, params = {}) {
     const body = h("div");
     put(root, body);
     let limit = TRAFFIC_PAGE;
+    let shown = false;
+    // The Dashboard tab (SPEC-0024-R07) keeps its charts across redraws of
+    // the page head.
+    const filters = { range: parseRange(params.range), tool: params.tool || "" };
+    const dashToolbar = h("div", { class: "toolbar dash-toolbar" });
+    const dashBox = h("div");
+    const dash = tab === "dashboard" ? dashboard(dashBox, () => ({ range: filters.range, route: routeName, tool: filters.tool }), {
+      extra: (history) => serverDashboardExtra(history, routeName, filters),
+    }) : null;
+
+    function drawDashToolbar() {
+      const server = state.servers.find((s) => s.route === routeName);
+      const tools = [...new Set((server ? server.tools.map((t) => t.name) : []).concat(filters.tool ? [filters.tool] : []))].sort();
+      put(clear(dashToolbar),
+        select("Range", filters.range, Object.entries(RANGES).map(([value, r]) => ({ value, label: r.label })), (v) => setDashFilter("range", v)),
+        select("Tool", filters.tool, [{ value: "", label: "All tools" }].concat(tools.map((t) => ({ value: t, label: t }))), (v) => setDashFilter("tool", v)));
+    }
+
+    function setDashFilter(key, value) {
+      filters[key] = value;
+      setParams({ range: filters.range, tool: filters.tool });
+      drawDashToolbar();
+      dash.load();
+    }
+
+    const lossSlot = h("div");
 
     function draw() {
       const server = state.servers.find((s) => s.route === routeName);
       clear(body);
+      shown = Boolean(server);
       if (!server) {
         put(body, h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" })),
           emptyState(state.serversLoaded ? "Server not found" : "Loading…", state.serversLoaded ? "No MCPServer is named " + routeName + "." : ""));
         return;
       }
       const health = serverHealth(server, state.traffic);
+      drawLoss(server);
       put(body,
         h("nav", { class: "crumbs", "aria-label": "Breadcrumb" }, h("a", { href: "#/servers", text: "Servers" }), " / ", server.namespace, " / ", server.name),
         h("div", { class: "page-head" },
@@ -529,10 +927,15 @@
             h("button", { type: "button", class: "btn", onclick: () => copy(diagnostics(server, state.traffic, state.version && state.version.version), "Diagnostics copied: metadata only, no tool inputs or results") }, "Copy diagnostics"),
             server.routed ? h("a", { class: "btn primary", href: formatHash("playground", [server.route]) }, "Open in playground") : null)),
         health.label === "Needs attention" ? h("div", { class: "callout " + health.cls, role: "note" }, h("strong", { text: "Needs attention. " }), health.detail) : null,
+        lossSlot,
         h("div", { class: "tabs", role: "tablist" },
-          tabButton("overview", "Overview"), tabButton("tools", "Tools (" + server.tools.length + ")"), tabButton("traffic", "Traffic (" + health.stats.calls + ")")));
+          tabButton("overview", "Overview"), tabButton("dashboard", "Dashboard"), tabButton("tools", "Tools (" + server.tools.length + ")"),
+          tabButton("traffic", "Traffic (" + health.stats.calls + ")")));
 
-      if (tab === "tools") put(body, toolsPanel(server));
+      if (tab === "dashboard") {
+        drawDashToolbar();
+        put(body, dashToolbar, dashBox);
+      } else if (tab === "tools") put(body, toolsPanel(server));
       else if (tab === "traffic") {
         const records = state.traffic.filter((r) => r.route === server.route);
         put(body, scopeNote(trafficScope(state.trafficInstance)),
@@ -540,6 +943,14 @@
           trafficTable(records, { showRoute: false, limit, onMore: (n) => { limit = n; draw(); }, empty: "No requests to this route in the recent traffic." }),
           records.length ? h("p", {}, h("a", { href: formatHash("traffic", [], { route: server.route }), text: "Filter in the Traffic view →" })) : null);
       } else put(body, serverOverview(server, health));
+    }
+
+    // The lost-sessions callout follows the recent traffic on every tab,
+    // without redrawing the page or its charts (SPEC-0026-R11).
+    function drawLoss(server) {
+      const lost = server ? sessionLoss(server, state.traffic) : null;
+      clear(lossSlot);
+      if (lost) put(lossSlot, h("div", { class: "callout", role: "note" }, h("strong", { text: "Sessions lost. " }), lost.message));
     }
 
     function tabButton(id, label) {
@@ -550,7 +961,20 @@
     }
 
     draw();
-    return (what) => { if (what === "servers" || (what === "traffic" && tab === "traffic")) draw(); };
+    if (dash) dash.load();
+    return (what) => {
+      if (what === "traffic") drawLoss(state.servers.find((s) => s.route === routeName));
+      if (dash) {
+        if (what === "servers" && !shown) {
+          draw();
+          // Charts drawn while the tab was detached had no width yet.
+          if (shown) dash.update("resize");
+        }
+        dash.update(what);
+        return;
+      }
+      if (what === "servers" || (what === "traffic" && tab === "traffic")) draw();
+    };
   }
 
   function serverOverview(server, health) {
@@ -580,25 +1004,7 @@
   }
 
   function connectPanel(server, url) {
-    const snippets = {
-      "MCP client": pretty({ mcpServers: { [server.name]: { type: "http", url } } }),
-      "Python agent": [
-        "# pip install mcp",
-        "import asyncio",
-        "from mcp import ClientSession",
-        "from mcp.client.streamable_http import streamablehttp_client",
-        "",
-        "async def main():",
-        "    async with streamablehttp_client(\"" + url + "\") as (read, write, _):",
-        "        async with ClientSession(read, write) as session:",
-        "            await session.initialize()",
-        "            tools = await session.list_tools()",
-        "            print([tool.name for tool in tools.tools])",
-        "",
-        "asyncio.run(main())",
-      ].join("\n"),
-      curl: "curl -s -X POST '" + url + "' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
-    };
+    const snippets = connectSnippets(server.name, url);
     const names = Object.keys(snippets);
     let active = names[0];
     const tabs = h("div", { class: "tabs", role: "tablist", style: "margin-bottom:10px" });
@@ -615,6 +1021,15 @@
       h("p", { class: "muted small", style: "margin:0", text: "The Gateway does not authenticate callers yet and never forwards Authorization or Cookie headers upstream." })));
   }
 
+  // hintBadges shows the behavior hints the server reported for a tool
+  // (SPEC-0028-R08), or nothing when it reported none.
+  function hintBadges(annotations) {
+    const labels = toolHints(annotations);
+    if (!labels.length) return null;
+    const why = "Reported by the MCP server, not verified by Kavrynt";
+    return h("div", { class: "badges" }, labels.map((label) => badge(label, label === "destructive" ? "warn" : "", why)));
+  }
+
   function toolsPanel(server) {
     if (!server.tools.length) {
       const discovered = condition(server, "ToolsDiscovered");
@@ -624,6 +1039,7 @@
       h("div", { class: "tool-head" },
         h("span", { class: "tool-name", text: tool.name }),
         server.routed ? h("a", { class: "btn small", href: formatHash("playground", [server.route, tool.name]), "aria-label": "Try " + tool.name }, "Try it") : null),
+      hintBadges(tool.annotations),
       tool.description ? h("p", { class: "tool-desc", text: tool.description }) : null,
       tool.inputSchema ? h("details", {}, h("summary", { text: "Input schema" }), codeBlock(pretty(tool.inputSchema))) : null))));
   }
@@ -653,7 +1069,7 @@
         h("td", { class: "mono", text: e.tool }),
         h("td", {}, h("a", { class: "mono", href: formatHash("servers", [e.route, "tools"]), text: e.route })),
         h("td", {}, badge(e.state.label, e.state.cls)),
-        h("td", { class: "wrap muted", text: e.description }),
+        h("td", { class: "wrap muted" }, e.description, hintBadges(e.annotations)),
         h("td", { class: "actions" }, e.playable ?
           h("a", { class: "btn small", href: formatHash("playground", [e.route, e.tool]), "aria-label": "Try " + e.tool + " on " + e.route }, "Try ▶") :
           [h("button", { type: "button", class: "btn small", disabled: true, "aria-describedby": "why-" + e.route + "-" + e.tool }, "Try ▶"),
@@ -666,7 +1082,7 @@
     draw();
     return (what) => {
       if (what !== "servers") return;
-      const key = JSON.stringify(catalog(state.servers).map((e) => [e.tool, e.route, e.routed]));
+      const key = JSON.stringify(catalog(state.servers).map((e) => [e.tool, e.route, e.routed, toolHints(e.annotations)]));
       if (key !== lastKey) { lastKey = key; draw(); }
     };
   }
@@ -782,6 +1198,11 @@
     initTheme();
     window.addEventListener("hashchange", render);
     window.addEventListener("pagehide", closePlayground);
+    let resizeTimer = 0;
+    window.addEventListener("resize", () => {
+      clearTimeout(resizeTimer);
+      resizeTimer = setTimeout(() => update("resize"), RESIZE_DELAY_MS);
+    });
     render();
     loadVersion();
     await checkSession();
@@ -790,6 +1211,8 @@
       { fn: refreshServers, ms: SERVER_POLL_MS },
       { fn: refreshStatus, ms: SERVER_POLL_MS },
       { fn: refreshTraffic, ms: TRAFFIC_POLL_MS },
+      { fn: refreshAlerts, ms: SERVER_POLL_MS },
+      { fn: refreshHistory, ms: HISTORY_POLL_MS },
     ]).start();
   }
 

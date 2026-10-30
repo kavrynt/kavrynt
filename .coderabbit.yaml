@@ -1,0 +1,140 @@
+# CodeRabbit pull request reviews. Reviews are advice: the merge gate is
+# every CI check passing (CLAUDE.md, "Merging"), never a review approval.
+# Schema: https://coderabbit.ai/integrations/schema.v2.json
+# yaml-language-server: $schema=https://coderabbit.ai/integrations/schema.v2.json
+language: en-US
+tone_instructions: >-
+  Be direct and specific. Name the file, the line, and the failure scenario.
+  Skip praise and style nits that gofmt or staticcheck already enforce.
+
+reviews:
+  profile: chill
+  # CI decides merges; a review never blocks one.
+  request_changes_workflow: false
+  high_level_summary: true
+  review_status: true
+  poem: false
+  in_progress_fortune: false
+  sequence_diagrams: false
+  auto_review:
+    enabled: true
+    drafts: false
+    # develop is the default branch. Stacked pull requests target feature
+    # branches, and release and hotfix work targets main or release/*.
+    base_branches:
+      - "main"
+      - "feature/.*"
+      - "release/.*"
+    ignore_usernames:
+      - "dependabot[bot]"
+  path_filters:
+    - "!**/go.sum"
+    - "!test/console-smoke/node_modules/**"
+    - "!**/*.tgz"
+  pre_merge_checks:
+    docstrings:
+      mode: "off"
+  tools:
+    # Already enforced by make qa (vet, staticcheck, gosec, govulncheck, Trivy)
+    # or noisy on Helm templates, which are not plain YAML.
+    golangci-lint:
+      enabled: false
+    yamllint:
+      enabled: false
+    checkov:
+      enabled: false
+    markdownlint:
+      enabled: false
+    languagetool:
+      enabled: false
+    # Not covered by CI.
+    shellcheck:
+      enabled: true
+    actionlint:
+      enabled: true
+    zizmor:
+      enabled: true
+    hadolint:
+      enabled: true
+    gitleaks:
+      enabled: true
+    regal:
+      enabled: true
+  path_instructions:
+    - path: "**/*"
+      instructions: >-
+        This repository is public. Flag anything that names internal
+        infrastructure, cloud accounts, pricing, customers, or secrets. Flag
+        docs, comments, or release notes that claim a feature whose spec is
+        not Implemented (CLAUDE.md, "What Works Today"); approvals are not
+        implemented.
+    - path: "**/*.go"
+      instructions: >-
+        Treat Kubernetes manifests, MCP payloads, tool metadata, and Gateway
+        traffic as untrusted input. Flag logged or returned secrets, tokens,
+        or credential values; unbounded reads of untrusted input; and
+        network access in tests (tests use fake http.RoundTrippers and
+        t.TempDir()). A test that verifies a spec requirement must cite it
+        (// Verifies SPEC-NNNN-RNN.). Prefer the standard library; new
+        dependencies need a reason.
+    - path: "internal/gateway/**"
+      instructions: >-
+        The Gateway contains no reconciliation logic and has no Secret RBAC.
+        It must strip Authorization, Cookie, and Proxy-Authorization before
+        forwarding, never follow upstream redirects, and dial MCP endpoints
+        only through internal/egress. Check that every policy, audit, and
+        metrics decision reads the request the way the upstream MCP server
+        will.
+    - path: "internal/gateway/console/static/**"
+      instructions: >-
+        Plain HTML, CSS, and JavaScript with no build step and no external
+        assets. Insert untrusted data with textContent only, never innerHTML
+        or similar sinks. Classic scripts, not ES modules. Logic belongs in
+        the DOM-free files (stats.js, state.js, format.js) so make
+        console-test covers it.
+    - path: "internal/operator/**"
+      instructions: >-
+        The Operator never proxies traffic; tool discovery is its own bounded
+        MCP client session through internal/egress. Status messages must not
+        quote MCP server responses. A failed discovery must leave the server
+        Ready.
+    - path: "internal/kavryctl/**"
+      instructions: >-
+        kavryctl imports no server internals other than the shared API types
+        in api/v1alpha1.
+    - path: "{api/v1alpha1/**,config/crd/**,charts/kavrynt/charts/k8s-operator/files/**}"
+      instructions: >-
+        The CRD schema is hand-written and exists twice, byte-identical:
+        config/crd/bases/kavrynt.io_mcpservers.yaml and
+        charts/kavrynt/charts/k8s-operator/files/kavrynt.io_mcpservers.yaml.
+        A Go type change needs both copies, and RBAC changes need config/rbac
+        and the chart together.
+    - path: "charts/**"
+      instructions: >-
+        Every new value needs an entry in the hand-written values.schema.json
+        (it rejects unknown keys) and template changes need a test in
+        charts/kavrynt/tests. Pods run non-root with readOnlyRootFilesystem
+        and least-privilege RBAC.
+    - path: ".github/workflows/**"
+      instructions: >-
+        Actions must be pinned by full commit SHA. Workflow permissions are
+        minimal. Flag pull_request_target with a checkout of the pull
+        request's code, and any step that exposes secrets to forks.
+    - path: "specs/**"
+      instructions: >-
+        Requirement IDs are never renumbered; dropped ones are marked
+        Withdrawn. An Accepted or Implemented spec has a plan.md. Review
+        Draft specs for behavior, acceptance criteria, non-goals, and
+        security, not implementation.
+
+chat:
+  auto_reply: true
+  # A public repository: only organization members can start a chat.
+  allow_non_org_members: false
+
+knowledge_base:
+  code_guidelines:
+    enabled: true
+    filePatterns:
+      - "CLAUDE.md"
+      - "docs/ADR-*.md"

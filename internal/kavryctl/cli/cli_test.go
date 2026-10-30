@@ -91,6 +91,16 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 			ObjectMeta: metav1.ObjectMeta{Name: "b", Namespace: "team-b"},
 			Spec:       kavryntv1alpha1.MCPServerSpec{Version: "1", Transport: "stdio", Command: "b"},
 		},
+		&kavryntv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: "c", Namespace: "team-c"},
+			Spec:       kavryntv1alpha1.MCPServerSpec{Version: "1", Transport: "http", Endpoint: "http://c"},
+			Status: kavryntv1alpha1.MCPServerStatus{
+				Conditions: []metav1.Condition{
+					{Type: kavryntv1alpha1.ConditionReady, Status: metav1.ConditionTrue, Reason: "Routable", LastTransitionTime: metav1.Now()},
+					{Type: kavryntv1alpha1.ConditionToolsDiscovered, Status: metav1.ConditionFalse, Reason: kavryntv1alpha1.ReasonDiscoveryFailed, LastTransitionTime: metav1.Now()},
+				},
+			},
+		},
 	)
 
 	out, errOut, code := run(t, "list", "-A")
@@ -105,6 +115,8 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 	if strings.Contains(out, "/mcp/team-b.b") {
 		t.Fatalf("list -A shows a route for a server that is not Ready:\n%s", out)
 	}
+	// Verifies SPEC-0027-R02: TOOLS is the count when discovered, the reason
+	// when discovery failed, and - before discovery ran.
 	for _, line := range strings.Split(out, "\n") {
 		fields := strings.Fields(line)
 		switch {
@@ -112,6 +124,8 @@ func TestListAllNamespacesShowsReadiness(t *testing.T) {
 			t.Fatalf("team-a TOOLS = %q, want 2:\n%s", fields[6], out)
 		case len(fields) > 0 && fields[0] == "team-b" && fields[6] != "-":
 			t.Fatalf("team-b TOOLS = %q, want - before discovery:\n%s", fields[6], out)
+		case len(fields) > 0 && fields[0] == "team-c" && fields[6] != kavryntv1alpha1.ReasonDiscoveryFailed:
+			t.Fatalf("team-c TOOLS = %q, want %s:\n%s", fields[6], kavryntv1alpha1.ReasonDiscoveryFailed, out)
 		}
 	}
 
@@ -136,6 +150,23 @@ func TestValidateRejectsInvalidManifest(t *testing.T) {
 	_, errOut, code := run(t, "validate", path)
 	if code != 1 || !strings.Contains(errOut, "spec.transport must be one of") {
 		t.Fatalf("code=%d err=%q", code, errOut)
+	}
+}
+
+// stdio manifests stay valid, but the Gateway never routes them, so
+// validate and register say so on stderr (issue #87).
+func TestStdioManifestsWarnThatTheyAreNotRouted(t *testing.T) {
+	useFakeClient(t, "team-a")
+	stdio := writeManifest(t, "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata:\n  name: files\nspec:\n  version: 0.1.0\n  transport: stdio\n  command: npx\n")
+	const warning = "warning: the Gateway does not proxy stdio servers"
+	for _, command := range []string{"validate", "register"} {
+		_, errOut, code := run(t, command, stdio)
+		if code != 0 || !strings.Contains(errOut, warning) {
+			t.Errorf("%s stdio: code=%d err=%q", command, code, errOut)
+		}
+		if _, errOut, _ := run(t, command, writeManifest(t, httpManifest)); strings.Contains(errOut, "warning") {
+			t.Errorf("%s http warned: %q", command, errOut)
+		}
 	}
 }
 
@@ -228,13 +259,13 @@ func TestAuditVerify(t *testing.T) {
 		t.Fatal(err)
 	}
 	var stdout, stderr bytes.Buffer
-	if code := Execute([]string{"audit", "verify", good}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "3 events from 1 instances: every chain verifies") {
+	if code := Execute([]string{"audit", "verify", good}, &stdout, &stderr); code != 0 || !strings.Contains(stdout.String(), "3 events from 1 instance: every chain verifies") {
 		t.Fatalf("good log: exit %d, %s %s", code, stdout.String(), stderr.String())
 	}
 
 	tampered := strings.Join([]string{lines[0], strings.Replace(lines[1], `"decision":"allow"`, `"decision":"deny"`, 1), lines[2]}, "\n")
 	stdout.Reset()
-	if code := runAudit([]string{"verify"}, strings.NewReader(tampered), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "BREAK instance gw/1 seq 2") {
+	if code := runAudit([]string{"verify"}, strings.NewReader(tampered), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "BREAK instance gw/1 seq 2") || !strings.Contains(stdout.String(), "3 events from 1 instance: 1 break\n") {
 		t.Fatalf("tampered log: exit %d, %s", code, stdout.String())
 	}
 	if code := runAudit([]string{"verify"}, strings.NewReader("no events here\n"), &stdout, &stderr); code != 1 {

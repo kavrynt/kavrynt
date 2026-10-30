@@ -11,12 +11,15 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   conditions, and tool discovery into `status.tools`.
 - Gateway HTTP routing at `/mcp/<namespace>.<name>`, credential header
   stripping, egress restrictions, and a read-only web console with an
-  overview of failing servers and tools and a single admin login.
+  overview of failing servers and tools, dashboards of the last 24 hours
+  kept by the Gateway itself, and a single admin login.
 - Signed multi-architecture images and an OCI Helm chart.
 - `helm upgrade` and `helm rollback` that carry the `MCPServer` CRD, tested
   from the previous release on every change.
-- Alerting rules for the Gateway, the Operator, and MCP servers, each with a
-  runbook, tested with `promtool`.
+- Alerting rules for the Gateway, the Operator, MCP servers, and their tools
+  (calls that keep failing, tools the Operator cannot discover), each with a
+  runbook, tested with `promtool`, and the same MCP conditions on the
+  console's Alerts page without Prometheus.
 - A high-availability profile (several Gateway replicas with graceful drain,
   a standby Operator), tested with a rolling restart under load.
 - Static upstream credentials for MCP servers that need an API key, from a
@@ -40,7 +43,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 1. Approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 2. The console signed in through the authorization server.
-3. Audit delivery to Kavrynt Cloud and usage events.
+3. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
+   Cloud ingestion service and an end-to-end test) and usage events.
 4. Protocol-aware routing beyond the request checks, such as sessions that
    follow a Gateway replica.
 5. Recovery workflows (restoring into a new cluster).

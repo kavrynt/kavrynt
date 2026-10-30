@@ -20,6 +20,7 @@ import (
 	"mime"
 	"net"
 	"net/http"
+	"net/netip"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -65,9 +66,17 @@ type Authenticator struct {
 	// MCP routes need tokens (SPEC-0006-R15).
 	mcpAuth bool
 
+	// trustedProxies are the addresses whose X-Forwarded-For names the
+	// client (SPEC-0030-R01).
+	trustedProxies []netip.Prefix
+
 	mu       sync.Mutex
 	failures map[string]*failures
 }
+
+// overflowClient counts the failures of clients beyond a limiter full of
+// refused clients, together (SPEC-0030-R03).
+const overflowClient = ""
 
 type failures struct {
 	count int
@@ -223,7 +232,7 @@ func (a *Authenticator) login(w http.ResponseWriter, r *http.Request) {
 		writeJSON(w, http.StatusUnsupportedMediaType, map[string]string{"error": "send the login as application/json"})
 		return
 	}
-	client := clientAddress(r)
+	client := a.clientAddress(r)
 	if wait := a.blocked(client); wait > 0 {
 		w.Header().Set("Retry-After", strconv.Itoa(int((wait+time.Second-1)/time.Second)))
 		writeJSON(w, http.StatusTooManyRequests, map[string]string{"error": "too many failed logins; try again later"})
@@ -284,17 +293,23 @@ func (a *Authenticator) setCookie(w http.ResponseWriter, r *http.Request, value 
 	})
 }
 
+// TrustProxies makes logins from these addresses count against the client
+// their X-Forwarded-For names (SPEC-0030).
+func (a *Authenticator) TrustProxies(prefixes []netip.Prefix) {
+	a.trustedProxies = append([]netip.Prefix(nil), prefixes...)
+}
+
 // blocked returns how long client must wait before its next login.
 func (a *Authenticator) blocked(client string) time.Duration {
 	a.mu.Lock()
 	defer a.mu.Unlock()
-	f := a.failures[client]
+	f := a.failures[a.key(client)]
 	if f == nil {
 		return 0
 	}
 	left := f.since.Add(failureWindow).Sub(a.now())
 	if left <= 0 {
-		delete(a.failures, client)
+		delete(a.failures, a.key(client))
 		return 0
 	}
 	if f.count >= maxFailures {
@@ -306,15 +321,43 @@ func (a *Authenticator) blocked(client string) time.Duration {
 func (a *Authenticator) fail(client string) {
 	a.mu.Lock()
 	defer a.mu.Unlock()
+	client = a.key(client)
 	f := a.failures[client]
 	if f == nil || a.now().Sub(f.since) >= failureWindow {
-		if len(a.failures) >= maxTrackedClients {
-			a.failures = map[string]*failures{}
-		}
 		f = &failures{since: a.now()}
 		a.failures[client] = f
 	}
 	f.count++
+}
+
+// key is the entry client's failures count in: its own, or, when the
+// limiter is full and cannot make room, the shared overflow entry. To make
+// room it forgets the clients whose window has ended, then the oldest one
+// that is not refused, never a refused one (SPEC-0030-R03). a.mu is held.
+func (a *Authenticator) key(client string) string {
+	if _, tracked := a.failures[client]; tracked || a.named() < maxTrackedClients {
+		return client
+	}
+	now := a.now()
+	for name, f := range a.failures {
+		if now.Sub(f.since) >= failureWindow {
+			delete(a.failures, name)
+		}
+	}
+	if a.named() < maxTrackedClients {
+		return client
+	}
+	oldest := ""
+	for name, f := range a.failures {
+		if name != overflowClient && f.count < maxFailures && (oldest == "" || f.since.Before(a.failures[oldest].since)) {
+			oldest = name
+		}
+	}
+	if oldest == "" {
+		return overflowClient
+	}
+	delete(a.failures, oldest)
+	return client
 }
 
 func (a *Authenticator) reset(client string) {
@@ -323,14 +366,51 @@ func (a *Authenticator) reset(client string) {
 	delete(a.failures, client)
 }
 
-// clientAddress is the connection's remote host. Behind an Ingress it is the
-// Ingress, which makes the failure limit effectively global.
-func clientAddress(r *http.Request) string {
+// named is the number of clients tracked by name, without the overflow
+// entry. a.mu is held.
+func (a *Authenticator) named() int {
+	if _, ok := a.failures[overflowClient]; ok {
+		return len(a.failures) - 1
+	}
+	return len(a.failures)
+}
+
+// clientAddress is the address login failures count against: the
+// connection's remote host or, when that is a trusted proxy, the right-most
+// X-Forwarded-For address that is not a trusted proxy (SPEC-0030-R02). A
+// value that is not an address stops the walk and keeps the connection's,
+// so a client cannot choose where its failures count. Without trusted
+// proxies, behind an Ingress every login counts against the Ingress.
+func (a *Authenticator) clientAddress(r *http.Request) string {
 	host, _, err := net.SplitHostPort(r.RemoteAddr)
 	if err != nil {
 		return r.RemoteAddr
 	}
+	remote, err := netip.ParseAddr(host)
+	if err != nil || !a.trusted(remote) {
+		return host
+	}
+	hops := strings.Split(strings.Join(r.Header.Values("X-Forwarded-For"), ","), ",")
+	for i := len(hops) - 1; i >= 0; i-- {
+		hop, err := netip.ParseAddr(strings.TrimSpace(hops[i]))
+		if err != nil {
+			return host
+		}
+		if !a.trusted(hop) {
+			return hop.Unmap().String()
+		}
+	}
 	return host
+}
+
+func (a *Authenticator) trusted(addr netip.Addr) bool {
+	addr = addr.Unmap()
+	for _, prefix := range a.trustedProxies {
+		if prefix.Contains(addr) {
+			return true
+		}
+	}
+	return false
 }
 
 func writeJSON(w http.ResponseWriter, status int, body any) {

@@ -1,0 +1,245 @@
+suite: notifications
+templates:
+  - templates/alertmanagerconfig.yaml
+  - templates/prometheusrule.yaml
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
+tests:
+  # Verifies SPEC-0022-R01.
+  - it: renders no AlertmanagerConfig by default
+    template: templates/alertmanagerconfig.yaml
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Verifies SPEC-0022-R01.
+  - it: requires the alert rules
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.notifications.enabled: true
+      metrics.notifications.slack.webhookSecret.name: alerts
+    asserts:
+      - failedTemplate:
+          errorMessage: metrics.notifications.enabled requires metrics.prometheusRule.enabled
+
+  # Verifies SPEC-0022-R01.
+  - it: requires a receiver
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.notifications.enabled: true
+    asserts:
+      - failedTemplate:
+          errorPattern: needs a receiver
+
+  # Verifies SPEC-0022-R01, SPEC-0022-R02, SPEC-0022-R05, and SPEC-0022-R06:
+  # the Slack example sends this release's alerts to the webhook in its
+  # Secret.
+  - it: routes this release's alerts to Slack with the example values
+    template: templates/alertmanagerconfig.yaml
+    values:
+      - ../../../examples/helm/values-notifications-slack.yaml
+    asserts:
+      - isKind:
+          of: AlertmanagerConfig
+      - isAPIVersion:
+          of: monitoring.coreos.com/v1alpha1
+      - equal:
+          path: metadata.name
+          value: kavrynt-notifications
+      - equal:
+          path: metadata.labels.alertmanagerConfig
+          value: kavrynt
+      - equal:
+          path: spec.route.matchers
+          value:
+            - name: component
+              matchType: "=~"
+              value: gateway|operator|mcp-server
+            - name: kavrynt_release
+              matchType: "="
+              value: kavrynt
+      - equal:
+          path: spec.route.receiver
+          value: kavrynt-none
+      - equal:
+          path: spec.route.routes
+          value:
+            - receiver: slack
+              continue: true
+              matchers:
+                - name: severity
+                  matchType: "=~"
+                  value: critical|warning
+      - equal:
+          path: spec.receivers[1].name
+          value: slack
+      - equal:
+          path: spec.receivers[1].slackConfigs[0].apiURL
+          value:
+            name: kavrynt-alerts-slack
+            key: url
+      - equal:
+          path: spec.receivers[1].slackConfigs[0].channel
+          value: "#mcp-alerts"
+      - equal:
+          path: spec.receivers[1].slackConfigs[0].sendResolved
+          value: true
+      - matchRegex:
+          path: spec.receivers[1].slackConfigs[0].text
+          pattern: 'Runbook: \{\{ \.Annotations\.runbook_url \}\}'
+
+  # Verifies SPEC-0022-R02, SPEC-0022-R05, and SPEC-0022-R06: the email
+  # example uses its own SMTP server with the password from a Secret.
+  - it: sends email with the example values
+    template: templates/alertmanagerconfig.yaml
+    values:
+      - ../../../examples/helm/values-notifications-email.yaml
+    asserts:
+      - equal:
+          path: spec.route.repeatInterval
+          value: 12h
+      - equal:
+          path: spec.receivers[1].name
+          value: email
+      - equal:
+          path: spec.receivers[1].emailConfigs[0].to
+          value: platform-oncall@example.com
+      - equal:
+          path: spec.receivers[1].emailConfigs[0].smarthost
+          value: smtp.example.com:587
+      - equal:
+          path: spec.receivers[1].emailConfigs[0].authPassword
+          value:
+            name: kavrynt-alerts-smtp
+            key: password
+      - equal:
+          path: spec.receivers[1].emailConfigs[0].requireTLS
+          value: true
+      - equal:
+          path: spec.receivers[1].emailConfigs[0].headers[0].key
+          value: Subject
+
+  # Verifies SPEC-0022-R02: without SMTP values, email uses the
+  # Alertmanager's global SMTP settings.
+  - it: leaves SMTP settings to the Alertmanager when they are not set
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.notifications.enabled: true
+      metrics.notifications.email.to: [a@example.com, b@example.com]
+    asserts:
+      - equal:
+          path: spec.receivers[1].emailConfigs[0].to
+          value: a@example.com, b@example.com
+      - notExists:
+          path: spec.receivers[1].emailConfigs[0].smarthost
+      - notExists:
+          path: spec.receivers[1].emailConfigs[0].from
+      - notExists:
+          path: spec.receivers[1].emailConfigs[0].authPassword
+
+  # Verifies SPEC-0022-R02 and SPEC-0022-R05: Teams and the generic webhook
+  # take their URLs from Secrets.
+  - it: sends to Microsoft Teams and a webhook
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.notifications.enabled: true
+      metrics.notifications.msteams.webhookSecret: {name: teams, key: workflow}
+      metrics.notifications.webhook.urlSecret: {name: pager, key: url}
+    asserts:
+      - equal:
+          path: spec.receivers[1].name
+          value: msteams
+      - equal:
+          path: spec.receivers[1].msteamsv2Configs[0].webhookURL
+          value:
+            name: teams
+            key: workflow
+      - exists:
+          path: spec.receivers[1].msteamsv2Configs[0].title
+      - equal:
+          path: spec.receivers[2].name
+          value: webhook
+      - equal:
+          path: spec.receivers[2].webhookConfigs[0]
+          value:
+            urlSecret:
+              name: pager
+              key: url
+            sendResolved: true
+
+  # Verifies SPEC-0022-R03: critical alerts can page while warnings go to
+  # Slack, grouped by alert and server, with a configurable repeat.
+  - it: routes critical and warning alerts to different receivers
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.notifications.enabled: true
+      metrics.notifications.repeatInterval: 1h
+      metrics.notifications.slack.webhookSecret.name: alerts
+      metrics.notifications.slack.severities: [warning]
+      metrics.notifications.webhook.urlSecret.name: pager
+      metrics.notifications.webhook.severities: [critical]
+    asserts:
+      - equal:
+          path: spec.route.groupBy
+          value: [alertname, route, namespace, name]
+      - equal:
+          path: spec.route.repeatInterval
+          value: 1h
+      - equal:
+          path: spec.route.routes[0].receiver
+          value: slack
+      - equal:
+          path: spec.route.routes[0].matchers[0].value
+          value: warning
+      - equal:
+          path: spec.route.routes[1].receiver
+          value: webhook
+      - equal:
+          path: spec.route.routes[1].matchers[0].value
+          value: critical
+
+  # Verifies SPEC-0022-R03: the repeat interval defaults to 4 hours.
+  - it: repeats firing alerts every 4 hours by default
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.notifications.enabled: true
+      metrics.notifications.slack.webhookSecret.name: alerts
+    asserts:
+      - equal:
+          path: spec.route.repeatInterval
+          value: 4h
+
+  # Verifies SPEC-0022-R01: every alert carries the release name, and extra
+  # alert labels cannot replace it.
+  - it: labels every alert with the release name
+    template: templates/prometheusrule.yaml
+    release:
+      name: team-a
+    set:
+      metrics.prometheusRule.enabled: true
+      metrics.prometheusRule.alertLabels:
+        kavrynt_release: other
+    asserts:
+      - equal:
+          path: spec.groups[0].rules[0].labels.kavrynt_release
+          value: team-a
+      - equal:
+          path: spec.groups[1].rules[2].labels.kavrynt_release
+          value: team-a
+
+  # Verifies SPEC-0022-R02: values take Secret references, never a URL.
+  - it: rejects a webhook URL in values
+    template: templates/alertmanagerconfig.yaml
+    set:
+      metrics.notifications.slack.url: https://hooks.slack.com/services/x
+    asserts:
+      - failedTemplate:
+          errorPattern: "additional properties 'url' not allowed"
