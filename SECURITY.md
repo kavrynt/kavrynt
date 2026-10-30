@@ -24,15 +24,19 @@ fixes. Fixes are not backported.
 
 These are documented gaps, not vulnerabilities:
 
-- MCP client authentication (OAuth 2.1 bearer tokens, `gateway.auth`) is off
-  by default; until it is turned on, anyone who can reach the Gateway can call
-  every routed tool. The Gateway does not authorize individual tool calls yet
+- MCP client authentication (OAuth 2.1 bearer tokens, `gateway.auth`) is on
+  by default in the chart, which refuses to install until it names an
+  authorization server. An install that sets `gateway.auth.enabled=false`
+  lets anyone who can reach the Gateway call every routed tool. Authorizing
+  individual tool calls takes the opt-in policy (`gateway.policy`); without
+  it, every authenticated caller can call every tool
   ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 - The web console at `/ui/` has a single `admin` login with a generated
-  password. It protects the console, `/v1/servers`, and `/v1/traffic` only;
-  `/v1/routes` and `/metrics` stay reachable by anyone who can reach the
-  Gateway (`/v1/routes` lists no endpoints while MCP client authentication
-  is on). There are no other users, roles, or SSO.
+  password. It protects the console, `/v1/servers`, `/v1/traffic`,
+  `/v1/alerts`, and `/v1/history` only; `/v1/routes` and `/metrics` stay
+  reachable by anyone who can reach the Gateway (`/v1/routes` lists no
+  endpoints while MCP client authentication is on). There are no other
+  users, roles, or SSO.
 - Audit events (`gateway.audit`) are tamper-evident, not tamper-proof: the
   hash chain detects a removed, reordered, or edited event unless every later
   event is recomputed as well. Ship them out of the cluster to protect them.
