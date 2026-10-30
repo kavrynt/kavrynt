@@ -37,6 +37,14 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - MCP client authentication, on by default with an explicit opt-out for
   trials: the Gateway is an OAuth 2.1 resource server with per-route token
   audiences and Protected Resource Metadata.
+- MCP session affinity: each session goes to the server pod that started it,
+  across Gateway replicas, without shared state.
+- Endpoint scope: an `MCPServer` reaches only its own namespace unless the
+  platform team allows a pair, and only exchanges tokens for listed
+  audiences.
+- Alert notifications (Slack, email, Teams, webhook), Grafana dashboards,
+  and chart NetworkPolicies that make MCP servers reachable only through the
+  Gateway.
 - An opt-in Gateway audience: one token can reach a listed group of MCP
   routes, with policy and audit telling it apart from a per-route token.
 
@@ -47,14 +55,14 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 2. The console signed in through the authorization server.
 3. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
    Cloud ingestion service and an end-to-end test) and usage events.
-4. Protocol-aware routing beyond the request checks, such as sessions that
-   follow a Gateway replica.
-5. Recovery workflows (restoring into a new cluster).
+4. Recovery workflows (restoring registrations into a new cluster).
+5. Diagnostics for testers and support: one command that checks an
+   installation and reports what is wrong, without secrets.
 
 ## Project and community
 
-- Apply to the CNCF Sandbox once client authentication ships and the project
-  has outside maintainers and adopters.
+- Apply to the CNCF Sandbox once the project has outside maintainers and
+  adopters (client authentication has shipped).
 - Grow the maintainer group beyond one organization.
 - Publish an adopters list once there are production or evaluation users who
   agree to be named.

@@ -400,8 +400,9 @@ sent only in the `Authorization` header of its own calls, and explains `401`,
 With `--auth-gateway-audience-routes` (chart:
 `gateway.auth.gatewayAudience.enabled` and `.routes`; SPEC-0031) the listed
 routes also accept a token whose `aud` contains the Gateway audience,
-`resourceURL` exactly, without a trailing slash or path even when
-`resourceURL` was configured with one (the Gateway drops it). An agent that calls many
+`resourceURL` exactly, without a trailing slash even when `resourceURL`
+was configured with one (the Gateway removes it; a `resourceURL` with a
+path is refused at start). An agent that calls many
 servers then needs one audience instead of one per route. It is off by
 default.
 
