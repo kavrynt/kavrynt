@@ -19,4 +19,4 @@
 - [ ] CRD changes are made in both CRD copies and in `api/v1alpha1`
 - [ ] Helm value changes are in `values.schema.json`, the chart README values tables, and `charts/kavrynt/tests/`
 - [ ] Spec status and the `specs/README.md` index are updated, if a spec is involved
-- [ ] Every CodeRabbit comment is answered: fixed, or replied to with the reason it does not apply
+- [ ] CodeRabbit's review of the latest commit has finished, and every finding is verified against the code, fixed when it holds, and replied to on its thread (with the fixing commit, or why it does not apply)

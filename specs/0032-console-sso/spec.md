@@ -66,9 +66,11 @@ lists the missing SSO as a known limitation.
 
 - **SPEC-0032-R03** With SSO on and no valid session, the console MUST
   offer "Sign in with <providerName>". Choosing it MUST redirect to the
-  provider's authorization endpoint, from its metadata and `https` unless
-  the issuer sets `allowHTTP` (otherwise the Gateway MUST refuse to start
-  the sign-in), with `response_type=code`, the
+  provider's authorization endpoint, from its metadata, which MUST be
+  `https` even when the issuer sets `allowHTTP`: the browser reaches it, so
+  `allowHTTP` covers only the Gateway's own requests (metadata, keys, token
+  endpoint). Otherwise the Gateway MUST refuse to start the sign-in. The
+  redirect carries `response_type=code`, the
   configured `client_id`, `redirect_uri`, scopes `openid` plus the
   configured ones, a random `state`, a random `nonce`, and a PKCE `S256`
   `code_challenge`.
@@ -124,8 +126,9 @@ lists the missing SSO as a known limitation.
 - Given a callback with a `state` from another browser, or an ID token with
   another `nonce` or `aud`, or with the client ID and another audience but
   no matching `azp`, then the sign-in is refused (R05, R06).
-- Given an `https` issuer whose metadata names an `http` authorization
-  endpoint, then the console does not redirect to it (R03).
+- Given an issuer whose metadata names an `http` authorization endpoint,
+  with or without `allowHTTP`, then the console does not redirect to it
+  (R03).
 - Given SSO on without `keepAdminLogin`, when someone posts the admin
   password, then they get `404` (R10).
 - Given a refused sign-in, then the Gateway's logs contain its reason and

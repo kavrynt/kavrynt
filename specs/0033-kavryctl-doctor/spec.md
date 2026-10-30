@@ -83,15 +83,16 @@ a Deployment not ready, an install with client authentication off, an
   checks (`id`, `result`, `subject`, `reason`, `fix`, `link`), with stable
   check IDs.
 - **SPEC-0033-R07** The report MUST NOT contain Secret data, tokens,
-  passwords, endpoint URLs, or headers. Condition messages MAY be included:
-  the Operator writes them without endpoints or addresses (SPEC-0027).
+  passwords, endpoint URLs, headers, or condition messages: some messages
+  name the endpoint's host and port (SPEC-0027-R05, R06). Condition
+  reasons, which never hold them, MUST be included.
 - **SPEC-0033-R08** With `--anonymize`, namespaces and `MCPServer` names in
   the report MUST be replaced by the first 12 hex characters of their
   HMAC-SHA256 under a random 32-byte key made for that report, kept only in
   memory, and never written. The same name MUST give the same value within
   one report and unrelated values across reports, so common names such as
   `default` cannot be looked up. Two names that collide MUST be lengthened
-  until they differ. Condition messages MUST be left out.
+  until they differ.
 
 ## Acceptance criteria
 
@@ -109,9 +110,11 @@ a Deployment not ready, an install with client authentication off, an
   Deployment checks are `skipped` naming `list deployments` and the
   `MCPServer` checks still run (R02).
 - Given `--output json --anonymize`, then the output parses as
-  `kavrynt.doctor.v1` and contains no namespace or server name and no
-  condition message, and two runs give `default` different values (R06,
-  R08).
+  `kavrynt.doctor.v1` and contains no namespace or server name, and two
+  runs give `default` different values (R06, R08).
+- Given a server whose endpoint refuses connections, then its discovery
+  check shows the reason `DiscoveryFailed` but not the host and port of the
+  condition message (R07).
 - Given any installation, then no output contains a Secret value, a token,
   or an endpoint URL (R07).
 
@@ -119,9 +122,9 @@ a Deployment not ready, an install with client authentication off, an
 
 `doctor` reads cluster state with the user's own credentials and needs no
 new RBAC. It never reads Secrets, so it cannot leak them. Endpoints are left
-out because they can name internal hosts. Condition messages come from the
-Operator, which never quotes servers or addresses (SPEC-0027); `--anonymize`
-drops them anyway for public reports.
+out because they can name internal hosts, and so are condition messages,
+which name the endpoint's host and port for some failures (SPEC-0027);
+reasons are enough to pick the fix and the runbook.
 
 ## Compatibility
 

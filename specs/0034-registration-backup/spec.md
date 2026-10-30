@@ -50,14 +50,17 @@ evaluations ask how a cluster is rebuilt.
   `metadata.labels`, `metadata.annotations` (without
   `kubectl.kubernetes.io/last-applied-configuration`), and `spec`; nothing
   else, in a stable order (namespace, then name). Every value of
-  `spec.environment` MUST be written as `<redacted>`, since the map is free
-  text that can hold a key, unless `--include-environment` is given, which
-  MUST print a warning that the file then may hold credentials.
+  `spec.environment` MUST be written empty, since the map is free text that
+  can hold a key, and the document MUST carry the annotation
+  `kavrynt.io/redacted-environment` listing those keys, unless
+  `--include-environment` is given, which MUST print a warning that the
+  file then may hold credentials.
 - **SPEC-0034-R02** The file MUST begin with a comment naming the export
-  time, the source context's cluster server, the Operator version (the
+  time, the source kubeconfig context name (never the API server address),
+  the Operator version (the
   image tag of the Operator Deployment in `--release-namespace`, default
-  `kavrynt-system`, or `unknown` when it cannot be read), the redacted
-  `spec.environment` keys per server, and, for each server with
+  `kavrynt-system`, or `unknown` when it cannot be read), and, for each
+  server with
   `spec.credential`, the upstream credentials Secret keys it needs
   (`<namespace>.<name>`, `<namespace>.<name>.origin`). It MUST NOT contain
   Secret data and MUST NOT read Secrets.
@@ -65,15 +68,19 @@ evaluations ask how a cluster is rebuilt.
 
 ### Import
 
-- **SPEC-0034-R04** `kavryctl import FILE` MUST validate every document
-  first and change nothing when any is invalid, when two documents name the
-  same namespace and name, or when a document still holds a `<redacted>`
-  environment value; the message MUST name the document and, for redacted
-  values, the keys to fill in.
+- **SPEC-0034-R04** `kavryctl import FILE` MUST check every document before
+  writing any, and change nothing when any is invalid, when two documents
+  name the same namespace and name, when a document still carries the
+  `kavrynt.io/redacted-environment` annotation (fill in the values, then
+  remove it), or when any document would be refused by R05 or R07. The
+  message MUST name every such document and, for redacted values, the keys
+  to fill in. A server changed by someone else between the check and the
+  write is refused then, and the report names it.
 - **SPEC-0034-R05** For each document, `import` MUST create the
   `MCPServer` when it does not exist, leave it alone when its `spec`,
   labels, and annotations (as exported) are equal, and refuse it when any
-  of them differs, unless `--overwrite` is given, which replaces them. Refused documents MUST be listed, and the exit code MUST be `1`.
+  of them differs, unless `--overwrite` is given, which replaces them.
+  Refused documents MUST be listed, and the exit code MUST be `1`.
 - **SPEC-0034-R06** `--dry-run` MUST report what `import` would create,
   leave, refuse, or overwrite, using server-side dry run, and change
   nothing.
@@ -97,15 +104,17 @@ evaluations ask how a cluster is rebuilt.
   created and the report says the credential server's tools could not be
   discovered (`CredentialUnavailable`) and names its keys (R05, R08).
 - Given an existing server whose `spec.endpoint` differs, then `import`
-  refuses it, changes nothing for it, and exits `1`; with `--overwrite` it
-  replaces it (R05).
+  refuses the whole file before writing anything and exits `1`; with
+  `--overwrite` it replaces that server (R04, R05).
 - Given `--dry-run`, then nothing changes (R06).
 - Given a file with one invalid document, two documents for the same
-  server, or a `<redacted>` environment value, then nothing is applied
-  (R04).
+  server, a document with the `kavrynt.io/redacted-environment`
+  annotation, or one whose server exists with another `spec`, then nothing
+  is applied (R04).
 - Given a server with `spec.environment`, when it is exported without
-  `--include-environment`, then the file holds `<redacted>` for each value
-  and the header names the keys (R01, R02).
+  `--include-environment`, then its values are empty and the annotation
+  lists their keys; a value that is literally `<redacted>` survives an
+  export with `--include-environment` and imports (R01, R04).
 
 ## Security and privacy
 
