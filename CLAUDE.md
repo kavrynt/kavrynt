@@ -253,6 +253,10 @@ the schema and cover template changes in `charts/kavrynt/tests/`.
   and arm64 on `develop` and `main`). Kind e2e runs on pull requests and
   manual runs, in parallel with Go QA. Pull requests that change only
   Markdown, `specs/`, or `docs/` (not Go files) skip the images and the e2e.
+- `.github/workflows/codeql.yml` (same pull requests and pushes, weekly):
+  CodeQL for Go, the console's JavaScript, and the workflows, reported to
+  code scanning. `scorecard.yml` (pushes to `develop`, weekly) reports
+  OpenSSF Scorecard there too.
 - `.github/workflows/release.yml` (tag `v*`): tag must match
   `X.Y.Z-(alpha|beta)[.N]`, be on `main`, and equal the chart version. Publishes
   to GHCR (canonical), mirrors to Docker Hub, Cosign-signs both, builds

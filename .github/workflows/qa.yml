@@ -269,7 +269,7 @@ jobs:
       - name: Install console smoke test
         run: |
           npm ci --prefix test/console-smoke --ignore-scripts --no-audit --no-fund
-          npm exec --prefix test/console-smoke -- playwright install --with-deps chromium-headless-shell
+          test/console-smoke/node_modules/.bin/playwright install --with-deps chromium-headless-shell
 
       - name: Run end-to-end workflow
         env:
