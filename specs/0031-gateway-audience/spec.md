@@ -70,9 +70,12 @@ issue one audience per token cannot serve such an agent at all.
   the token's `aud` contains the route's own URI (also when it contains the
   Gateway audience too), `gateway` when it was accepted for the Gateway
   audience alone.
-- **SPEC-0031-R05** Audit events MUST record the same value.
+- **SPEC-0031-R05** While the Gateway audience is enabled, audit events
+  MUST record the same value; while it is off, they MUST NOT carry the
+  field, so they stay as before (Compatibility).
 - **SPEC-0031-R06** The Gateway MUST log at start, and the console MUST
-  show, that the Gateway audience is enabled and for which routes.
+  show to signed-in users, that the Gateway audience is enabled and for
+  which routes.
 
 ## Acceptance criteria
 

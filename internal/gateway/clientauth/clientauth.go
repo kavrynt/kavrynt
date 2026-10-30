@@ -273,10 +273,10 @@ func (a *Authenticator) ResourceURI(route string) string {
 	return a.resource + "/mcp/" + route
 }
 
-// GatewayAudienceRoutes returns the routes that accept the Gateway audience,
-// empty when it is off (SPEC-0031-R06).
+// GatewayAudienceRoutes returns a copy of the routes that accept the Gateway
+// audience, empty (not nil) when it is off (SPEC-0031-R06).
 func (a *Authenticator) GatewayAudienceRoutes() []string {
-	return slices.Clone(a.gatewayRoutes)
+	return append([]string{}, a.gatewayRoutes...)
 }
 
 // GatewayAudienceEnabled reports whether any route accepts the Gateway

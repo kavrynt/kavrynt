@@ -31,8 +31,9 @@
 - **Visibility (R06).** `--auth-gateway-audience-routes` (comma-separated)
   configures it; the Gateway refuses it without `--auth`. At start the
   Gateway logs a warning with the audience and routes. `GET /v1/session`
-  reports `gatewayAudience` (a list, `[]` when off) with and without the
-  console login; `state.js` reads it, `notice` names the routes, and
+  reports `gatewayAudience` (a list, `[]` when off) to signed-in sessions
+  and when console login is off, never in its `401` to callers without a
+  session; `state.js` reads it, `notice` names the routes, and
   `noticeShown` keeps the notice visible on loopback while it is on.
 - **Chart (R01, R02).** `gateway.auth.gatewayAudience.enabled` and
   `.routes` in the gateway subchart values and schema (entries are route

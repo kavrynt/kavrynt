@@ -395,7 +395,8 @@ sent only in the `Authorization` header of its own calls, and explains `401`,
 With `--auth-gateway-audience-routes` (chart:
 `gateway.auth.gatewayAudience.enabled` and `.routes`; SPEC-0031) the listed
 routes also accept a token whose `aud` contains the Gateway audience,
-`resourceURL` exactly (no trailing slash or path). An agent that calls many
+`resourceURL` exactly, without a trailing slash or path even when
+`resourceURL` was configured with one (the Gateway drops it). An agent that calls many
 servers then needs one audience instead of one per route. It is off by
 default.
 
@@ -408,18 +409,34 @@ default.
   the Gateway audience alone is refused (`401`) on routes the list does not
   cover. Every other check (issuer, signature, time, scopes) still applies.
 - The policy input and audit events carry `audience`: `route` or
-  `gateway`. A policy can deny `gateway` for sensitive routes:
+  `gateway`. A policy can require a route's own audience for sensitive
+  routes. `decision` is a complete rule, so two definitions that both
+  match one call are an evaluation error (denied, but as a failure):
+  exclude the case from the allow rules instead of adding a second
+  `decision`:
 
   ```rego
-  decision := {"allow": false, "reason": "this route needs a token for its own audience"} if {
+  sensitive_route if input.route == {"namespace": "payments", "name": "refunds"}
+
+  default decision := {"allow": false, "reason": "not allowed"}
+
+  refused_audience if {
+      sensitive_route
       input.audience == "gateway"
-      input.route == {"namespace": "payments", "name": "refunds"}
+  }
+
+  decision := {"allow": false, "reason": "this route needs a token for its own audience"} if refused_audience
+
+  decision := {"allow": true} if {
+      not refused_audience
+      input.client_id == "support-agent"
   }
   ```
 
 - The Gateway logs a warning at start naming the audience and the routes,
-  `GET /v1/session` reports them as `gatewayAudience`, and the console's
-  notice names them, also when opened through a port-forward.
+  `GET /v1/session` reports them as `gatewayAudience` to signed-in
+  sessions (and without console login), and the console's notice names
+  them, also when opened through a port-forward.
 
 **Trade-off.** A token for the Gateway audience reaches every listed route,
 so a leaked token reaches all of them. List only what one token should

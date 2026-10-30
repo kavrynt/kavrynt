@@ -23,7 +23,6 @@ import (
 	"net/netip"
 	"os"
 	"path/filepath"
-	"slices"
 	"strconv"
 	"strings"
 	"sync"
@@ -204,7 +203,7 @@ func (a *Authenticator) ReportMCPAuth(enabled bool) {
 // ReportGatewayAudience sets the routes GET /v1/session reports as
 // accepting the Gateway audience (SPEC-0031-R06).
 func (a *Authenticator) ReportGatewayAudience(routes []string) {
-	a.gatewayAudience = slices.Clone(routes)
+	a.gatewayAudience = append([]string{}, routes...)
 }
 
 // ServeHTTP serves /v1/session: GET reports the session, POST signs in, and
@@ -215,7 +214,9 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	case http.MethodGet:
 		s, ok := a.current(r)
 		if !ok {
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth, "gatewayAudience": nonNil(a.gatewayAudience)})
+			// The Gateway audience routes are configuration for signed-in
+			// users only; the login page does not name them.
+			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth})
 			return
 		}
 		writeJSON(w, http.StatusOK, map[string]any{
@@ -224,7 +225,7 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 			"expiresAt": time.Unix(s.Expires, 0).UTC().Format(time.RFC3339),
 			"mcpAuth":   a.mcpAuth,
 			// Routes reachable with one token for the Gateway audience.
-			"gatewayAudience": nonNil(a.gatewayAudience),
+			"gatewayAudience": append([]string{}, a.gatewayAudience...),
 		})
 	case http.MethodPost:
 		a.login(w, r)
@@ -429,12 +430,4 @@ func writeJSON(w http.ResponseWriter, status int, body any) {
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(status)
 	_ = json.NewEncoder(w).Encode(body)
-}
-
-// nonNil encodes a missing list as [] rather than null.
-func nonNil(list []string) []string {
-	if list == nil {
-		return []string{}
-	}
-	return list
 }

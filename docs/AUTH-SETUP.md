@@ -198,7 +198,8 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --reuse-values \
 ```
 
 Those routes then also accept a token whose `aud` is `resourceURL` itself,
-for example `https://mcp.example.com`. With Keycloak, that is one audience
+for example `https://mcp.example.com`, without a trailing slash even if
+you configured `resourceURL` with one. With Keycloak, that is one audience
 mapper on the agent's client with that value, instead of one per route.
 Routes outside the list still need their own audience.
 

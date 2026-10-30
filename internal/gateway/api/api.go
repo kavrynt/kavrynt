@@ -476,7 +476,7 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 	}
 	gatewayAudience := []string{}
 	if h.clientAuth != nil {
-		gatewayAudience = append(gatewayAudience, h.clientAuth.GatewayAudienceRoutes()...)
+		gatewayAudience = h.clientAuth.GatewayAudienceRoutes()
 	}
 	writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "mcpAuth": h.clientAuth != nil, "gatewayAudience": gatewayAudience})
 }

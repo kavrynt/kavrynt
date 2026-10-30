@@ -118,6 +118,9 @@ start_gateway_port_forward() {
   local log_file="${TEMP_DIR}/gateway-port-forward.log"
   local port=""
   local i
+  # Create the log before the background kubectl does, or the first read
+  # can find no file and stop the script under set -e.
+  : >"${log_file}"
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
     port-forward --address 127.0.0.1 service/kavrynt-gateway :8080 \
     >"${log_file}" 2>&1 &
@@ -140,6 +143,7 @@ start_gateway_port_forward() {
 start_port_forward() {
   local namespace=$1 service=$2 target=$3 variable=$4 log_file port="" i
   log_file="${TEMP_DIR}/${service}-port-forward.log"
+  : >"${log_file}"
   kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" \
     port-forward --address 127.0.0.1 "service/${service}" ":${target}" >"${log_file}" 2>&1 &
   PORT_FORWARD_PIDS+=("$!")

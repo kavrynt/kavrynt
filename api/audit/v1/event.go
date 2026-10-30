@@ -27,8 +27,9 @@ const (
 	DecisionUnavailable     = "unavailable"
 )
 
-// Event is one audit event. Every field is always present; fields that do
-// not apply are empty (SPEC-0013-R03). It never holds tool arguments,
+// Event is one audit event. Every field is present, empty when it does not
+// apply (SPEC-0013-R03), except FilteredTools and Audience, which are left
+// out when empty so that events without them hash as before. It never holds tool arguments,
 // results, bodies, tokens, credentials, cookies, or headers (R04).
 //
 // The canonical form is this struct encoded by encoding/json without Hash:
