@@ -1,5 +1,6 @@
 # Allows every call except tool calls that may be destructive, which only the
-# clients in ops_clients may make.
+# clients in ops_clients may make. A client ID is unique only within its
+# issuer, so each entry names both.
 #
 # Fails closed: a tool counts as safe only when the server's last discovery
 # of the current spec reported it read-only, or reported destructiveHint
@@ -16,7 +17,9 @@
 # read-only. Decide on them only for servers whose code you trust.
 package kavrynt.authz
 
-ops_clients := {"ops-agent"}
+ops_clients := {
+	{"issuer": "https://login.example.com", "client_id": "ops-agent"},
+}
 
 default decision := {"allow": false, "reason": "this tool may be destructive; only ops clients may call it"}
 
@@ -39,5 +42,5 @@ decision := {"allow": true} if not may_be_destructive
 
 decision := {"allow": true} if {
 	may_be_destructive
-	input.client_id in ops_clients
+	{"issuer": input.issuer, "client_id": input.client_id} in ops_clients
 }
