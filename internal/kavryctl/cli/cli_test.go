@@ -3,6 +3,8 @@ package cli
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -268,10 +270,36 @@ func TestAuditVerify(t *testing.T) {
 	if code := runAudit([]string{"verify"}, strings.NewReader(tampered), &stdout, &stderr); code != 1 || !strings.Contains(stdout.String(), "BREAK instance gw/1 seq 2") || !strings.Contains(stdout.String(), "3 events from 1 instance: 1 break\n") {
 		t.Fatalf("tampered log: exit %d, %s", code, stdout.String())
 	}
+	// Verifies SPEC-0035-R05: a clean run says how many events carried
+	// fields this version does not know.
+	newer := strings.Replace(lines[0], `"issuer":"",`, `"issuer":"","future_field":"x",`, 1)
+	newer = rehashLine(t, newer, auditv1.GenesisHash)
+	stdout.Reset()
+	if code := runAudit([]string{"verify"}, strings.NewReader(newer+"\n"), &stdout, &stderr); code != 0 ||
+		!strings.Contains(stdout.String(), "1 event from 1 instance: every chain verifies") ||
+		!strings.Contains(stdout.String(), "1 event carried fields this kavryctl does not know") {
+		t.Fatalf("newer event: exit %d, %s %s", code, stdout.String(), stderr.String())
+	}
+	stdout.Reset()
+	if code := Execute([]string{"audit", "verify", good}, &stdout, &stderr); code != 0 || strings.Contains(stdout.String(), "does not know") {
+		t.Fatalf("current events reported unknown fields: %s", stdout.String())
+	}
 	if code := runAudit([]string{"verify"}, strings.NewReader("no events here\n"), &stdout, &stderr); code != 1 {
 		t.Fatal("a log without events verified")
 	}
 	if code := Execute([]string{"audit"}, &stdout, &stderr); code != 2 {
 		t.Fatal("audit without verify accepted")
 	}
+}
+
+// rehashLine recomputes the hash of a written line, as the Gateway that
+// wrote it would have, over the line without its hash member.
+func rehashLine(t *testing.T, line, prev string) string {
+	t.Helper()
+	body, _, ok := strings.Cut(line, `,"hash":"`)
+	if !ok {
+		t.Fatalf("no hash member: %s", line)
+	}
+	sum := sha256.Sum256([]byte(prev + body + "}"))
+	return body + `,"hash":"` + hex.EncodeToString(sum[:]) + `"}`
 }
