@@ -69,7 +69,7 @@ spec:
           command:
             - npx
             - -y
-            - supergateway@3
+            - supergateway@4
             - --stdio
             - npx -y @modelcontextprotocol/server-filesystem /data
             - --outputTransport
@@ -79,6 +79,10 @@ spec:
             - --streamableHttpPath
             - /mcp
             - --stateful
+            # End sessions idle for 30 minutes, so clients that leave
+            # without DELETE do not keep stdio processes running.
+            - --sessionTimeout
+            - "1800000"
           ports:
             - containerPort: 8000
           resources:
