@@ -152,7 +152,9 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   Secret RBAC.
 - Opt-in tool authorization policy (`gateway.policy`, SPEC-0012): OPA embedded
   in the Gateway evaluates `data.kavrynt.authz.decision` from a mounted
-  ConfigMap before forwarding; anything but `{"allow": true}` denies. With
+  ConfigMap before forwarding; anything but `{"allow": true}` denies. A
+  denied JSON-RPC request gets `200` with the JSON-RPC error so MCP clients
+  see the reason (SPEC-0036); other denied requests get `403`. With
   `gateway.policy.filterToolsList` (SPEC-0016), `tools/list` answers list
   only the tools the policy lets that caller call, failing closed to an
   empty list. The input carries the called tool's recorded MCP behavior

@@ -78,7 +78,8 @@ destructive tool off limits, or allow read-only methods only.
   body carrying the request `id` (when known) and the message
   `denied by policy` followed by the policy's `reason` string (at most 200
   characters, control characters removed), MUST NOT reach the MCP server,
-  and MUST be recorded with outcome `denied`.
+  and MUST be recorded with outcome `denied`. Superseded by SPEC-0036 for
+  JSON-RPC requests, which get `200` with that error.
 
 ### Classification
 

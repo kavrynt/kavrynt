@@ -61,7 +61,8 @@ func events(t *testing.T, w *audit.Writer, out *lockedBuffer) []auditv1.Event {
 	return list
 }
 
-// Verifies SPEC-0013-R01, SPEC-0013-R03, SPEC-0013-R04, and SPEC-0013-R05.
+// Verifies SPEC-0013-R01, SPEC-0013-R03, SPEC-0013-R04, SPEC-0013-R05, and
+// SPEC-0036-R03 (a denial records the status sent).
 func TestEveryDecisionIsAudited(t *testing.T) {
 	handler, _, mint := authHandler(t, true)
 	enablePolicy(t, handler, testPolicy)
@@ -72,7 +73,7 @@ func TestEveryDecisionIsAudited(t *testing.T) {
 	denied := callRoute(handler, "/mcp/team-a.demo", mint(map[string]any{"client_id": "etl"}))
 	callRoute(handler, "/mcp/team-a.demo", "")
 	callRoute(handler, "/mcp/team-z.unknown", mint(map[string]any{"aud": authResource + "/mcp/team-z.unknown"}))
-	if allowed.Code != http.StatusOK || denied.Code != http.StatusForbidden {
+	if allowed.Code != http.StatusOK || denied.Code != http.StatusOK || !strings.Contains(denied.Body.String(), "denied by policy") {
 		t.Fatalf("calls: %d, %d", allowed.Code, denied.Code)
 	}
 
@@ -90,7 +91,7 @@ func TestEveryDecisionIsAudited(t *testing.T) {
 		first.Outcome != "ok" || first.Status != 200 || first.PolicyRevision == "" || first.Instance != "gw-test/1" {
 		t.Fatalf("allowed event = %+v", first)
 	}
-	if list[1].Decision != auditv1.DecisionDeny || list[1].ClientID != "etl" || list[1].Reason != "tool not allowed for client" || list[1].Status != 403 {
+	if list[1].Decision != auditv1.DecisionDeny || list[1].ClientID != "etl" || list[1].Reason != "tool not allowed for client" || list[1].Status != 200 {
 		t.Fatalf("denied event = %+v", list[1])
 	}
 	if list[2].Decision != auditv1.DecisionUnauthenticated || list[2].Subject != "" || list[2].Status != 401 {

@@ -50,7 +50,9 @@ func rpc(h *Handler, body string, headers map[string]string) *httptest.ResponseR
 	return post(h, body, headers)
 }
 
-// Verifies SPEC-0012-R07 and SPEC-0012-R08.
+// Verifies SPEC-0012-R07, SPEC-0012-R08, SPEC-0036-R01, and SPEC-0036-R03:
+// a denied JSON-RPC request gets its error with 200, never reaches the
+// server, and is counted as denied.
 func TestPolicyDeniesWithAJSONRPCError(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
 	enablePolicy(t, handler, testPolicy)
@@ -59,8 +61,8 @@ func TestPolicyDeniesWithAJSONRPCError(t *testing.T) {
 		t.Fatalf("allowed call: %d after %d upstream calls", rr.Code, *calls)
 	}
 	rr := rpc(handler, `{"jsonrpc":"2.0","id":7,"method":"tools/call","params":{"name":"delete_all","arguments":{"x":"secret-argument"}}}`, nil)
-	if rr.Code != http.StatusForbidden || *calls != 1 {
-		t.Fatalf("denied call: %d after %d upstream calls, want 403 and no call", rr.Code, *calls)
+	if rr.Code != http.StatusOK || *calls != 1 || rr.Header().Get("Content-Type") != "application/json" {
+		t.Fatalf("denied call: %d %q after %d upstream calls, want 200 JSON and no call", rr.Code, rr.Header().Get("Content-Type"), *calls)
 	}
 	var answer struct {
 		JSONRPC string          `json:"jsonrpc"`
@@ -146,8 +148,8 @@ func TestPolicyDecidesOnTheVerifiedCaller(t *testing.T) {
 	if rr := callRoute(handler, "/mcp/team-a.demo", mint(nil)); rr.Code != http.StatusOK || len(*received) != 1 {
 		t.Fatalf("support-agent: %d", rr.Code)
 	}
-	if rr := callRoute(handler, "/mcp/team-a.demo", mint(map[string]any{"client_id": "etl"})); rr.Code != http.StatusForbidden || len(*received) != 1 {
-		t.Fatalf("etl: %d, want 403", rr.Code)
+	if rr := callRoute(handler, "/mcp/team-a.demo", mint(map[string]any{"client_id": "etl"})); rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), "denied by policy") || len(*received) != 1 {
+		t.Fatalf("etl: %d %s, want a denial", rr.Code, rr.Body.String())
 	}
 }
 
@@ -176,5 +178,39 @@ func TestPolicyRefusesAmbiguousMessages(t *testing.T) {
 	// Unrelated members, in any case, stay allowed.
 	if rr := rpc(handler, `{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{},"_meta":{}},"Extra":1}`, nil); rr.Code != http.StatusOK || *calls != 1 {
 		t.Fatalf("unambiguous call: %d after %d upstream calls", rr.Code, *calls)
+	}
+}
+
+// Verifies SPEC-0036-R02: what carries no JSON-RPC request (notifications,
+// responses, GET, DELETE) is still refused with 403; a request gets 200.
+func TestDenialsWithoutARequestStay403(t *testing.T) {
+	handler, calls := demoHandler(t, okResponse)
+	enablePolicy(t, handler, `package kavrynt.authz
+
+default decision := {"allow": false, "reason": "closed"}
+`)
+	for name, tc := range map[string]struct {
+		method, body string
+		want         int
+	}{
+		"request":      {http.MethodPost, `{"jsonrpc":"2.0","id":3,"method":"tools/list","params":{}}`, http.StatusOK},
+		"notification": {http.MethodPost, `{"jsonrpc":"2.0","method":"notifications/initialized"}`, http.StatusForbidden},
+		"response":     {http.MethodPost, `{"jsonrpc":"2.0","id":3,"result":{}}`, http.StatusForbidden},
+		"event stream": {http.MethodGet, "", http.StatusForbidden},
+		"end session":  {http.MethodDelete, "", http.StatusForbidden},
+	} {
+		req := httptest.NewRequest(tc.method, "/mcp/team-a.demo", strings.NewReader(tc.body))
+		if tc.method == http.MethodPost {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		req.Header.Set("Accept", "application/json, text/event-stream")
+		rr := httptest.NewRecorder()
+		handler.ServeHTTP(rr, req)
+		if rr.Code != tc.want || !strings.Contains(rr.Body.String(), "denied by policy: closed") {
+			t.Errorf("%s: %d %s, want %d with the reason", name, rr.Code, rr.Body.String(), tc.want)
+		}
+	}
+	if *calls != 0 {
+		t.Fatalf("%d upstream calls, want none", *calls)
 	}
 }
