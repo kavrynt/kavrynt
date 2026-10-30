@@ -145,15 +145,29 @@ func (c Config) Validate() error {
 // namespace ends at its first dot.
 var gatewayAudienceEntry = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?\.(\*|[a-z0-9]([-a-z0-9.]*[a-z0-9])?)$`)
 
-// gatewayAudienceCovers reports whether entries list route.
-func gatewayAudienceCovers(entries []string, route string) bool {
-	namespace, _, _ := strings.Cut(route, ".")
+// gatewayAudience is the route list, indexed once at start.
+type gatewayAudience struct {
+	entries    []string
+	routes     map[string]bool
+	namespaces map[string]bool
+}
+
+func newGatewayAudience(entries []string) gatewayAudience {
+	g := gatewayAudience{entries: slices.Clone(entries), routes: map[string]bool{}, namespaces: map[string]bool{}}
 	for _, entry := range entries {
-		if entry == route || entry == namespace+".*" {
-			return true
+		if namespace, ok := strings.CutSuffix(entry, ".*"); ok {
+			g.namespaces[namespace] = true
+		} else {
+			g.routes[entry] = true
 		}
 	}
-	return false
+	return g
+}
+
+// covers reports whether the list names route or its namespace.
+func (g gatewayAudience) covers(route string) bool {
+	namespace, _, _ := strings.Cut(route, ".")
+	return g.routes[route] || g.namespaces[namespace]
 }
 
 var secretKeyName = regexp.MustCompile(`^[-._a-zA-Z0-9]{1,253}$`)
@@ -220,7 +234,7 @@ type Authenticator struct {
 	issuers        map[string]*keySet
 	issuerList     []string
 	requiredScopes []string
-	gatewayRoutes  []string
+	gateway        gatewayAudience
 	now            func() time.Time
 	logger         *slog.Logger
 
@@ -249,7 +263,7 @@ func New(cfg Config, transport http.RoundTripper, logger *slog.Logger) (*Authent
 		resource:       strings.TrimRight(cfg.ResourceURL, "/"),
 		issuers:        map[string]*keySet{},
 		requiredScopes: slices.Clone(cfg.RequiredScopes),
-		gatewayRoutes:  slices.Clone(cfg.GatewayAudienceRoutes),
+		gateway:        newGatewayAudience(cfg.GatewayAudienceRoutes),
 		now:            time.Now,
 		logger:         logger,
 		secretDir:      cfg.TokenExchangeSecretDir,
@@ -276,13 +290,13 @@ func (a *Authenticator) ResourceURI(route string) string {
 // GatewayAudienceRoutes returns a copy of the routes that accept the Gateway
 // audience, empty (not nil) when it is off (SPEC-0031-R06).
 func (a *Authenticator) GatewayAudienceRoutes() []string {
-	return append([]string{}, a.gatewayRoutes...)
+	return append([]string{}, a.gateway.entries...)
 }
 
 // GatewayAudienceEnabled reports whether any route accepts the Gateway
 // audience.
 func (a *Authenticator) GatewayAudienceEnabled() bool {
-	return len(a.gatewayRoutes) > 0
+	return len(a.gateway.entries) > 0
 }
 
 // MetadataPath is the path of a route's Protected Resource Metadata.
@@ -378,7 +392,7 @@ func (a *Authenticator) Authenticate(r *http.Request, route string) (Identity, *
 	switch {
 	case verified.Audience.Contains(a.ResourceURI(route)):
 		audience = AudienceRoute
-	case verified.Audience.Contains(a.resource) && gatewayAudienceCovers(a.gatewayRoutes, route):
+	case verified.Audience.Contains(a.resource) && a.gateway.covers(route):
 		audience = AudienceGateway
 	default:
 		return a.invalid(route, jwt.ErrInvalidAudience.Error())

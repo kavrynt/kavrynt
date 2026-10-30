@@ -22,7 +22,7 @@ func TestGatewayAudienceIsOffByDefault(t *testing.T) {
 // and ignores the list, and the identity says which audience was used.
 func TestGatewayAudienceReachesListedRoutes(t *testing.T) {
 	env := newEnv(t)
-	env.auth.gatewayRoutes = []string{"team-a.*", "team-c.reports"}
+	env.auth.gateway = newGatewayAudience([]string{"team-a.*", "team-c.reports"})
 	gateway := env.key.sign(t, env.claims(map[string]any{"aud": testResource}))
 	billing := testResource + "/mcp/team-b.billing"
 	both := env.key.sign(t, env.claims(map[string]any{"aud": []string{testResource, billing}}))
@@ -69,7 +69,7 @@ func TestGatewayAudienceReachesListedRoutes(t *testing.T) {
 // such as the required scopes.
 func TestGatewayAudienceKeepsOtherChecks(t *testing.T) {
 	env := newEnv(t)
-	env.auth.gatewayRoutes = []string{"team-a.*"}
+	env.auth.gateway = newGatewayAudience([]string{"team-a.*"})
 	token := env.key.sign(t, env.claims(map[string]any{"aud": testResource, "scope": "other"}))
 	_, refusal := env.auth.Authenticate(request(token), testRoute)
 	wantRefusal(t, refusal, http.StatusForbidden, "insufficient_scope")
