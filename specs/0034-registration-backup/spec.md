@@ -49,22 +49,31 @@ evaluations ask how a cluster is rebuilt.
   holding `apiVersion`, `kind`, `metadata.name`, `metadata.namespace`,
   `metadata.labels`, `metadata.annotations` (without
   `kubectl.kubernetes.io/last-applied-configuration`), and `spec`; nothing
-  else, in a stable order (namespace, then name).
+  else, in a stable order (namespace, then name). Every value of
+  `spec.environment` MUST be written as `<redacted>`, since the map is free
+  text that can hold a key, unless `--include-environment` is given, which
+  MUST print a warning that the file then may hold credentials.
 - **SPEC-0034-R02** The file MUST begin with a comment naming the export
-  time, the source context's cluster server, the Operator version, and,
-  for each server with `spec.credential`, the upstream credentials Secret
-  keys it needs (`<namespace>.<name>`, `<namespace>.<name>.origin`). It
-  MUST NOT contain Secret data and MUST NOT read Secrets.
+  time, the source context's cluster server, the Operator version (the
+  image tag of the Operator Deployment in `--release-namespace`, default
+  `kavrynt-system`, or `unknown` when it cannot be read), the redacted
+  `spec.environment` keys per server, and, for each server with
+  `spec.credential`, the upstream credentials Secret keys it needs
+  (`<namespace>.<name>`, `<namespace>.<name>.origin`). It MUST NOT contain
+  Secret data and MUST NOT read Secrets.
 - **SPEC-0034-R03** Every document MUST pass `kavryctl validate`.
 
 ### Import
 
 - **SPEC-0034-R04** `kavryctl import FILE` MUST validate every document
-  first and change nothing when any is invalid.
+  first and change nothing when any is invalid, when two documents name the
+  same namespace and name, or when a document still holds a `<redacted>`
+  environment value; the message MUST name the document and, for redacted
+  values, the keys to fill in.
 - **SPEC-0034-R05** For each document, `import` MUST create the
-  `MCPServer` when it does not exist, leave it alone when its `spec` is
-  equal, and refuse it when its `spec` differs, unless `--overwrite` is
-  given. Refused documents MUST be listed, and the exit code MUST be `1`.
+  `MCPServer` when it does not exist, leave it alone when its `spec`,
+  labels, and annotations (as exported) are equal, and refuse it when any
+  of them differs, unless `--overwrite` is given, which replaces them. Refused documents MUST be listed, and the exit code MUST be `1`.
 - **SPEC-0034-R06** `--dry-run` MUST report what `import` would create,
   leave, refuse, or overwrite, using server-side dry run, and change
   nothing.
@@ -91,20 +100,31 @@ evaluations ask how a cluster is rebuilt.
   refuses it, changes nothing for it, and exits `1`; with `--overwrite` it
   replaces it (R05).
 - Given `--dry-run`, then nothing changes (R06).
-- Given a file with one invalid document, then nothing is applied (R04).
+- Given a file with one invalid document, two documents for the same
+  server, or a `<redacted>` environment value, then nothing is applied
+  (R04).
+- Given a server with `spec.environment`, when it is exported without
+  `--include-environment`, then the file holds `<redacted>` for each value
+  and the header names the keys (R01, R02).
 
 ## Security and privacy
 
 The export holds endpoints and labels, which can name internal services;
 the documentation says to store it like other cluster configuration. It
-never holds Secret data, and neither command reads Secrets. `import` applies
-untrusted files only after the same validation as `kavryctl register`, and
-admission (CRD validation, endpoint scope SPEC-0029) still applies.
+never holds Secret data, and neither command reads Secrets.
+`spec.environment` values are redacted by default because the API lets
+them hold plain-text keys. `import` applies untrusted files only after the
+same validation as `kavryctl register`, and CRD validation still applies at
+admission. Endpoint scope (SPEC-0029) is checked by the Operator, not at
+admission: an imported server whose endpoint is out of scope is created
+and stays not `Ready` with `EndpointNotAllowed`, which R08 reports.
 
 ## Compatibility
 
 New `kavryctl` commands; no CRD or chart change. `import` uses the user's
-own RBAC (`create`, `get`, `update` on `mcpservers`).
+own RBAC (`create`, `get`, `update` on `mcpservers`); `export` needs `list`
+on `mcpservers` and, for the Operator version, `get` on deployments in the
+release namespace.
 
 ## Documentation
 

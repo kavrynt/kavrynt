@@ -55,7 +55,9 @@ lists the missing SSO as a known limitation.
   without `issuer`, `clientID`, `clientSecret` (a Secret name and key in the
   release namespace), `redirectURL`, and at least one of `allowedSubjects`
   or `allowedGroups`. `issuer` and `redirectURL` MUST be `https`, except
-  `issuer` with `allowHTTP: true`, as in SPEC-0006-R20.
+  `issuer` with `allowHTTP: true`, as in SPEC-0006-R20. `providerName`
+  (default `your identity provider`) names the provider on the sign-in
+  button.
 - **SPEC-0032-R02** The Gateway MUST read the client secret from the
   kubelet-mounted Secret, never from an argument or environment variable,
   and MUST NOT get RBAC on Secrets.
@@ -63,8 +65,10 @@ lists the missing SSO as a known limitation.
 ### Sign-in
 
 - **SPEC-0032-R03** With SSO on and no valid session, the console MUST
-  offer "Sign in with <provider name>". Choosing it MUST redirect to the
-  provider's authorization endpoint with `response_type=code`, the
+  offer "Sign in with <providerName>". Choosing it MUST redirect to the
+  provider's authorization endpoint, from its metadata and `https` unless
+  the issuer sets `allowHTTP` (otherwise the Gateway MUST refuse to start
+  the sign-in), with `response_type=code`, the
   configured `client_id`, `redirect_uri`, scopes `openid` plus the
   configured ones, a random `state`, a random `nonce`, and a PKCE `S256`
   `code_challenge`.
@@ -76,11 +80,13 @@ lists the missing SSO as a known limitation.
   or mismatched `state`, a provider error, and a missing code. It MUST
   exchange the code at the provider's token endpoint with
   `client_secret_basic` and the PKCE verifier, through the egress guard.
-- **SPEC-0032-R06** The Gateway MUST verify the ID token as in
-  SPEC-0006-R08 (asymmetric algorithms only, key from the issuer's key set,
-  `iss` exact, `exp`, `iat` with 60 s leeway), and additionally that `aud`
-  contains the client ID and `nonce` matches. Any failure MUST refuse the
-  sign-in.
+- **SPEC-0032-R06** The Gateway MUST verify the ID token's signature,
+  issuer, and times with the rules of SPEC-0006-R08 (asymmetric algorithms
+  only, key from the issuer's key set, `iss` exact, `exp` and `iat` with
+  60 s leeway), but not its audience rule. Instead `aud` MUST contain the
+  client ID; when `aud` has other values too, `azp` MUST equal the client
+  ID (OpenID Connect Core 3.1.3.7). `nonce` MUST match. Any failure MUST
+  refuse the sign-in.
 - **SPEC-0032-R07** A verified user MUST get a session only when their
   `sub` is in `allowedSubjects` or a value of the configured groups claim
   (default `groups`) is in `allowedGroups`. Others MUST get `403` with a
@@ -109,13 +115,17 @@ lists the missing SSO as a known limitation.
 
 - Given default values, then the console uses the `admin` login as today
   (R01).
-- Given SSO with `allowedGroups: [platform]` and a user in `platform`, when
-  they choose "Sign in with Keycloak" and authenticate, then they return to
+- Given SSO with `providerName: Keycloak`, `allowedGroups: [platform]`, and
+  a user in `platform`, when they choose "Sign in with Keycloak" and
+  authenticate, then they return to
   the console signed in under their username (R03 to R08, R11).
 - Given a user in no listed group, when they authenticate, then they get
   `403` and no session (R07).
 - Given a callback with a `state` from another browser, or an ID token with
-  another `nonce` or `aud`, then the sign-in is refused (R05, R06).
+  another `nonce` or `aud`, or with the client ID and another audience but
+  no matching `azp`, then the sign-in is refused (R05, R06).
+- Given an `https` issuer whose metadata names an `http` authorization
+  endpoint, then the console does not redirect to it (R03).
 - Given SSO on without `keepAdminLogin`, when someone posts the admin
   password, then they get `404` (R10).
 - Given a refused sign-in, then the Gateway's logs contain its reason and

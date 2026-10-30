@@ -86,9 +86,12 @@ a Deployment not ready, an install with client authentication off, an
   passwords, endpoint URLs, or headers. Condition messages MAY be included:
   the Operator writes them without endpoints or addresses (SPEC-0027).
 - **SPEC-0033-R08** With `--anonymize`, namespaces and `MCPServer` names in
-  the report MUST be replaced by stable short hashes (the same name gives
-  the same hash within one report), and condition messages MUST be left
-  out.
+  the report MUST be replaced by the first 12 hex characters of their
+  HMAC-SHA256 under a random 32-byte key made for that report, kept only in
+  memory, and never written. The same name MUST give the same value within
+  one report and unrelated values across reports, so common names such as
+  `default` cannot be looked up. Two names that collide MUST be lengthened
+  until they differ. Condition messages MUST be left out.
 
 ## Acceptance criteria
 
@@ -107,7 +110,8 @@ a Deployment not ready, an install with client authentication off, an
   `MCPServer` checks still run (R02).
 - Given `--output json --anonymize`, then the output parses as
   `kavrynt.doctor.v1` and contains no namespace or server name and no
-  condition message (R06, R08).
+  condition message, and two runs give `default` different values (R06,
+  R08).
 - Given any installation, then no output contains a Secret value, a token,
   or an endpoint URL (R07).
 
