@@ -224,47 +224,39 @@ kavrynt-operator
 
 ## Try the complete product loop
 
-The following smoke test deploys an HTTP echo workload, registers it as an
-`MCPServer`, and reaches it through Kavrynt Gateway. The echo workload verifies
-routing; it is not a full MCP implementation.
+[`examples/try/sample-mcp-server.yaml`](examples/try/sample-mcp-server.yaml)
+runs a small MCP server in a new `kavrynt-try` namespace, with two tools:
+`echo`, and `admin_reset`, a harmless stand-in for a dangerous tool. It runs
+on the public `python` image, so nothing needs building, and it registers
+itself as an `MCPServer`. The full walkthrough, including policy and audit,
+is [docs/TESTING.md](docs/TESTING.md).
 
-### 1. Deploy a test backend
-
-```bash
-kubectl create deployment example-mcp-server \
-  --image=hashicorp/http-echo:1.0 \
-  -- /http-echo -listen=:8080 -text='{"mock":true,"service":"example-mcp-server"}'
-
-kubectl expose deployment example-mcp-server \
-  --port=8080 \
-  --target-port=8080
-
-kubectl rollout status deployment/example-mcp-server --timeout=120s
-```
-
-### 2. Register it through Kubernetes
+### 1. Deploy and register the sample server
 
 ```bash
-kubectl apply -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
-kubectl wait mcpserver/example-mcp-server --for=condition=Ready --timeout=60s
-
-kubectl get mcpservers
-kubectl describe mcpserver example-mcp-server
+kubectl apply -f https://raw.githubusercontent.com/kavrynt/kavrynt/develop/examples/try/sample-mcp-server.yaml
+kubectl -n kavrynt-try rollout status deployment/sample-mcp-server --timeout=180s
+kubectl -n kavrynt-try wait mcpserver/sample --for=condition=Ready --timeout=60s
+kubectl -n kavrynt-try wait mcpserver/sample --for=condition=ToolsDiscovered --timeout=120s
+kubectl get mcpservers -A
 ```
 
-The Operator sets the `Ready` condition once the spec is valid and uses the
-`http` transport. The Gateway route is namespace-qualified: the example becomes
-`default.example-mcp-server`, so equal server names in other namespaces remain
-distinct.
+The Operator sets `Ready` once the spec is valid and routable, and
+`ToolsDiscovered` once it has listed the server's tools. The Gateway route is
+namespace-qualified: the server becomes `kavrynt-try.sample`, so equal server
+names in other namespaces remain distinct.
 
-### 3. Inspect registrations
+### 2. Inspect registrations
 
 ```bash
 kavryctl list -A
-kavryctl inspect -n default example-mcp-server
+kavryctl inspect -n kavrynt-try sample
+kubectl -n kavrynt-try get mcpserver sample -o jsonpath='{.status.tools[*].name}'; echo
 ```
 
-### 4. Route through Gateway
+The last command prints `echo admin_reset`.
+
+### 3. Call tools through the Gateway
 
 ```bash
 kubectl port-forward \
@@ -272,22 +264,24 @@ kubectl port-forward \
   service/kavrynt-gateway 18080:8080
 ```
 
-In another terminal:
+In another terminal (these calls carry no token, so they work when you
+installed with `gateway.auth.enabled=false`; with MCP client authentication
+on, add `-H "Authorization: Bearer $TOKEN"`, see
+[docs/AUTH-SETUP.md](docs/AUTH-SETUP.md)):
 
 ```bash
+GW=http://localhost:18080/mcp/kavrynt-try.sample
 curl -fsS http://localhost:18080/readyz
-curl -fsS http://localhost:18080/v1/routes
-curl -fsS http://localhost:18080/mcp/default.example-mcp-server
+curl -s -X POST "$GW" -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2025-06-18' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}'
+curl -s -X POST "$GW" -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2025-06-18' \
+  --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo","arguments":{"message":"hello from Kavrynt"}}}'
 ```
 
-The final request travels through Gateway to the registered workload and should
-return:
+The first call lists `echo` and `admin_reset`; the second answers with
+`hello from Kavrynt`, through the Gateway to the sample server.
 
-```json
-{"mock":true,"service":"example-mcp-server"}
-```
-
-### 5. Open the console
+### 4. Open the console
 
 With the port-forward running, open <http://localhost:18080/ui/> and sign in
 as `admin`. Like Argo CD, the chart generated the password into a Secret:
@@ -309,12 +303,10 @@ The login protects the console only: MCP routes stay open unless MCP client
 authentication (`gateway.auth`) is on.
 Details: [Gateway console](docs/components/gateway/README.md#console).
 
-### 6. Clean up the example
+### 5. Clean up the example
 
 ```bash
-kubectl delete -f config/samples/kavrynt_v1alpha1_mcpserver.yaml
-kubectl delete service example-mcp-server
-kubectl delete deployment example-mcp-server
+kubectl delete namespace kavrynt-try
 ```
 
 ## Run the demo
