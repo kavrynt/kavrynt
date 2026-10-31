@@ -29,8 +29,9 @@ type Summary struct {
 	Events    int
 	Instances int
 	Breaks    []Break
-	// UnknownFields counts events with members this version does not know:
-	// their hashes cover them, but they were not interpreted (SPEC-0035-R05).
+	// UnknownFields counts verified events with members this version does
+	// not know: their hashes cover them, but they were not interpreted
+	// (SPEC-0035-R05).
 	UnknownFields int
 }
 
@@ -139,13 +140,17 @@ func Verify(r io.Reader) (Summary, error) {
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "prev_hash does not match the previous event"})
 		}
 		unknown := unknownFields(line)
-		if len(unknown) > 0 {
-			summary.UnknownFields++
-		}
 		// The written line first, then the known fields re-encoded, for
-		// lines a collector rewrote (SPEC-0035-R02).
+		// lines a collector rewrote (SPEC-0035-R02). Re-encoding covers only
+		// the known fields, so a line with others must verify as written: a
+		// member added after the Gateway hashed the line is not covered
+		// (SPEC-0035-R06).
 		switch {
-		case verifiesAsWritten(line, e), ComputeHash(e) == e.Hash:
+		case verifiesAsWritten(line, e):
+			if len(unknown) > 0 {
+				summary.UnknownFields++
+			}
+		case len(unknown) == 0 && ComputeHash(e) == e.Hash:
 		case len(unknown) > 0:
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, unknownProblem(unknown)})
 		default:

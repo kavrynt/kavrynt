@@ -196,3 +196,22 @@ func TestUnknownFieldsAreNotCalledAltered(t *testing.T) {
 		t.Fatalf("edited current event: %+v", s.Breaks)
 	}
 }
+
+// Verifies SPEC-0035-R06: a member added to a written line is a break even
+// though the known fields still re-encode to the hash, because nothing
+// covers the added member; a rewritten newer line is a break too.
+func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
+	current := chain("gw-a/1", 2)
+	first, _ := json.Marshal(current[0])
+	second, _ := json.Marshal(current[1])
+	injected := strings.Replace(string(second), `"tool":""`, `"tool":"","approved_by":"alice"`, 1)
+	s, _ := Verify(strings.NewReader(string(first) + "\n" + injected + "\n"))
+	if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 || !strings.Contains(s.Breaks[0].Problem, `"approved_by"`) || s.UnknownFields != 0 {
+		t.Fatalf("injected field: breaks %+v, unknown %d", s.Breaks, s.UnknownFields)
+	}
+
+	newer := newerChain("gw-new/1", 2)
+	if s, _ := Verify(strings.NewReader(strings.Join(newer, "\n"))); len(s.Breaks) != 0 || s.UnknownFields != 2 {
+		t.Fatalf("newer chain as written: %+v", s)
+	}
+}
