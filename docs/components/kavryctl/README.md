@@ -13,6 +13,8 @@ Client CLI for `MCPServer` resources. Source: `cmd/kavryctl`,
 | `kavryctl unregister [-n NS] <name>` | Delete the `MCPServer` |
 | `kavryctl list [-n NS] [-A]` | Table with readiness, Gateway route (`-` until the server is `Ready`), and `TOOLS`: the tool count once the Operator has listed the tools, the `ToolsDiscovered` reason (such as `DiscoveryFailed` or `CallerTokenRequired`) when it could not, and `-` before it tried. An empty list names the namespace it searched and `kavryctl list -A`, with the count in other namespaces when you may list them |
 | `kavryctl inspect [-n NS] <name>` | Full resource as JSON |
+| `kavryctl export [-n NS] [-A] [-o FILE] [--include-environment]` | Write `MCPServer`s as reapplyable manifests (name, namespace, labels, annotations, spec) for restoring elsewhere; see [Rebuilding a cluster](#rebuilding-a-cluster) (SPEC-0034) |
+| `kavryctl import [-n NS] [--overwrite] [--dry-run] [--wait 60s] <file>` | Create the `MCPServer`s of an export after checking every document; nothing changes while any is refused (SPEC-0034) |
 | `kavryctl doctor [-n NS] [--release R] [--output json] [--anonymize]` | Read-only check of the installation (namespace `kavrynt-system` and release `kavrynt` by default): the CRD, the Gateway and Operator Deployments and versions, MCP client authentication, and every `MCPServer`'s readiness and tool discovery. Each warning or failure says what to do and links its runbook; checks you may not run are `skipped`. Exit `0`, `1` when a check failed, `2` when the cluster cannot be reached. Never prints condition messages, endpoints, or Secret data; `--anonymize` replaces namespaces and names with per-report HMACs for public issues (SPEC-0033) |
 | `kavryctl upgrade --version V` | Upgrade the Kavrynt Helm release with checks before and after (below) |
 | `kavryctl rollback [--revision N]` | Roll the release back with the same checks |
@@ -50,6 +52,37 @@ kavryctl rollback --revision 3
 ```
 
 GitOps-managed installs upgrade through their own pipeline instead.
+
+## Rebuilding a cluster
+
+Registrations live only in the Kubernetes API. To move them, or to restore
+them after rebuilding a cluster:
+
+```bash
+kavryctl export -A -o mcpservers.yaml      # mode 0600; holds endpoints and labels
+# new cluster: install the chart with your values (helm get values on the old one),
+# create the namespaces, and fill the upstream credentials Secret with the keys
+# the file's header names
+kavryctl import --dry-run mcpservers.yaml
+kavryctl import mcpservers.yaml
+```
+
+- **What is exported:** `export` writes only `apiVersion`, `kind`, name,
+  namespace, labels, annotations (without kubectl's last-applied copy), and
+  `spec`. It never reads Secrets; its header names the upstream credentials
+  Secret keys to provide.
+- **Environment values:** `spec.environment` values are written empty and
+  listed in the `kavrynt.io/redacted-environment` annotation, since the map
+  can hold a key. Fill them in and remove the annotation before importing,
+  or export with `--include-environment` and store the file like a secret.
+- **What `import` refuses, before writing anything:**
+  - invalid documents, and two documents for one server;
+  - redacted values not yet filled in;
+  - namespaces that do not exist (it never creates them);
+  - servers that exist with another spec, labels, or annotations.
+    `--overwrite` replaces those instead.
+- **After importing:** `import` waits up to `--wait` and names the servers
+  that are not `Ready` and the credential keys still missing.
 
 ## Examples
 

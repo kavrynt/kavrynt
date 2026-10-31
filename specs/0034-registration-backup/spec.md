@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-30 |
 | Issue | to be opened |
@@ -142,8 +142,6 @@ release namespace.
 
 ## Open questions
 
-- Should `import` use server-side apply with a `kavryctl` field manager
-  instead of create and update? Recommended: create and update, so GitOps
-  field managers are not taken over by a restore. The owner decides.
-- Should `export` include `MCPServer`s that are not `Ready`? Recommended:
-  yes; readiness depends on the cluster, not the registration.
+Resolved when accepted (see [plan.md](plan.md)): `import` creates and
+updates rather than server-side applying, so GitOps field managers are not
+taken over; `export` includes servers that are not `Ready`.
