@@ -358,6 +358,9 @@ Your feedback decides what we build next. Please
 [open a tester feedback issue](https://github.com/kavrynt/kavrynt/issues/new?template=tester_feedback.yml),
 even if everything worked. It helps to include:
 
+- the output of `kavryctl doctor --anonymize` (kavryctl 1.0.0-beta.4 or
+  later): a read-only check of the installation and its MCP servers, with
+  what to do for each problem and no secrets, endpoints, or names;
 - your Kubernetes platform and version, and the Kavrynt version;
 - which steps worked and which did not, with the command and its output;
 - for a problem, `kubectl get mcpservers -A -o yaml` and

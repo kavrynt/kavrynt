@@ -15,6 +15,7 @@ import (
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/kavryctl/manifest"
+	appsv1 "k8s.io/api/apps/v1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -74,6 +75,10 @@ var newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
 	if err := apiextensionsv1.AddToScheme(scheme); err != nil {
 		return nil, "", err
 	}
+	// doctor reads the Gateway and Operator Deployments (SPEC-0033).
+	if err := appsv1.AddToScheme(scheme); err != nil {
+		return nil, "", err
+	}
 	c, err := client.New(cfg, client.Options{Scheme: scheme})
 	if err != nil {
 		return nil, "", fmt.Errorf("create Kubernetes client: %w", err)
@@ -104,6 +109,8 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 		return runList(args[1:], stdout, stderr)
 	case "inspect":
 		return runInspect(args[1:], stdout, stderr)
+	case "doctor":
+		return runDoctor(args[1:], stdout, stderr)
 	case "audit":
 		return runAudit(args[1:], os.Stdin, stdout, stderr)
 	case "upgrade":
@@ -477,6 +484,9 @@ Usage:
   kavryctl unregister [cluster flags] <name>
   kavryctl list       [cluster flags] [-A]
   kavryctl inspect    [cluster flags] <name>
+  kavryctl doctor   [cluster flags] [--release kavrynt] [--output table|json] [--anonymize]
+                    Check the installation and its MCPServers (read-only; -n
+                    defaults to kavrynt-system); --anonymize hides names
   kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin);
                     events cut off the end of a chain are not detected
   kavryctl upgrade  [cluster flags] --version V [--chart REF|DIR] [--values FILE] [--adopt-crd] [--dry-run]

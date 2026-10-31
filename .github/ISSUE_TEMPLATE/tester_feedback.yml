@@ -43,6 +43,12 @@ body:
     attributes:
       label: What would you need before using Kavrynt for real?
   - type: textarea
+    id: doctor
+    attributes:
+      label: Output of kavryctl doctor --anonymize
+      description: kavryctl 1.0.0-beta.4 or later. It checks the installation read-only and holds no secrets, endpoints, or names.
+      render: text
+  - type: textarea
     id: logs
     attributes:
       label: Relevant output or logs
