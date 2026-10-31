@@ -37,7 +37,8 @@ and links a runbook.
   "forbidden" or "not found", for example a timeout or an overloaded
   API server. Check that `kubectl get --raw /readyz` succeeds with the same
   kubeconfig and context, then run doctor again.
-- **Exit `2`**: the cluster could not be reached at all. With
+- **Exit `2`**: doctor could not start or finish: invalid arguments, a
+  kubeconfig it cannot use, or a cluster it cannot reach at all. With
   `--anonymize` the error details are left out, since they can name the API
   server; run without it to see them.
 
