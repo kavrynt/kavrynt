@@ -203,8 +203,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 
 - Trial users consume approved alpha or beta images, `kavryctl` binaries, Helm
   charts, and runbooks.
-- Customer-facing docs (`product-docs`) may link to this repository. Ask the
-  owner before adding source links to the marketing website.
+- The website (`website`, kavrynt.com) and the product docs (`product-docs`,
+  docs.kavrynt.com) link to this repository as the runtime's source: keep the
+  links in their navigation and footers, and link it wherever a page says the
+  runtime is open source.
 - Hosted features (cross-cluster inventory, enterprise identity, billing) belong
   in `kavrynt-cloud`, not here.
 
