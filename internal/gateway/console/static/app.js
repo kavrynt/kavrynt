@@ -19,7 +19,7 @@
     RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
     alertMarks, topLists, rangeSummary, toolRows, dashboardNote, grafanaLinks,
   } = Kavrynt.charts;
-  const { parseHash, formatHash, createPoller, sessionState, loginMessage, notice, noticeShown } = Kavrynt.state;
+  const { parseHash, formatHash, createPoller, sessionState, logoutDone, loginMessage, notice, noticeShown } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
@@ -177,12 +177,14 @@
 
   async function checkSession() {
     let next = null;
+    // unreachable: no usable answer, so the login page offers a retry
+    // instead of guessing which sign-ins are on.
     try {
       const res = await fetch("/v1/session", { headers: { Accept: "application/json" }, cache: "no-store" });
       next = sessionState(res.status, await res.json().catch(() => null));
     } catch { /* treated as login required below */ }
     // Fail closed: an unexpected answer shows the login form, not data.
-    Object.assign(state.auth, next || { enabled: true, signedIn: false, username: "", expiresAt: "" }, { checked: true });
+    Object.assign(state.auth, next || { enabled: true, signedIn: false, username: "", expiresAt: "" }, { checked: true, unreachable: !next });
     drawUser();
     initNotice();
   }
@@ -213,7 +215,10 @@
   }
 
   async function logout() {
-    try { await fetch("/v1/session", { method: "DELETE", cache: "no-store" }); } catch { /* the cookie also expires */ }
+    let status = 0;
+    try { status = (await fetch("/v1/session", { method: "DELETE", cache: "no-store" })).status; } catch { /* status stays 0 */ }
+    // The session cookie stays valid when the Gateway did not end it.
+    if (!logoutDone(status)) { toast("Could not sign out. Try again."); return; }
     signedOut("Signed out.");
   }
 
@@ -233,6 +238,13 @@
   function renderLogin(root) {
     // Sign-in through the identity provider (SPEC-0032-R03), and the admin
     // password only while it is on (R10).
+    if (state.auth.unreachable) {
+      put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },
+        h("h1", { text: "Sign in" }),
+        h("p", { class: "error-text", role: "alert", text: "Could not reach the Gateway to see how to sign in." }),
+        h("button", { type: "button", class: "btn primary", onclick: () => checkSession().then(render) }, "Try again"))));
+      return;
+    }
     const sso = state.auth.sso ? h("a", { class: "btn primary", href: state.auth.sso.href, text: state.auth.sso.label }) : null;
     if (!state.auth.adminLogin) {
       put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },

@@ -24,6 +24,24 @@ Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
 Without `-n`, the namespace comes from the manifest, then the kubeconfig
 context. A manifest namespace that conflicts with `-n` is an error.
 
+## Doctor
+
+`kavryctl doctor` reads the installation and prints one line per check:
+`ok`, `warn`, `fail`, or `skipped`. Each `warn` and `fail` says what to do
+and links a runbook.
+
+- **`skipped`**: your credentials may not read that object (the line names
+  the verb and resource). Run doctor with an identity that can, or ignore
+  the check.
+- **`ReadFailed`**: the API server answered with an error other than
+  "forbidden" or "not found", for example a timeout or an overloaded
+  API server. Check that `kubectl get --raw /readyz` succeeds with the same
+  kubeconfig and context, then run doctor again.
+- **Exit `2`**: doctor could not start or finish: invalid arguments, a
+  kubeconfig it cannot use, or a cluster it cannot reach at all. With
+  `--anonymize` the error details are left out, since they can name the API
+  server; run without it to see them.
+
 ## Upgrade and rollback
 
 `kavryctl upgrade` and `kavryctl rollback` run the `helm` binary (it must be

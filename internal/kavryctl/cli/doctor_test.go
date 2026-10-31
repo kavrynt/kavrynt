@@ -261,6 +261,35 @@ func TestDoctorSkipsWhatItMayNotRead(t *testing.T) {
 	if _, _, code := doctorJSON(t); code != 2 {
 		t.Fatalf("unreachable cluster: exit %d, want 2", code)
 	}
+	// Verifies SPEC-0033-R08: --anonymize leaves the API server's address
+	// out of the error.
+	if _, errOut, code := run2("doctor", "--anonymize"); code != 2 || strings.Contains(errOut, "127.0.0.1") || !strings.Contains(errOut, "could not be reached") {
+		t.Fatalf("anonymized unreachable cluster: exit %d: %s", code, errOut)
+	}
+
+	// Verifies SPEC-0033-R05: a failed MCPServer list carries a link too.
+	listFails := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if _, ok := list.(*kavryntv1alpha1.MCPServerList); ok {
+			return errors.New("etcdserver: request timed out")
+		}
+		return c.List(ctx, list, opts...)
+	}}
+	useDoctorClient(t, listFails, doctorCluster(Version)...)
+	report, _, _ = doctorJSON(t)
+	if c := checkOf(report, "servers", ""); c.Result != resultFail || c.Reason != "ReadFailed" || c.Link == "" {
+		t.Fatalf("failed MCPServer list: %+v", c)
+	}
+}
+
+// Verifies SPEC-0033-R07: a condition reason the Operator does not write is
+// reported as Other, since anyone who can write the status chooses it.
+func TestDoctorReportsOnlyKnownReasons(t *testing.T) {
+	odd := condition(kavryntv1alpha1.ConditionReady, "False", "http://10.0.0.7:8080/?key=s3cret\x1b[2J", "")
+	useDoctorClient(t, interceptor.Funcs{}, append(doctorCluster(Version), mcpServer("default", "odd", odd))...)
+	report, out, _ := doctorJSON(t)
+	if c := checkOf(report, "server.ready", "odd"); c.Reason != "Other" || strings.Contains(out, "10.0.0.7") || strings.Contains(out, "s3cret") {
+		t.Fatalf("unknown reason: %+v\n%s", c, out)
+	}
 }
 
 // Verifies SPEC-0033-R08: --anonymize hides namespaces and names behind

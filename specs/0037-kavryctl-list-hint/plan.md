@@ -35,4 +35,5 @@ A message change; no flag.
 
 ## Risks
 
-None beyond one extra list request when the namespace is empty.
+Extra list requests when the namespace is empty: one per 500 `MCPServer`
+objects in the cluster, bounded by the command's 5-second timeout.

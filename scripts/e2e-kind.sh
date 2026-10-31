@@ -1054,12 +1054,19 @@ log "without session affinity: $(tail -n 1 <<<"${PLAIN_LOG}")"
 # Any Gateway replica may have served the lost sessions: the session clients
 # keep their connections to whichever replica they reached, so the
 # port-forwarded replica's metrics can hold none of them. Every replica's
-# audit events record the same outcome as its metrics.
-control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt |
-  grep '"type":"kavrynt.audit.v1"' |
-  jq --slurp --exit-status --arg ns "${E2E_NAMESPACE}" \
-    'any(.[]; .route.namespace == $ns and .route.name == "stateful-plain" and .outcome == "session_not_found")' >/dev/null ||
-  fail "lost sessions were not recorded as session_not_found"
+# audit events record the same outcome as its metrics. The audit writer is
+# asynchronous, so the event can trail the clients by a moment.
+lost_session_audited() {
+  control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt |
+    grep '"type":"kavrynt.audit.v1"' |
+    jq --slurp --exit-status --arg ns "${E2E_NAMESPACE}" \
+      'any(.[]; .route.namespace == $ns and .route.name == "stateful-plain" and .outcome == "session_not_found")' >/dev/null
+}
+for _ in $(seq 1 15); do
+  lost_session_audited && break
+  sleep 2
+done
+lost_session_audited || fail "lost sessions were not recorded as session_not_found"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
   mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
   --wait=false >/dev/null

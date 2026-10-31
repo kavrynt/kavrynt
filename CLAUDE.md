@@ -70,7 +70,8 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 - `kavryctl doctor` (SPEC-0033): read-only checks of the CRD, the Gateway
   and Operator Deployments and versions, client authentication, and every
   `MCPServer`'s readiness and discovery, with a fix and runbook link per
-  problem; never condition messages, endpoints, or Secrets; `--anonymize`.
+  problem. The report never includes condition messages, endpoints, or
+  Secret data; `--anonymize` also hides names and error details.
 - `kavryctl export` and `import` (SPEC-0034): registrations as reapplyable
   manifests (environment values redacted unless asked, credential keys
   listed, never Secrets); import checks every document first and writes

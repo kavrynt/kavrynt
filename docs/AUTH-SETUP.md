@@ -209,11 +209,14 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VE
   --set gateway.console.auth.oidc.clientSecret.name=kavrynt-console-oidc \
   --set gateway.console.auth.oidc.redirectURL=$GATEWAY/v1/session/oidc/callback \
   --set gateway.console.auth.oidc.providerName=Keycloak \
-  --set 'gateway.console.auth.oidc.allowedGroups={platform}'
+  --set 'gateway.console.auth.oidc.allowedGroups={platform}' \
+  --set "gateway.config.allowedOrigins={$GATEWAY}"
 ```
 
 Set `issuer` to `KC_HOSTNAME` followed by `/realms/agents`, exactly as it
-appears in the ID tokens' `iss`. Add people to the `platform`
+appears in the ID tokens' `iss`. `allowedOrigins` lets the console's own
+requests (log out, playground) through at a non-loopback address; the
+`--set` replaces the list, so name any origins you already allow too. Add people to the `platform`
 group in Keycloak; others get "not allowed". The admin password then stops
 working unless `keepAdminLogin` is set.
 
@@ -237,6 +240,7 @@ server issues one audience per token, turn on the Gateway audience
 
 ```bash
 helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --reuse-values \
+  --version "$KAVRYNT_VERSION" \
   --namespace kavrynt-system \
   --set gateway.auth.gatewayAudience.enabled=true \
   --set 'gateway.auth.gatewayAudience.routes={team-a.*,team-c.reports}'

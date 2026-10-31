@@ -96,6 +96,10 @@ func TestExamplePolicies(t *testing.T) {
 		{"deny-destructive-tools.rego", authenticated(hinted(search, false, map[string]bool{}), "research-agent"), false},
 		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, true, map[string]bool{"destructiveHint": true}), "ops-agent"), true},
 		{"deny-destructive-tools.rego", authenticated(hinted(deleteAll, false, map[string]bool{}), "ops-agent"), true},
+		// A server not in trusted_servers cannot make a tool safe by its hints.
+		{"deny-destructive-tools.rego", untrusted(authenticated(hinted(search, true, map[string]bool{"readOnlyHint": true}), "research-agent")), false},
+		{"deny-destructive-tools.rego", untrusted(authenticated(hinted(search, true, map[string]bool{"destructiveHint": false}), "research-agent")), false},
+		{"deny-destructive-tools.rego", untrusted(authenticated(list, "research-agent")), true},
 		// The same client ID from another trusted issuer is not the ops client.
 		{"deny-destructive-tools.rego", otherIssuer(authenticated(hinted(deleteAll, true, map[string]bool{"destructiveHint": true}), "ops-agent")), false},
 	}

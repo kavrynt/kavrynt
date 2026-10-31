@@ -202,3 +202,12 @@ test("the session state carries console sign-in through the identity provider", 
   assert.equal(ssoOffer({ providerName: 7, start: "/v1/session/oidc/start" }), null);
   assert.equal(ssoOffer({ providerName: " ", start: "/v1/session/oidc/start" }).label, "Sign in with your identity provider");
 });
+
+// Verifies SPEC-0005-R15: the console says signed out only once the Gateway
+// ended the session.
+test("logoutDone accepts only an ended session", () => {
+  const { logoutDone } = state;
+  for (const status of [200, 204]) assert.equal(logoutDone(status), true, String(status));
+  // A 401 comes from a proxy in front of the Gateway, never from it.
+  for (const status of [0, 401, 403, 500, 502, 503]) assert.equal(logoutDone(status), false, String(status));
+});

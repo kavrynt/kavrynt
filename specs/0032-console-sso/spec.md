@@ -11,9 +11,10 @@
 
 ## Summary
 
-People sign in to the web console with the organization's OpenID Connect
-provider, the same one that issues MCP access tokens, instead of sharing the
-generated `admin` password. Only the users and groups the platform team
+People sign in to the web console with the OpenID Connect provider the
+platform team configures for it (often the one that issues MCP access
+tokens, but set separately), instead of sharing the generated `admin`
+password. Only the users and groups the platform team
 lists get a console session. The `admin` login can stay as a break-glass
 login or be turned off.
 
@@ -99,7 +100,8 @@ lists the missing SSO as a known limitation.
   `preferred_username`, falling back to `sub`).
 - **SPEC-0032-R09** The Gateway MUST NOT keep, log, or return the
   authorization code, the access, ID, or refresh token, or the client
-  secret. Refused sign-ins MUST be logged with a reason and never with
+  secret. Holding the ID token in memory while R06 verifies it is not
+  keeping it; it is not stored once verification ends. Refused sign-ins MUST be logged with a reason and never with
   those values.
 
 ### The admin login

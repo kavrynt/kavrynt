@@ -96,6 +96,13 @@
     return null;
   }
 
+  // logoutDone tells whether DELETE /v1/session ended the session. The
+  // Gateway always answers 204, also without a session; anything else came
+  // from somewhere else and leaves the cookie valid.
+  function logoutDone(status) {
+    return status >= 200 && status < 300;
+  }
+
   // ssoOffer reads the login page's identity provider offer. The link is
   // always the Gateway's own start path, never a URL from the answer.
   function ssoOffer(value) {
@@ -171,5 +178,5 @@
     }
   }
 
-  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, ssoOffer, loginMessage, authFailureMessage, notice, noticeShown });
+  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, ssoOffer, logoutDone, loginMessage, authFailureMessage, notice, noticeShown });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).state = {}));
