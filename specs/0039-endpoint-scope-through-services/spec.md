@@ -63,21 +63,25 @@ these two cases stay inside the cluster's own names and are not mentioned.
   SPEC-0029-R04 to R06 to the Service's `externalName` as if it were the
   endpoint host, following at most 5 `ExternalName` Services, and MUST set
   `Ready` to `False` with reason `EndpointNotAllowed` when any of them
-  names another namespace, or when the chain is longer.
+  names another namespace, or when the chain is longer. When the chain
+  ends at a Service without a selector in the `MCPServer`'s namespace, R02
+  MUST apply to that Service.
 - **SPEC-0039-R02** When the endpoint host names a Service without a
   selector in the `MCPServer`'s namespace, the Operator MUST set `Ready` to
   `False` with reason `EndpointNotAllowed` when one of the Service's
   EndpointSlices has an endpoint whose `targetRef` is in another
-  namespace, or that has no `targetRef` and an address inside
-  `global.endpoints.clusterCIDRs`.
+  namespace that `global.endpoints.crossNamespace` does not allow for the
+  `MCPServer`'s namespace, or that has no `targetRef` and an address
+  inside `global.endpoints.clusterCIDRs`, whose namespace cannot be
+  identified and which therefore stays refused.
 - **SPEC-0039-R03** The Operator MUST check R01 and R02 again when the
   Service or its EndpointSlices change, and within 5 minutes otherwise.
 - **SPEC-0039-R04** A Service the Operator cannot read MUST keep the
   server not `Ready` (`EndpointNotAllowed`), checked again after 30 s, as
   SPEC-0029 does for a namespace it cannot read.
 - **SPEC-0039-R05** The Operator's RBAC MUST grow only by `get`, `list`,
-  and `watch` on Services and `watch` on EndpointSlices; the Gateway's RBAC
-  MUST NOT change.
+  and `watch` on Services and `list` and `watch` on EndpointSlices; the
+  Gateway's RBAC MUST NOT change.
 
 ## Acceptance criteria
 
@@ -88,6 +92,9 @@ these two cases stay inside the cluster's own names and are not mentioned.
 - Given a selector-less Service in `team-a` whose EndpointSlice names a
   `team-b` pod, when an `MCPServer` uses it, then the server is not `Ready`
   with `EndpointNotAllowed` (SPEC-0039-R02).
+- Given an `ExternalName` Service in `team-a` pointing at that selector-less
+  Service, when an `MCPServer` uses the `ExternalName` Service, then the
+  server is not `Ready` with `EndpointNotAllowed` (SPEC-0039-R01, R02).
 - Given a `Ready` server behind a Service in its own namespace, when the
   Service is changed to `ExternalName` pointing at `team-b`, then within
   5 minutes the server is not `Ready` (SPEC-0039-R03).
