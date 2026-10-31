@@ -45,7 +45,7 @@ func themes(t *testing.T) map[string]map[string]string {
 		dark[k] = v
 	}
 	// Colours the stylesheet sets outside the tokens.
-	light["primary-text"], dark["primary-text"] = "#ffffff", "#042f2e"
+	light["primary-text"], dark["primary-text"] = "#ffffff", "#190804"
 	light["white"], dark["white"] = "#ffffff", "#ffffff"
 	return map[string]map[string]string{"light": light, "dark": dark}
 }
