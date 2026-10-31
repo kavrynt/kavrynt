@@ -209,10 +209,15 @@ func (d *doctor) checkDeployments(ctx context.Context) (gateway, operator *appsv
 			want = *deployment.Spec.Replicas
 		}
 		if deployment.Status.ReadyReplicas < want {
+			// An anonymized report must not name the namespace in the fix
+			// either (SPEC-0033-R08).
+			fix := "check the pods' events and logs: kubectl -n " + d.namespace + " describe deployment " + deployment.Name
+			if d.names != nil {
+				fix = "check the pods' events and logs with kubectl describe deployment"
+			}
 			d.add(doctorCheck{ID: id, Result: resultFail, Subject: subject,
 				Reason: fmt.Sprintf("Ready %d/%d", deployment.Status.ReadyReplicas, want),
-				Fix:    "check the pods' events and logs: kubectl -n " + d.namespace + " describe deployment " + deployment.Name,
-				Link:   docsBase + runbook})
+				Fix:    fix, Link: docsBase + runbook})
 		} else {
 			d.add(doctorCheck{ID: id, Result: resultOK, Subject: subject, Reason: fmt.Sprintf("Ready %d/%d", deployment.Status.ReadyReplicas, want)})
 		}
@@ -271,24 +276,39 @@ func (d *doctor) checkAuth(gateway *appsv1.Deployment) {
 		Link: docsBase + "docs/AUTH-SETUP.md"})
 }
 
-// checkServers is checks 5 and 6, per MCPServer in every namespace.
+// serverPage bounds how many MCPServers one list request returns.
+const serverPage = 200
+
+// checkServers is checks 5 and 6, per MCPServer in every namespace, read
+// in bounded pages, each checked before the next is requested.
 func (d *doctor) checkServers(ctx context.Context) {
-	var servers kavryntv1alpha1.MCPServerList
-	err := d.c.List(ctx, &servers)
-	switch {
-	case apierrors.IsForbidden(err):
-		d.skipped("servers", "mcpservers", "list", "mcpservers")
-		return
-	case err != nil:
-		d.add(doctorCheck{ID: "servers", Result: resultFail, Subject: "mcpservers", Reason: "ReadFailed",
-			Fix: "check access to the API server and retry"})
-		return
-	case len(servers.Items) == 0:
+	seen, next := 0, ""
+	for {
+		var servers kavryntv1alpha1.MCPServerList
+		err := d.c.List(ctx, &servers, client.Limit(serverPage), client.Continue(next))
+		switch {
+		case apierrors.IsForbidden(err):
+			d.skipped("servers", "mcpservers", "list", "mcpservers")
+			return
+		case err != nil:
+			d.add(doctorCheck{ID: "servers", Result: resultFail, Subject: "mcpservers", Reason: "ReadFailed",
+				Fix: "check access to the API server and retry"})
+			return
+		}
+		seen += len(servers.Items)
+		d.checkServerPage(servers.Items)
+		if next = servers.Continue; next == "" {
+			break
+		}
+	}
+	if seen == 0 {
 		d.add(doctorCheck{ID: "servers", Result: resultOK, Subject: "mcpservers", Reason: "None",
 			Fix: "register one: kavryctl register <manifest>"})
-		return
 	}
-	for _, server := range servers.Items {
+}
+
+func (d *doctor) checkServerPage(servers []kavryntv1alpha1.MCPServer) {
+	for _, server := range servers {
 		subject := d.name(server.Namespace) + "/" + d.name(server.Name)
 		ready := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady)
 		if ready == nil || ready.Status != "True" {
