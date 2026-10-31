@@ -5,6 +5,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"strings"
 	"testing"
 
@@ -203,6 +204,36 @@ func TestDoctorVersions(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0033-R04: MCPServers are read in pages, and every page is
+// checked.
+func TestDoctorReadsServersInPages(t *testing.T) {
+	ready := condition(kavryntv1alpha1.ConditionReady, "True", kavryntv1alpha1.ReasonRoutable, "")
+	objects := doctorCluster(Version)
+	for i := range 450 {
+		objects = append(objects, mcpServer("team-a", fmt.Sprintf("server-%03d", i), ready))
+	}
+	limits := 0
+	paging := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if _, ok := list.(*kavryntv1alpha1.MCPServerList); ok {
+			if (&client.ListOptions{}).ApplyOptions(opts).Limit == serverPage {
+				limits++
+			}
+		}
+		return c.List(ctx, list, opts...)
+	}}
+	useDoctorClient(t, paging, objects...)
+	report, _, code := doctorJSON(t)
+	count := 0
+	for _, c := range report.Checks {
+		if c.ID == "server.ready" {
+			count++
+		}
+	}
+	if code != 0 || count != 450 || limits == 0 {
+		t.Fatalf("exit %d, %d servers checked, %d bounded list requests", code, count, limits)
+	}
+}
+
 // Verifies SPEC-0033-R02 and SPEC-0033-R03: a forbidden Deployment list skips
 // those checks by name and the MCPServer checks still run; an unreachable
 // cluster exits 2.
@@ -250,6 +281,16 @@ func TestDoctorAnonymize(t *testing.T) {
 	if len(nsA) != 12 || nsA != nsB {
 		t.Fatalf("the same namespace should give one 12-character value: %q %q", a.Subject, b.Subject)
 	}
+	// A failing Deployment's fix does not name the namespace either.
+	notReady := doctorCluster(Version)
+	notReady[1].(*appsv1.Deployment).Status.ReadyReplicas = 0
+	useDoctorClient(t, interceptor.Funcs{}, notReady...)
+	if _, out, _ := doctorJSON(t, "--anonymize"); strings.Contains(out, "kavrynt-system") || strings.Contains(out, "kavrynt-gateway") {
+		t.Fatalf("anonymized fix names the installation:\n%s", out)
+	}
+	useDoctorClient(t, interceptor.Funcs{}, append(doctorCluster(Version),
+		mcpServer("default", "search", ready), mcpServer("default", "billing", ready))...)
+
 	second, _, _ := doctorJSON(t, "--anonymize")
 	if ns2, _, _ := strings.Cut(checkOf(second, "server.ready", "").Subject, "/"); ns2 == nsA {
 		t.Fatal("two reports gave default the same value")
