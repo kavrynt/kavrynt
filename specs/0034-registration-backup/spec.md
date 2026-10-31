@@ -142,8 +142,9 @@ and stays not `Ready` with `EndpointNotAllowed`, which R08 reports.
 
 New `kavryctl` commands; no CRD or chart change. `import` uses the user's
 own RBAC (`create`, `get`, `update` on `mcpservers`); `export` needs `list`
-on `mcpservers` and, for the Operator version, `get` on deployments in the
-release namespace.
+on `mcpservers` and, for the Operator version, `list` on deployments in the
+release namespace (it finds the Operator by its labels); without it the
+header says `Operator version: unknown`.
 
 ## Documentation
 

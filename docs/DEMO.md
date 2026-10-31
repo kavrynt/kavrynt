@@ -100,7 +100,9 @@ Show this list as a slide as well. Do not soften it.
 - Kavrynt does not deploy MCP servers; it registers and routes to existing
   endpoints.
 - The demo runs one replica. A high-availability profile and upgrades are
-  tested in CI; there is no backup or restore workflow yet.
+  tested in CI. `kavryctl export` and `import` back up and restore
+  `MCPServer` registrations only; audit events and Secrets have no backup or
+  restore workflow.
 - The demo uses the console's shared `admin` login; sign-in through an
   identity provider is available but not shown. There are no roles.
 - Beta (`1.0.0-beta.N`), one maintainer organization, no named adopters yet.

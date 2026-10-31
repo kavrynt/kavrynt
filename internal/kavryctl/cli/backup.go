@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io"
 	"maps"
+	"net/url"
 	"os"
 	"slices"
 	"strconv"
@@ -105,13 +106,16 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	})
 
 	var body strings.Builder
-	var credentials, redactions []string
+	var credentials, redactions, queries []string
 	for i := range servers.Items {
 		server := copyServer(&servers.Items[i])
 		labels, annotations := exportedMeta(server)
 		out := &kavryntv1alpha1.MCPServer{}
 		out.Name, out.Namespace, out.Labels, out.Annotations = server.Name, server.Namespace, labels, annotations
 		out.Spec = server.Spec
+		if u, err := url.Parse(out.Spec.Endpoint); err == nil && u.RawQuery != "" {
+			queries = append(queries, out.Namespace+"/"+out.Name)
+		}
 		if len(out.Spec.Environment) > 0 && !*includeEnv {
 			keys := slices.Sorted(maps.Keys(out.Spec.Environment))
 			for _, key := range keys {
@@ -175,6 +179,9 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	}
 	if *includeArgs {
 		fmt.Fprintln(stderr, "warning: --include-args keeps spec.args values; the export may hold credentials")
+	}
+	if len(queries) > 0 {
+		fmt.Fprintf(stderr, "warning: the spec.endpoint query strings of %s are exported as stored and may hold credentials\n", strings.Join(queries, ", "))
 	}
 	if *outFile == "" {
 		fmt.Fprint(stdout, file.String())

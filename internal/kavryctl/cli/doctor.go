@@ -81,10 +81,22 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	if opts.namespace == "" {
 		opts.namespace = "kavrynt-system"
 	}
-	c, namespace, err := newKubeClient(opts)
-	if err != nil {
+	// Errors can name the API server or the kubeconfig context; a report
+	// made for a public issue leaves them out (SPEC-0033-R08).
+	failed := func(err error) int {
+		if *anonymize {
+			if errors.Is(err, errUnreachable) {
+				err = errUnreachable
+			} else {
+				err = errors.New("the cluster could not be read (details hidden by --anonymize)")
+			}
+		}
 		fmt.Fprintf(stderr, "doctor: %v\n", err)
 		return 2
+	}
+	c, namespace, err := newKubeClient(opts)
+	if err != nil {
+		return failed(err)
 	}
 	d := &doctor{c: c, namespace: namespace, release: *release,
 		report: doctorReport{Type: doctorType, Versions: map[string]string{"kavryctl": strings.TrimPrefix(Version, "v")}}}
@@ -98,8 +110,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 	ctx, cancel := context.WithTimeout(context.Background(), requestTimeout)
 	defer cancel()
 	if err := d.run(ctx); err != nil {
-		fmt.Fprintf(stderr, "doctor: %v\n", err)
-		return 2
+		return failed(err)
 	}
 
 	if *output == "json" {
@@ -292,7 +303,7 @@ func (d *doctor) checkServers(ctx context.Context) {
 			return
 		case err != nil:
 			d.add(doctorCheck{ID: "servers", Result: resultFail, Subject: "mcpservers", Reason: "ReadFailed",
-				Fix: "check access to the API server and retry"})
+				Fix: "check access to the API server and retry", Link: docsBase + "charts/kavrynt/README.md"})
 			return
 		}
 		seen += len(servers.Items)
@@ -314,25 +325,44 @@ func (d *doctor) checkServerPage(servers []kavryntv1alpha1.MCPServer) {
 		if ready == nil || ready.Status != "True" {
 			reason := "Pending"
 			if ready != nil {
-				reason = ready.Reason
+				reason = knownReason(ready.Reason)
 			}
 			d.add(doctorCheck{ID: "server.ready", Result: resultFail, Subject: subject, Reason: reason,
 				Fix: readyFix(reason), Link: docsBase + "docs/runbooks/KavryntMCPServerNotReady.md"})
 			continue
 		}
-		d.add(doctorCheck{ID: "server.ready", Result: resultOK, Subject: subject, Reason: ready.Reason})
+		d.add(doctorCheck{ID: "server.ready", Result: resultOK, Subject: subject, Reason: knownReason(ready.Reason)})
 		discovered := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
 		if discovered != nil && discovered.Status == "True" {
-			d.add(doctorCheck{ID: "server.discovery", Result: resultOK, Subject: subject, Reason: discovered.Reason})
+			d.add(doctorCheck{ID: "server.discovery", Result: resultOK, Subject: subject, Reason: knownReason(discovered.Reason)})
 			continue
 		}
 		reason := "Pending"
 		if discovered != nil {
-			reason = discovered.Reason
+			reason = knownReason(discovered.Reason)
 		}
 		d.add(doctorCheck{ID: "server.discovery", Result: resultWarn, Subject: subject, Reason: reason,
 			Fix: discoveryFix(reason), Link: docsBase + "docs/runbooks/KavryntMCPToolDiscoveryFailing.md"})
 	}
+}
+
+// knownReasons are the condition reasons the Operator writes.
+var knownReasons = []string{
+	kavryntv1alpha1.ReasonValid, kavryntv1alpha1.ReasonInvalidSpec, kavryntv1alpha1.ReasonRoutable,
+	kavryntv1alpha1.ReasonUnsupportedTransport, kavryntv1alpha1.ReasonNamespaceNotWatched,
+	kavryntv1alpha1.ReasonDiscovered, kavryntv1alpha1.ReasonDiscoveryFailed, kavryntv1alpha1.ReasonNotRoutable,
+	kavryntv1alpha1.ReasonCredentialUnavailable, kavryntv1alpha1.ReasonCallerTokenRequired,
+	kavryntv1alpha1.ReasonEndpointNotAllowed, kavryntv1alpha1.ReasonAudienceNotAllowed,
+}
+
+// knownReason returns reason if the Operator writes it, or "Other": the
+// CRD does not limit reasons, and anyone who can write the status could put
+// an endpoint or control characters there (SPEC-0033-R07).
+func knownReason(reason string) string {
+	if slices.Contains(knownReasons, reason) {
+		return reason
+	}
+	return "Other"
 }
 
 // readyFix says what to do for a Ready reason; the condition message is

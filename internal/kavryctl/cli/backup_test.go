@@ -306,6 +306,18 @@ func TestExportRedactsArgsAndKeepsFilesPrivate(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0034-R01: an endpoint query string is exported as stored,
+// with a warning naming the server, since it can hold a key.
+func TestExportWarnsAboutEndpointQueries(t *testing.T) {
+	keyed := mcpServer("team-a", "keyed")
+	keyed.Spec.Endpoint = "http://keyed.team-a.svc:8080/mcp?key=q-s3cret"
+	useBackupClient(t, interceptor.Funcs{}, namespace("team-a"), keyed, mcpServer("team-a", "plain"))
+	_, errOut, code := run2("export", "-n", "team-a")
+	if code != 0 || !strings.Contains(errOut, "team-a/keyed") || strings.Contains(errOut, "team-a/plain") || strings.Contains(errOut, "q-s3cret") {
+		t.Fatalf("query warning: exit %d: %s", code, errOut)
+	}
+}
+
 // Verifies SPEC-0034-R04, SPEC-0034-R05, SPEC-0034-R09, and SPEC-0034-R10:
 // redacted args are refused; an overwrite the API server refuses in the
 // dry run stops the whole import; a file over 16 MiB is refused unread.

@@ -483,7 +483,8 @@ CMD
   - Tool authorization policy and audit events are opt-in; no approvals yet.
   - HTTP MCP servers only; stdio manifests validate but are not proxied.
   - The demo runs one replica; the high-availability profile is tested in CI.
-    No backup or restore workflow yet.
+    kavryctl export and import back up MCPServer registrations only; audit
+    events and Secrets have no backup or restore workflow.
   - 1.0.0 beta, one maintainer organization. Run it in trusted dev or
     evaluation clusters only.
 EOF
