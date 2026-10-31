@@ -47,6 +47,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   Gateway.
 - An opt-in Gateway audience: one token can reach a listed group of MCP
   routes, with policy and audit telling it apart from a per-route token.
+- `kavryctl doctor`: a read-only installation report, safe to paste into a
+  public issue with `--anonymize`.
 
 ## Next
 
@@ -56,8 +58,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 3. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
    Cloud ingestion service and an end-to-end test) and usage events.
 4. Recovery workflows (restoring registrations into a new cluster).
-5. Diagnostics for testers and support: one command that checks an
-   installation and reports what is wrong, without secrets.
+5. More installation checks in `kavryctl doctor` (policy, audit, and
+   NetworkPolicy settings).
 
 ## Project and community
 

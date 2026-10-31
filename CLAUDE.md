@@ -67,6 +67,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 
 - `MCPServer` registration through Kubernetes or `kavryctl`; the Operator sets
   `Accepted` and `Ready`.
+- `kavryctl doctor` (SPEC-0033): read-only checks of the CRD, the Gateway
+  and Operator Deployments and versions, client authentication, and every
+  `MCPServer`'s readiness and discovery, with a fix and runbook link per
+  problem; never condition messages, endpoints, or Secrets; `--anonymize`.
 - `kavryctl upgrade` and `kavryctl rollback` (SPEC-0019) run the `helm`
   binary with checks before (release, chart version, CRD ownership;
   `--adopt-crd`) and after (every server routed before is routed again).
