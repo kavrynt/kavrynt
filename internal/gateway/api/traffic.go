@@ -462,15 +462,40 @@ func (c *captureBuffer) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
+// countingReader counts the request body sent upstream. The transport may
+// still read it after the response arrives, so its fields are guarded.
 type countingReader struct {
-	r io.Reader
-	n int64
+	r  io.Reader
+	mu sync.Mutex
+	n  int64
+	// err is the first read error other than io.EOF, such as the request
+	// size limit's (SPEC-0038-R02).
+	err error
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
+	c.mu.Lock()
 	c.n += int64(n)
+	if err != nil && err != io.EOF && c.err == nil {
+		c.err = err
+	}
+	c.mu.Unlock()
 	return n, err
+}
+
+// sent reports the bytes read so far.
+func (c *countingReader) sent() int64 {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.n
+}
+
+// failure reports the first read error so far.
+func (c *countingReader) failure() error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.err
 }
 
 // labelLimiter caps the distinct values of a label per route so untrusted
