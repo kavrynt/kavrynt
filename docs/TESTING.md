@@ -251,7 +251,7 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VE
 The Gateway restarts, so start the port-forward from step 4 again. Then:
 
 ```bash
-# admin_reset is denied with 403 and a JSON-RPC error
+# admin_reset is denied with a JSON-RPC error
 curl -s -w ' HTTP %{http_code}\n' -X POST "$GW" -H 'Content-Type: application/json' -H 'MCP-Protocol-Version: 2025-06-18' \
   --data '{"jsonrpc":"2.0","id":5,"method":"tools/call","params":{"name":"admin_reset","arguments":{}}}'
 
@@ -265,7 +265,9 @@ curl -s -X POST "$GW" -H 'Content-Type: application/json' -H 'MCP-Protocol-Versi
 ```
 
 Expected for the denied call:
-`{"error":{"code":-32001,"message":"denied by policy: admin tools are not allowed"},...} HTTP 403`.
+`{"error":{"code":-32001,"message":"denied by policy: admin tools are not allowed"},...} HTTP 200`.
+MCP client SDKs show the agent that message. Releases up to 1.0.0-beta.3
+answer `HTTP 403` with the same body.
 
 **Audit:** every MCP request is now one JSON line on the Gateway's output,
 chained with SHA-256. Install `kavryctl` and verify the chain:

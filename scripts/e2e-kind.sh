@@ -1382,8 +1382,9 @@ verify_policy_decisions() {
   local status
   status="$(echo_call "${ALLOWED_TOKEN}")"
   [ "${status}" = "200" ] || fail "the policy refused an allowed client: HTTP ${status} $(cat "${TEMP_DIR}/policy-body")"
+  # Verifies SPEC-0036-R01: a denied request gets its JSON-RPC error with 200.
   status="$(echo_call "${DENIED_TOKEN}")"
-  [ "${status}" = "403" ] || fail "the policy let another client call echo: HTTP ${status}"
+  [ "${status}" = "200" ] || fail "a denied request answered HTTP ${status}, want 200 with a JSON-RPC error"
   jq --exit-status '.id == 9 and (.error.message | startswith("denied by policy"))' "${TEMP_DIR}/policy-body" >/dev/null ||
     fail "a denial is not a JSON-RPC error: $(cat "${TEMP_DIR}/policy-body")"
 }
@@ -1412,7 +1413,7 @@ sleep 2
 control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
 grep '"type":"kavrynt.audit.v1"' "${TEMP_DIR}/gateway-audit.log" | jq --slurp --exit-status '
   any(.[]; .client_id == "e2e-agent" and .tool == "echo" and .decision == "allow" and .outcome == "ok" and .status == 200) and
-  any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 403) and
+  any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 200) and
   any(.[]; .decision == "unauthenticated" and .subject == "")' >/dev/null ||
   fail "the audit events do not record the allowed, denied, and unauthenticated calls"
 if grep --fixed-strings --quiet "audit-secret-argument" "${TEMP_DIR}/gateway-audit.log"; then
