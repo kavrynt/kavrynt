@@ -55,6 +55,10 @@ const routeHeader = "X-Kavrynt-Route"
 // arrive, so they stay open as long as the client does.
 const DefaultRequestTimeout = 30 * time.Second
 
+// DefaultMaxRequestBytes bounds the body of a request to an MCP route
+// (SPEC-0038-R03), so one call cannot exhaust an MCP server's memory.
+const DefaultMaxRequestBytes = 4 << 20
+
 var errRequestTimeout = errors.New("upstream request timed out")
 
 type Handler struct {
@@ -76,6 +80,9 @@ type Handler struct {
 	// allowedOrigins holds browser origins accepted besides loopback ones.
 	allowedOrigins map[string]struct{}
 	requestTimeout time.Duration
+	// maxRequestBytes is the largest request body an MCP route accepts
+	// (SPEC-0038).
+	maxRequestBytes int64
 	// strictProtocol refuses requests that fail the MCP Streamable HTTP
 	// checks; false only logs them (SPEC-0018).
 	strictProtocol bool
@@ -140,16 +147,17 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 	proxyClient := *client
 	proxyClient.CheckRedirect = func(*http.Request, []*http.Request) error { return http.ErrUseLastResponse }
 	h := &Handler{
-		table:          table,
-		client:         &proxyClient,
-		metadata:       metadata,
-		stripRequest:   map[string]struct{}{},
-		allowedOrigins: map[string]struct{}{},
-		requestTimeout: DefaultRequestTimeout,
-		strictProtocol: true,
-		recent:         newRecentTraffic(recentTrafficSize),
-		alertWindow:    alerts.NewWindow(durationBuckets),
-		history:        history.New(durationBuckets, history.DefaultMaxTools, time.Now()),
+		table:           table,
+		client:          &proxyClient,
+		metadata:        metadata,
+		stripRequest:    map[string]struct{}{},
+		allowedOrigins:  map[string]struct{}{},
+		requestTimeout:  DefaultRequestTimeout,
+		maxRequestBytes: DefaultMaxRequestBytes,
+		strictProtocol:  true,
+		recent:          newRecentTraffic(recentTrafficSize),
+		alertWindow:     alerts.NewWindow(durationBuckets),
+		history:         history.New(durationBuckets, history.DefaultMaxTools, time.Now()),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
 	registry := h.newRegistry()
@@ -172,6 +180,14 @@ func (h *Handler) StripRequestHeaders(names ...string) {
 // SetRequestTimeout bounds proxied requests; zero or less disables the bound.
 func (h *Handler) SetRequestTimeout(timeout time.Duration) {
 	h.requestTimeout = timeout
+}
+
+// SetMaxRequestBytes sets the largest request body an MCP route accepts;
+// larger requests get 413 (SPEC-0038). Zero or less keeps the current limit.
+func (h *Handler) SetMaxRequestBytes(limit int64) {
+	if limit > 0 {
+		h.maxRequestBytes = limit
+	}
 }
 
 // SetStrictProtocol sets whether requests that are not well-formed MCP
@@ -560,6 +576,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusMethodNotAllowed, errors.New("MCP routes accept GET, POST, and DELETE"))
 		return
 	}
+	// Every read of the body, here and upstream, stops at the limit, so an
+	// MCP server never receives more than it (SPEC-0038-R02).
+	if r.Body != nil && r.Body != http.NoBody {
+		r.Body = http.MaxBytesReader(w, r.Body, h.maxRequestBytes)
+	}
 
 	start := time.Now()
 	route, exists := h.table.Get(name)
@@ -593,8 +614,18 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("not found: the route forwards only its own path"))
 		return
 	}
+	// A known oversized body is refused before any of it is read or sent
+	// (SPEC-0038-R01).
+	if r.ContentLength > h.maxRequestBytes {
+		h.refuseTooLarge(w, r, route.Name, mcpCall{method: labelUnknown}, start)
+		return
+	}
 
 	call, body, err := inspectRequest(r)
+	if isTooLarge(err) {
+		h.refuseTooLarge(w, r, route.Name, call, start)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("read request body"))
 		h.finish(r, route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
@@ -725,6 +756,12 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		rec.decision = auditv1.DecisionAllow
 	}
 	resp, err := h.client.Do(req)
+	if err != nil && isTooLarge(upstreamBody.err) {
+		// The body passed the limit while it was forwarded; the server got
+		// at most the limit and the request was cut (SPEC-0038-R02).
+		h.refuseTooLarge(w, r, route.Name, call, start)
+		return
+	}
 	if err != nil {
 		// The error names the upstream URL; callers get a fixed message.
 		outcome, status, message := classifyTransportError(err), http.StatusBadGateway, "upstream request failed"
@@ -981,6 +1018,29 @@ func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code i
 		"id":      id,
 		"error":   map[string]any{"code": code, "message": message},
 	})
+}
+
+// refuseTooLarge answers a request whose body is larger than the request
+// size limit with 413 and records it as a client error (SPEC-0038-R01,
+// R04). The connection is closed so the rest of the body is not read.
+func (h *Handler) refuseTooLarge(w http.ResponseWriter, r *http.Request, route string, call mcpCall, start time.Time) {
+	message := fmt.Sprintf("request body is larger than %d bytes; raise --max-request-bytes (chart value gateway.config.maxRequestBytes) to allow it", h.maxRequestBytes)
+	if rec := auditRecordFrom(r); rec != nil {
+		rec.decision, rec.reason = auditv1.DecisionInvalid, message
+	}
+	w.Header().Set("Connection", "close")
+	if r.Method == http.MethodPost {
+		writeRPCError(w, http.StatusRequestEntityTooLarge, call.body.id, jsonRPCInvalidRequest, message)
+	} else {
+		writeError(w, http.StatusRequestEntityTooLarge, errors.New(message))
+	}
+	h.finish(r, route, call, outcomeClientError, http.StatusRequestEntityTooLarge, time.Since(start), 0, 0)
+}
+
+// isTooLarge reports a read that passed the request size limit.
+func isTooLarge(err error) bool {
+	var tooLarge *http.MaxBytesError
+	return errors.As(err, &tooLarge)
 }
 
 // authenticate refuses tokens sent outside the Authorization header

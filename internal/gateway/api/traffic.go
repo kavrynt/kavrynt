@@ -465,11 +465,17 @@ func (c *captureBuffer) Write(p []byte) (int, error) {
 type countingReader struct {
 	r io.Reader
 	n int64
+	// err is the first read error other than io.EOF, such as the request
+	// size limit's (SPEC-0038-R02).
+	err error
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
 	n, err := c.r.Read(p)
 	c.n += int64(n)
+	if err != nil && err != io.EOF && c.err == nil {
+		c.err = err
+	}
 	return n, err
 }
 

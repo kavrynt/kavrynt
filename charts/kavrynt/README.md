@@ -586,6 +586,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.service.port` | int | `8080` | Service port |
 | `gateway.config.addr` | string | `":8080"` | Listen address |
 | `gateway.config.requestTimeout` | string | `"30s"` | Upstream request timeout; event streams only until response headers |
+| `gateway.config.maxRequestBytes` | int | `4194304` | Largest request body an MCP route accepts, 1024 to 1073741824 bytes; larger requests get `413` and never reach the MCP server |
 | `gateway.config.stripRequestHeaders` | list | `[]` | Extra request headers never forwarded. `Authorization`, `Cookie`, and `Proxy-Authorization` are always removed. |
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |

@@ -40,6 +40,9 @@ service:
 config:
   addr: ":8080"
   requestTimeout: "30s"
+  # Largest request body an MCP route accepts, in bytes; larger requests get
+  # 413 and never reach the MCP server (SPEC-0038). 4 MiB by default.
+  maxRequestBytes: 4194304
   # Extra request headers never forwarded to MCP servers. Authorization,
   # Cookie, and Proxy-Authorization are always removed (no token passthrough).
   stripRequestHeaders: []

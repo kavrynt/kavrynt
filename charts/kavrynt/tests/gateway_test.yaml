@@ -148,6 +148,27 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --strict-protocol=false
 
+  # Verifies SPEC-0038-R03.
+  - it: limits MCP request bodies to 4 MiB by default
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --max-request-bytes
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "4194304"
+
+  # Verifies SPEC-0038-R03.
+  - it: passes a raised request size limit as a whole number
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.config.maxRequestBytes: 10485760
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: "10485760"
+
   # Verifies SPEC-0003-R11.
   - it: refuses the removed gateway.config.watchNamespaces
     template: charts/gateway/templates/rbac.yaml
