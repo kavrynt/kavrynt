@@ -20,7 +20,7 @@ topologySpreadConstraints: []
 
 image:
   repository: kavrynt/gateway
-  tag: 1.0.0-beta.3
+  tag: 1.0.0-beta.4
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -88,6 +88,15 @@ auth:
   # token exchange (SPEC-0015), one key per issuer's clientSecretKey. The
   # kubelet mounts it; the Gateway gets no RBAC on Secrets.
   tokenExchangeSecret: ""
+  # Gateway audience (SPEC-0031): the listed routes also accept a token
+  # whose audience is resourceURL, so an agent that calls many servers needs
+  # one audience instead of one per route. A leaked token then reaches every
+  # listed route, so list only what one token should reach: route names
+  # (<namespace>.<name>) and <namespace>.* patterns; "*" is refused. Policy
+  # input and audit events say which audience a call used.
+  gatewayAudience:
+    enabled: false
+    routes: []
 
 # Audit events (SPEC-0013): one JSON line per MCP request on the Gateway's
 # standard output ("type":"kavrynt.audit.v1"), with the caller, route, method,
@@ -152,6 +161,33 @@ console:
     # X-Forwarded-For names, not against the proxy (SPEC-0030). List only
     # the proxies: an address listed here can name any client.
     trustedProxies: []
+    # Sign in through your identity provider instead of the shared admin
+    # password (SPEC-0032). Register a confidential client whose redirect
+    # URL is https://<gateway host>/v1/session/oidc/callback. Only the
+    # listed subjects and groups get a console session.
+    oidc:
+      enabled: false
+      # Must equal the ID tokens' iss; https unless allowHTTP (in-cluster
+      # only; the browser's authorization endpoint must still be https).
+      issuer: ""
+      allowHTTP: false
+      clientID: ""
+      # Secret in the release namespace with the client secret; mounted by
+      # the kubelet, never passed as a flag.
+      clientSecret:
+        name: ""
+        key: client-secret
+      redirectURL: ""
+      # Shown on the "Sign in with ..." button.
+      providerName: ""
+      # Scopes besides openid, for example [profile, groups].
+      scopes: []
+      allowedSubjects: []
+      allowedGroups: []
+      groupsClaim: groups
+      displayClaim: preferred_username
+      # Keep the admin password login as a break-glass login; warned about.
+      keepAdminLogin: false
   # Dashboards (SPEC-0024): each replica keeps 24 hours of its own calls in
   # memory, about 29 KiB per route and 23 KiB per tool (about 27 MiB for
   # 300 routes with the default cap).

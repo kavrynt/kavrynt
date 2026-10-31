@@ -29,6 +29,15 @@ const (
 	OutcomeAuthUnavailable = "auth_unavailable"
 )
 
+// Audiences a token can be accepted for (SPEC-0031-R04).
+const (
+	// AudienceRoute: the token's aud contains the route's own URI.
+	AudienceRoute = "route"
+	// AudienceGateway: the token's aud contains the Gateway audience but not
+	// the route's own URI, accepted for a listed route.
+	AudienceGateway = "gateway"
+)
+
 // clockSkew is the leeway for exp, nbf, and iat (SPEC-0006-R08).
 const clockSkew = 60 * time.Second
 
@@ -81,6 +90,10 @@ type Config struct {
 	// TokenExchangeSecretDir is the mounted Secret with the client secrets
 	// of the issuers' TokenExchange settings.
 	TokenExchangeSecretDir string
+	// GatewayAudienceRoutes are the routes that also accept a token whose
+	// audience is ResourceURL: route names and <namespace>.* patterns
+	// (SPEC-0031-R02). Empty accepts only each route's own URI.
+	GatewayAudienceRoutes []string
 }
 
 // Validate reports configuration the Gateway must refuse to start with
@@ -119,7 +132,42 @@ func (c Config) Validate() error {
 			return fmt.Errorf("required scope %q is not a valid scope token", scope)
 		}
 	}
+	for _, entry := range c.GatewayAudienceRoutes {
+		if !gatewayAudienceEntry.MatchString(entry) {
+			return fmt.Errorf("gateway audience route %q must be <namespace>.<name> or <namespace>.*", entry)
+		}
+	}
 	return nil
+}
+
+// gatewayAudienceEntry is a route name or a <namespace>.* pattern; "*" alone
+// is refused (SPEC-0031-R02). Namespaces are DNS labels, so a route's
+// namespace ends at its first dot.
+var gatewayAudienceEntry = regexp.MustCompile(`^[a-z0-9]([-a-z0-9]*[a-z0-9])?\.(\*|[a-z0-9]([-a-z0-9.]*[a-z0-9])?)$`)
+
+// gatewayAudience is the route list, indexed once at start.
+type gatewayAudience struct {
+	entries    []string
+	routes     map[string]bool
+	namespaces map[string]bool
+}
+
+func newGatewayAudience(entries []string) gatewayAudience {
+	g := gatewayAudience{entries: slices.Clone(entries), routes: map[string]bool{}, namespaces: map[string]bool{}}
+	for _, entry := range entries {
+		if namespace, ok := strings.CutSuffix(entry, ".*"); ok {
+			g.namespaces[namespace] = true
+		} else {
+			g.routes[entry] = true
+		}
+	}
+	return g
+}
+
+// covers reports whether the list names route or its namespace.
+func (g gatewayAudience) covers(route string) bool {
+	namespace, _, _ := strings.Cut(route, ".")
+	return g.routes[route] || g.namespaces[namespace]
 }
 
 var secretKeyName = regexp.MustCompile(`^[-._a-zA-Z0-9]{1,253}$`)
@@ -165,6 +213,8 @@ type Identity struct {
 	ClientID string
 	Issuer   string
 	Scopes   []string
+	// Audience is AudienceRoute or AudienceGateway (SPEC-0031-R04).
+	Audience string
 }
 
 // Refusal is the answer to a request that is not authenticated.
@@ -184,6 +234,7 @@ type Authenticator struct {
 	issuers        map[string]*keySet
 	issuerList     []string
 	requiredScopes []string
+	gateway        gatewayAudience
 	now            func() time.Time
 	logger         *slog.Logger
 
@@ -212,6 +263,7 @@ func New(cfg Config, transport http.RoundTripper, logger *slog.Logger) (*Authent
 		resource:       strings.TrimRight(cfg.ResourceURL, "/"),
 		issuers:        map[string]*keySet{},
 		requiredScopes: slices.Clone(cfg.RequiredScopes),
+		gateway:        newGatewayAudience(cfg.GatewayAudienceRoutes),
 		now:            time.Now,
 		logger:         logger,
 		secretDir:      cfg.TokenExchangeSecretDir,
@@ -233,6 +285,18 @@ func (a *Authenticator) clock() time.Time { return a.now() }
 // carry (RFC 8707).
 func (a *Authenticator) ResourceURI(route string) string {
 	return a.resource + "/mcp/" + route
+}
+
+// GatewayAudienceRoutes returns a copy of the routes that accept the Gateway
+// audience, empty (not nil) when it is off (SPEC-0031-R06).
+func (a *Authenticator) GatewayAudienceRoutes() []string {
+	return append([]string{}, a.gateway.entries...)
+}
+
+// GatewayAudienceEnabled reports whether any route accepts the Gateway
+// audience.
+func (a *Authenticator) GatewayAudienceEnabled() bool {
+	return len(a.gateway.entries) > 0
 }
 
 // MetadataPath is the path of a route's Protected Resource Metadata.
@@ -275,7 +339,7 @@ type claims struct {
 }
 
 // Authenticate verifies the request's bearer token for route
-// (SPEC-0006-R03 to R09, R12).
+// (SPEC-0006-R03 to R09, R12, and SPEC-0031-R02, R03).
 func (a *Authenticator) Authenticate(r *http.Request, route string) (Identity, *Refusal) {
 	raw, ok := bearerToken(r.Header.Values("Authorization"))
 	if !ok {
@@ -318,9 +382,20 @@ func (a *Authenticator) Authenticate(r *http.Request, route string) (Identity, *
 	if verified.Expiry == nil {
 		return a.invalid(route, "no exp claim")
 	}
-	expected := jwt.Expected{Issuer: unverified.Issuer, AnyAudience: jwt.Audience{a.ResourceURI(route)}, Time: a.now()}
+	expected := jwt.Expected{Issuer: unverified.Issuer, Time: a.now()}
 	if err := verified.ValidateWithLeeway(expected, clockSkew); err != nil {
 		return a.invalid(route, err.Error())
+	}
+	// The route's own URI takes precedence; the Gateway audience counts
+	// only for listed routes.
+	var audience string
+	switch {
+	case verified.Audience.Contains(a.ResourceURI(route)):
+		audience = AudienceRoute
+	case verified.Audience.Contains(a.resource) && a.gateway.covers(route):
+		audience = AudienceGateway
+	default:
+		return a.invalid(route, jwt.ErrInvalidAudience.Error())
 	}
 
 	scopes := verified.scopes()
@@ -333,7 +408,7 @@ func (a *Authenticator) Authenticate(r *http.Request, route string) (Identity, *
 	if clientID == "" {
 		clientID = verified.AZP
 	}
-	return Identity{Subject: verified.Subject, ClientID: clientID, Issuer: verified.Issuer, Scopes: scopes}, nil
+	return Identity{Subject: verified.Subject, ClientID: clientID, Issuer: verified.Issuer, Scopes: scopes, Audience: audience}, nil
 }
 
 func (c claims) scopes() []string {

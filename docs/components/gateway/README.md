@@ -155,6 +155,7 @@ credential, or an unknown route, when it completes.
 | `instance`, `seq` | Gateway instance (pod name and a start nonce) and its event number, from 1 |
 | `request_id` | Also returned to the client as `X-Request-Id` |
 | `subject`, `client_id`, `issuer` | The verified caller; empty without client authentication |
+| `audience` | `route` or `gateway`, the audience the caller's token was accepted for (SPEC-0031); only present while the Gateway audience is enabled |
 | `route` | `namespace`, `name` |
 | `http_method`, `mcp_method`, `tool` | What was asked |
 | `decision` | `allow`, `deny` (policy), `unauthenticated`, `forbidden` (scope), `invalid` (bad request, unknown route), `unavailable` (issuer keys or upstream credential) |
@@ -164,10 +165,15 @@ credential, or an unknown route, when it completes.
 | `filtered_tools` | Tools removed from a `tools/list` answer by the policy (SPEC-0016); only present when some were |
 | `prev_hash`, `hash` | The chain |
 
-Fields that do not apply are present and empty, except `filtered_tools`.
-`kavryctl audit verify` of a release before `filtered_tools` existed reports
-events that carry it as breaks; verify with the `kavryctl` of the Gateway's
-release. Events never contain tool
+Fields that do not apply are present and empty, except `filtered_tools` and
+`audience`. The Gateway writes each event as its canonical form with `hash`
+as the last member, so `kavryctl audit verify` checks the hash on the line
+as written and accepts fields added by a newer Gateway (SPEC-0035); it says
+how many events carried such fields. A line a log collector re-encoded is
+checked by re-encoding its known fields, as before; if it also has unknown
+fields and does not verify, the break says so instead of calling it
+altered. `kavryctl` releases before this one report events with fields
+they do not know as altered; verify with this release or later. Events never contain tool
 arguments, results, bodies, tokens, credentials, cookies, or headers; they do
 identify people and agents, so treat them as personal data.
 
@@ -249,6 +255,7 @@ Input:
 | Field | Value |
 | --- | --- |
 | `subject`, `client_id`, `issuer`, `scopes` | The verified caller (MCP client authentication); empty without it |
+| `audience` | `route` when the token's `aud` contains the route's own resource URI (also when it contains the Gateway audience too), `gateway` when it was accepted for the [Gateway audience](#gateway-audience) alone; empty without MCP client authentication |
 | `route.namespace`, `route.name` | The `MCPServer` |
 | `http_method` | `POST`, `GET`, `DELETE` |
 | `mcp_method` | JSON-RPC method of a `POST`; empty for other methods and for JSON-RPC responses |
@@ -267,10 +274,14 @@ not `false`; MCP's defaults for absent hints are `readOnlyHint: false`,
 policy sees hints only once a discovery of the current spec has succeeded:
 after a failed discovery or a spec change, every tool has
 `tool_annotations: {}` and `tool_discovered: false`, and so does a tool the
-server added since the last discovery. A denied request gets `403` with
-a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
-policy's `reason` with control characters removed and at most 200
-characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
+server added since the last discovery. A denied JSON-RPC request gets
+`200` with a JSON-RPC error (`code` -32001, `message` `denied by policy:
+<reason>`, the policy's `reason` with control characters removed and at most
+200 characters), as an MCP server answers a request it refuses, so MCP
+client SDKs give the agent the reason (SPEC-0036). A denied notification,
+response, `GET`, or `DELETE` has no response to carry it and gets `403` with
+the same body. Either way the outcome is `denied`, the audit event's decision
+is `deny`, and the request never reaches the server. With a policy, a `POST` the Gateway cannot
 read (not a single JSON object, over 1 MiB, `tools/call` without a string
 `params.name`) or whose `Mcp-Method`/`Mcp-Name` headers disagree with the body
 gets `400`. None of these reach the MCP server.
@@ -303,9 +314,23 @@ mount the current ConfigMap and load it before they are ready. Policies
 cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
-[`examples/policy`](../../examples/policy) (allow authenticated callers, a
-per-client tool allow-list, read-only methods, and read-only tools of
-trusted servers by their reported hints).
+[`examples/policy`](../../../examples/policy) (allow authenticated callers, a
+per-client tool allow-list, read-only methods, read-only tools of trusted
+servers by their reported hints, and tools that may be destructive only for
+listed clients).
+
+**Write hint-based policies to fail closed.** Once the Operator records a
+failed discovery, every tool has `tool_annotations: {}` and
+`tool_discovered: false` until a discovery succeeds again. That happens when
+a discovery (every 5 minutes, and after changes) finds the server
+unreachable, for example while its pod restarts; a restart that falls
+between two discoveries keeps the previous hints. A deny rule such as
+`input.tool_annotations.destructiveHint == true` then matches nothing and
+the destructive tools are allowed, and listed with `filterToolsList`. Allow on hints instead (`tool_discovered` and
+`readOnlyHint == true`, or `destructiveHint == false`) and treat everything
+else as unknown, as
+[`deny-destructive-tools.rego`](../../../examples/policy/deny-destructive-tools.rego)
+does. An absent `destructiveHint` means `true` in MCP.
 
 **Filtered tool lists.** With `--policy-filter-tools-list` (chart:
 `gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
@@ -341,7 +366,8 @@ A request to `/mcp/<namespace>.<name>` is forwarded only with
   (60 s leeway);
 - has an `aud` that contains the route's resource URI,
   `<resourceURL>/mcp/<namespace>.<name>` (RFC 8707): a token for another
-  route, for the Gateway's base URL, or for any other resource is refused;
+  route, for the Gateway's base URL, or for any other resource is refused,
+  unless the [Gateway audience](#gateway-audience) covers the route;
 - carries every scope in `--auth-required-scopes` (`scope`, space-separated,
   or `scp`).
 
@@ -386,6 +412,62 @@ only, without endpoints. `GET /v1/session` reports `mcpAuth`. The console's
 Playground offers a field for an access token, kept in page memory only and
 sent only in the `Authorization` header of its own calls, and explains `401`,
 `403`, and `503` answers. The console login never authorizes `/mcp/` calls.
+
+### Gateway audience
+
+With `--auth-gateway-audience-routes` (chart:
+`gateway.auth.gatewayAudience.enabled` and `.routes`; SPEC-0031) the listed
+routes also accept a token whose `aud` contains the Gateway audience,
+`resourceURL` exactly, without a trailing slash even when `resourceURL`
+was configured with one (the Gateway removes it; a `resourceURL` with a
+path is refused at start). An agent that calls many
+servers then needs one audience instead of one per route. It is off by
+default.
+
+- The list holds route names (`team-a.search`) and namespace patterns
+  (`team-a.*`). The chart refuses an empty list, `*`, and turning it on
+  without MCP client authentication; the Gateway refuses to start with
+  anything else in the list.
+- A token whose `aud` contains the route's own resource URI is accepted as
+  before, listed or not; the route's own URI takes precedence. A token for
+  the Gateway audience alone is refused (`401`) on routes the list does not
+  cover. Every other check (issuer, signature, time, scopes) still applies.
+- The policy input and audit events carry `audience`: `route` or
+  `gateway`. A policy can require a route's own audience for sensitive
+  routes. `decision` is a complete rule, so two definitions that both
+  match one call are an evaluation error (denied, but as a failure):
+  exclude the case from the allow rules instead of adding a second
+  `decision`:
+
+  ```rego
+  package kavrynt.authz
+
+  sensitive_route if input.route == {"namespace": "payments", "name": "refunds"}
+
+  default decision := {"allow": false, "reason": "not allowed"}
+
+  refused_audience if {
+      sensitive_route
+      input.audience == "gateway"
+  }
+
+  decision := {"allow": false, "reason": "this route needs a token for its own audience"} if refused_audience
+
+  decision := {"allow": true} if {
+      not refused_audience
+      input.client_id == "support-agent"
+  }
+  ```
+
+- The Gateway logs a warning at start naming the audience and the routes,
+  `GET /v1/session` reports them as `gatewayAudience` to signed-in
+  sessions (and without console login), and the console's notice names
+  them, also when opened through a port-forward.
+
+**Trade-off.** A token for the Gateway audience reaches every listed route,
+so a leaked token reaches all of them. List only what one token should
+reach. Protected Resource Metadata is unchanged: clients that request a
+token per route keep working.
 
 ## Token exchange
 
@@ -703,6 +785,34 @@ the Gateway's service account has no RBAC on Secrets.
 - `console.auth.enabled=false` (flag `--console-auth=false`) turns the login
   off; `/v1/servers` and `/v1/traffic` are then open as before.
 
+#### Sign-in through your identity provider
+
+With `console.auth.oidc.enabled` (flags `--console-oidc` and
+`--console-oidc-secret-file`; SPEC-0032), people sign in to the console with
+your OpenID Connect provider instead of the shared password. Only the
+subjects in `allowedSubjects`, or members of a group in `allowedGroups`
+(from the `groupsClaim`, default `groups`), get a session.
+
+- Register a confidential client whose redirect URL is
+  `https://<gateway host>/v1/session/oidc/callback`, and put its secret in a
+  Secret named by `console.auth.oidc.clientSecret`; the kubelet mounts it,
+  and it never appears in flags or logs.
+- The console offers "Sign in with `providerName`". The Gateway redirects to
+  the provider's authorization endpoint (from its metadata, always `https`)
+  with PKCE (`S256`), `state`, and `nonce`, kept in a signed cookie for 10
+  minutes. The callback exchanges the code (`client_secret_basic`) and
+  verifies the ID token: signature, issuer, times, `aud` the client ID
+  (with `azp` when there are other audiences), and `nonce`.
+- The session has the cookie properties above and names the person by
+  `displayClaim` (default `preferred_username`, then `sub`). The console
+  header shows how they signed in.
+- The admin password login answers `404` and its sessions stop counting,
+  unless `keepAdminLogin: true` keeps it as a break-glass login, which the
+  Gateway warns about at start.
+- Refused sign-ins are logged with a reason, never with the code or a
+  token. Sign-in sessions end with their lifetime; there is no single logout
+  at the provider.
+
 **What the login does not protect.** It covers the console and the two
 endpoints it reads. It is not client authentication: unless MCP client
 authentication is on, `/mcp/` routes stay open, so anyone who can reach the
@@ -743,7 +853,8 @@ tool arguments, and results are never recorded.
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
   unavailable, `503`); `credential_unavailable` (`503`) when a server's
   stored upstream credential is missing or not pinned to its endpoint;
-  `denied` (`403`) when the tool authorization policy refuses the call;
+  `denied` (`200` with a JSON-RPC error for a request, `403` otherwise) when
+  the tool authorization policy refuses the call;
   `protocol_error` (`400`) when the request is not well-formed MCP
   Streamable HTTP; `exchange_failed` (`502`/`503`) when the caller's
   token could not be exchanged for the server; and `session_not_found`
@@ -836,6 +947,7 @@ grouped by `client_id` or `subject`.
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |
 | `--token-exchange-secret-dir` | none (chart: the mounted `auth.tokenExchangeSecret`) | Directory of the Secret with the client secrets named by the issuers' `tokenExchange.clientSecretKey` (`KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR`) |
 | `--auth-required-scopes` | none (chart: `auth.requiredScopes`) | Comma-separated scopes every token must carry (`KAVRYNT_AUTH_REQUIRED_SCOPES`) |
+| `--auth-gateway-audience-routes` | none (chart: `auth.gatewayAudience.routes` with `auth.gatewayAudience.enabled`) | Comma-separated routes (`<namespace>.<name>` or `<namespace>.*`) that also accept a token for the Gateway audience, `--auth-resource-url`; needs `--auth` (`KAVRYNT_AUTH_GATEWAY_AUDIENCE_ROUTES`) |
 | `--audit` | `false` (chart: `audit.enabled`) | Write one audit event per MCP request to standard output |
 | `--audit-queue-size` | `10000` (chart: `audit.queueSize`) | Audit events that may wait to be written |
 | `--audit-on-overflow` | `reject` (chart: `audit.onOverflow`) | With a full queue: `reject` new MCP requests (`503`) or `drop` their events |

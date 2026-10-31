@@ -39,8 +39,11 @@ type keySet struct {
 	mu      sync.Mutex
 	jwksURI string
 	// tokenEndpoint is the configured or discovered token endpoint, for
-	// token exchange (SPEC-0015).
+	// token exchange (SPEC-0015) and console sign-in (SPEC-0032).
 	tokenEndpoint string
+	// authorizationEndpoint is the discovered authorization endpoint, for
+	// console sign-in (SPEC-0032).
+	authorizationEndpoint string
 	// discoveredAt is the last metadata fetch, successful or not.
 	discoveredAt time.Time
 	keySet       jose.JSONWebKeySet
@@ -141,9 +144,10 @@ func (s *keySet) discover(ctx context.Context) error {
 	var errs []error
 	for _, metadataURL := range metadataURLs(s.issuer.Issuer) {
 		var metadata struct {
-			Issuer        string `json:"issuer"`
-			JWKSURI       string `json:"jwks_uri"`
-			TokenEndpoint string `json:"token_endpoint"`
+			Issuer                string `json:"issuer"`
+			JWKSURI               string `json:"jwks_uri"`
+			TokenEndpoint         string `json:"token_endpoint"`
+			AuthorizationEndpoint string `json:"authorization_endpoint"`
 		}
 		if err := s.getJSON(ctx, metadataURL, &metadata); err != nil {
 			errs = append(errs, err)
@@ -164,6 +168,8 @@ func (s *keySet) discover(ctx context.Context) error {
 			}
 			s.tokenEndpoint = metadata.TokenEndpoint
 		}
+		// The browser reaches it, so it is checked by its user (SPEC-0032-R03).
+		s.authorizationEndpoint = metadata.AuthorizationEndpoint
 		return nil
 	}
 	return fmt.Errorf("discover authorization server metadata: %w", errors.Join(errs...))

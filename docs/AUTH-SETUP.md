@@ -172,6 +172,54 @@ The same token on another route answers `401` with
 | `503` with `Retry-After` | The Gateway cannot load Keycloak's keys: check the issuer URL, `allowHTTP`, and that the Gateway can reach the Service |
 | The chart refuses the values | `resourceURL` is not `https`, or has a path |
 
+## Console sign-in with Keycloak
+
+The console can use Keycloak for people too (SPEC-0032). This was not yet
+run against a live provider; the unit tests cover the flow. Before you
+start:
+
+- **Keycloak must be reachable at an `https` URL** from people's browsers,
+  for example through an Ingress, and `KC_HOSTNAME` must be that URL. The
+  lab of step 1 (`http://keycloak.idp.svc.cluster.local:8080`) works for
+  agents' tokens but not here: the browser cannot reach it, and its ID
+  tokens would name an `http` issuer that differs from the one below.
+- **Use the `$KC` and `A` variables of step 2** (an admin token for that
+  Keycloak) in the commands below.
+
+Create a confidential client with the standard flow and the Gateway's
+callback as its redirect URL, and a group mapper so ID tokens carry
+`groups`:
+
+```bash
+GATEWAY=https://mcp.example.com      # the console's external URL
+curl -s "${A[@]}" $KC/admin/realms/agents/clients -d '{
+  "clientId": "kavrynt-console", "secret": "console-secret",
+  "publicClient": false, "standardFlowEnabled": true, "serviceAccountsEnabled": false,
+  "redirectUris": ["'"$GATEWAY"'/v1/session/oidc/callback"],
+  "attributes": {"pkce.code.challenge.method": "S256"},
+  "protocolMappers": [{"name": "groups", "protocol": "openid-connect",
+    "protocolMapper": "oidc-group-membership-mapper",
+    "config": {"claim.name": "groups", "full.path": "false", "id.token.claim": "true"}}]}'
+kubectl -n kavrynt-system create secret generic kavrynt-console-oidc --from-literal=client-secret=console-secret
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VERSION" \
+  -n kavrynt-system --reset-then-reuse-values \
+  --set gateway.console.auth.oidc.enabled=true \
+  --set gateway.console.auth.oidc.issuer=https://keycloak.example.com/realms/agents \
+  --set gateway.console.auth.oidc.clientID=kavrynt-console \
+  --set gateway.console.auth.oidc.clientSecret.name=kavrynt-console-oidc \
+  --set gateway.console.auth.oidc.redirectURL=$GATEWAY/v1/session/oidc/callback \
+  --set gateway.console.auth.oidc.providerName=Keycloak \
+  --set 'gateway.console.auth.oidc.allowedGroups={platform}' \
+  --set "gateway.config.allowedOrigins={$GATEWAY}"
+```
+
+Set `issuer` to `KC_HOSTNAME` followed by `/realms/agents`, exactly as it
+appears in the ID tokens' `iss`. `allowedOrigins` lets the console's own
+requests (log out, playground) through at a non-loopback address; the
+`--set` replaces the list, so name any origins you already allow too. Add people to the `platform`
+group in Keycloak; others get "not allowed". The admin password then stops
+working unless `keepAdminLogin` is set.
+
 ## Many servers per agent
 
 Each route has its own audience, so an agent that calls ten MCP servers
@@ -183,3 +231,29 @@ every route the client may call, and the token works on each of them.
 Keep the lists small: each audience is a route the token can reach if it
 leaks. Per-route audiences are how the Gateway limits a token to the
 servers an agent should use.
+
+### One audience for a group of routes
+
+When per-route audiences are too much to manage, or your authorization
+server issues one audience per token, turn on the Gateway audience
+(SPEC-0031) for the routes one token should reach:
+
+```bash
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --reuse-values \
+  --version "$KAVRYNT_VERSION" \
+  --namespace kavrynt-system \
+  --set gateway.auth.gatewayAudience.enabled=true \
+  --set 'gateway.auth.gatewayAudience.routes={team-a.*,team-c.reports}'
+```
+
+Those routes then also accept a token whose `aud` is `resourceURL` itself,
+for example `https://mcp.example.com`, without a trailing slash even if
+you configured `resourceURL` with one. With Keycloak, that is one audience
+mapper on the agent's client with that value, instead of one per route.
+Routes outside the list still need their own audience.
+
+A leaked token for the Gateway audience reaches every listed route, so list
+namespaces or routes, never everything (the chart refuses `*`). Policies see
+`input.audience` (`gateway` or `route`) and can require a route's own
+audience for sensitive servers. See
+[Gateway audience](components/gateway/README.md#gateway-audience).

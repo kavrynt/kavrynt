@@ -43,12 +43,25 @@ global so the Operator reads the same list.
 
 {{/*
 "true" when MCP client authentication is on. Fails rendering for settings the
-Gateway would refuse at start-up (SPEC-0006-R02, SPEC-0006-R20), and with
+Gateway would refuse at start-up (SPEC-0006-R02, SPEC-0006-R20, SPEC-0031-R01,
+SPEC-0031-R02), and with
 one message naming both ways forward when it is on by default without
 settings (SPEC-0014-R02).
 */}}
 {{- define "gateway.clientAuthEnabled" -}}
 {{- $auth := .Values.auth | default dict -}}
+{{- $gatewayAudience := $auth.gatewayAudience | default dict -}}
+{{- if $gatewayAudience.enabled -}}
+{{- if not $auth.enabled -}}
+{{- fail "gateway.auth.gatewayAudience: needs gateway.auth.enabled=true; without MCP client authentication routes take no tokens" -}}
+{{- end -}}
+{{- if not $gatewayAudience.routes -}}
+{{- fail "gateway.auth.gatewayAudience.routes: list the routes one token may reach (<namespace>.<name> or <namespace>.*)" -}}
+{{- end -}}
+{{- if has "*" $gatewayAudience.routes -}}
+{{- fail "gateway.auth.gatewayAudience.routes: \"*\" is refused; list route names or <namespace>.* patterns, so a leaked token reaches only what you name" -}}
+{{- end -}}
+{{- end -}}
 {{- if $auth.enabled -}}
 {{- if or (not $auth.resourceURL) (not $auth.issuers) -}}
 {{- fail "gateway.auth: MCP client authentication is on by default. Set gateway.auth.resourceURL (the Gateway's external https origin) and gateway.auth.issuers to trust your authorization server, or set gateway.auth.enabled=false to run with unauthenticated MCP routes" -}}
@@ -71,6 +84,29 @@ true
 {{- $console := .Values.console | default dict -}}
 {{- $auth := $console.auth | default dict -}}
 {{- if and $console.enabled $auth.enabled -}}true{{- end -}}
+{{- end -}}
+
+{{/*
+"true" when console sign-in through the identity provider is on. Fails
+rendering for settings the Gateway would refuse (SPEC-0032-R01).
+*/}}
+{{- define "gateway.consoleOIDCEnabled" -}}
+{{- $oidc := (((.Values.console | default dict).auth | default dict).oidc | default dict) -}}
+{{- if $oidc.enabled -}}
+{{- if not (include "gateway.consoleAuthEnabled" .) -}}
+{{- fail "gateway.console.auth.oidc: needs gateway.console.enabled and gateway.console.auth.enabled; the console session key signs the sessions" -}}
+{{- end -}}
+{{- if or (not $oidc.issuer) (not $oidc.clientID) (not ($oidc.clientSecret | default dict).name) (not $oidc.redirectURL) -}}
+{{- fail "gateway.console.auth.oidc: set issuer, clientID, clientSecret.name, and redirectURL (https://<gateway host>/v1/session/oidc/callback)" -}}
+{{- end -}}
+{{- if and (hasPrefix "http://" $oidc.issuer) (not $oidc.allowHTTP) -}}
+{{- fail "gateway.console.auth.oidc.issuer uses http; set allowHTTP: true for an in-cluster identity provider" -}}
+{{- end -}}
+{{- if and (not $oidc.allowedSubjects) (not $oidc.allowedGroups) -}}
+{{- fail "gateway.console.auth.oidc: list allowedSubjects or allowedGroups; nobody else may sign in" -}}
+{{- end -}}
+true
+{{- end -}}
 {{- end -}}
 
 {{/* The Secret holding the console admin password and session key. */}}

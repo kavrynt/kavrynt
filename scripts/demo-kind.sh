@@ -402,7 +402,7 @@ CMD
   say "Console > Traffic shows the same calls; Playground calls tools from the browser."
   pause
 
-  step "Guardrails that exist today" "Defense in depth while authentication is still on the roadmap."
+  step "Guardrails that exist today" "Defense in depth that holds even with client authentication turned off, as in this demo."
   say "a) The CRD rejects endpoints with embedded credentials at admission:"
   run expect-fail <<'CMD'
 kubectl apply --dry-run=server -f - <<'EOF'
@@ -458,7 +458,7 @@ CMD
 mcp team-sre.incidents '{"jsonrpc":"2.0","id":4,"method":"tools/call","params":{"name":"acknowledge_incident","arguments":{"id":"INC-1043","note":"ack from an unauthenticated client"}}}' | jq -r '.result.content[0].text'
 CMD
   expect "INC-1043 acknowledged"
-  say "No client identity, no tool policy, no audit record. That is ADR-0003, next on the roadmap."
+  say "This demo opted out of client authentication, so no identity was checked. Policy and audit are opt-in; approvals are not built yet (ADR-0003)."
   pause
 
   step "Lifecycle" "Unregister, and the route disappears from the Gateway."
@@ -477,12 +477,15 @@ CMD
 
   step "What Kavrynt does not do yet"
   cat <<'EOF'
-  - No client authentication or token exchange: anyone who reaches the Gateway
-    can call every routed tool. The console has no login.
-  - No policy or tool-level authorization, and no audit log.
+  - Client authentication is on by default, but this demo opts out: anyone
+    who reaches the Gateway can call every routed tool. The console login
+    protects the console only.
+  - Tool authorization policy and audit events are opt-in; no approvals yet.
   - HTTP MCP servers only; stdio manifests validate but are not proxied.
-  - Single replica; no tested high-availability profile.
-  - 0.0.x beta, one maintainer organization. Run it in trusted dev or
+  - The demo runs one replica; the high-availability profile is tested in CI.
+    kavryctl export and import back up MCPServer registrations only; audit
+    events and Secrets have no backup or restore workflow.
+  - 1.0.0 beta, one maintainer organization. Run it in trusted dev or
     evaluation clusters only.
 EOF
   pause

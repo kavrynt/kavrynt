@@ -19,7 +19,7 @@
     RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
     alertMarks, topLists, rangeSummary, toolRows, dashboardNote, grafanaLinks,
   } = Kavrynt.charts;
-  const { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, notice } = Kavrynt.state;
+  const { parseHash, formatHash, createPoller, sessionState, logoutDone, loginMessage, notice, noticeShown } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
@@ -177,12 +177,14 @@
 
   async function checkSession() {
     let next = null;
+    // unreachable: no usable answer, so the login page offers a retry
+    // instead of guessing which sign-ins are on.
     try {
       const res = await fetch("/v1/session", { headers: { Accept: "application/json" }, cache: "no-store" });
       next = sessionState(res.status, await res.json().catch(() => null));
     } catch { /* treated as login required below */ }
     // Fail closed: an unexpected answer shows the login form, not data.
-    Object.assign(state.auth, next || { enabled: true, signedIn: false, username: "", expiresAt: "" }, { checked: true });
+    Object.assign(state.auth, next || { enabled: true, signedIn: false, username: "", expiresAt: "" }, { checked: true, unreachable: !next });
     drawUser();
     initNotice();
   }
@@ -191,7 +193,9 @@
   // traffic, or Playground data stays on screen or in memory (SPEC-0005-R14).
   function signedOut(message) {
     const wasSignedIn = state.auth.signedIn;
-    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
+    // checked: false until /v1/session says again which sign-ins the login
+    // page offers; a signed-in answer did not carry them (SPEC-0032-R03).
+    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "", checked: false });
     Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set(),
       alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null, history: null, historyFor: "", historyPath: "", historyError: null });
     resetPlayground();
@@ -199,6 +203,7 @@
     drawAlertCount();
     render();
     if (wasSignedIn && message) toast(message);
+    checkSession().then(render);
   }
 
   async function signedIn() {
@@ -210,7 +215,10 @@
   }
 
   async function logout() {
-    try { await fetch("/v1/session", { method: "DELETE", cache: "no-store" }); } catch { /* the cookie also expires */ }
+    let status = 0;
+    try { status = (await fetch("/v1/session", { method: "DELETE", cache: "no-store" })).status; } catch { /* status stays 0 */ }
+    // The session cookie stays valid when the Gateway did not end it.
+    if (!logoutDone(status)) { toast("Could not sign out. Try again."); return; }
     signedOut("Signed out.");
   }
 
@@ -220,11 +228,31 @@
     clear(el);
     el.hidden = !(state.auth.enabled && state.auth.signedIn);
     if (el.hidden) return;
+    // How the person signed in, as visible text (SPEC-0032-R11).
+    const via = state.auth.method === "oidc" ? "SSO" : "admin login";
     put(el, h("span", { class: "user-name", text: state.auth.username, title: state.auth.expiresAt ? "Session ends " + new Date(state.auth.expiresAt).toLocaleString() : undefined }),
+      h("span", { class: "muted small", text: "(" + via + ")" }),
       h("button", { type: "button", class: "linkish", onclick: logout }, "Log out"));
   }
 
   function renderLogin(root) {
+    // Sign-in through the identity provider (SPEC-0032-R03), and the admin
+    // password only while it is on (R10).
+    if (state.auth.unreachable) {
+      put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },
+        h("h1", { text: "Sign in" }),
+        h("p", { class: "error-text", role: "alert", text: "Could not reach the Gateway to see how to sign in." }),
+        h("button", { type: "button", class: "btn primary", onclick: () => checkSession().then(render) }, "Try again"))));
+      return;
+    }
+    const sso = state.auth.sso ? h("a", { class: "btn primary", href: state.auth.sso.href, text: state.auth.sso.label }) : null;
+    if (!state.auth.adminLogin) {
+      put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },
+        h("h1", { text: "Sign in" }),
+        h("p", { class: "muted", text: "Sign in to see MCP servers, tools, and traffic." }),
+        sso || h("p", { class: "error-text", text: "Sign-in is not available. Ask the platform team." }))));
+      return;
+    }
     const user = h("input", { type: "text", id: "login-user", name: "username", value: "admin", autocomplete: "username", required: true });
     const password = h("input", { type: "password", id: "login-password", name: "password", autocomplete: "current-password", required: true });
     const error = h("p", { class: "error-text", role: "alert" });
@@ -255,7 +283,8 @@
       },
     },
     h("h1", { text: "Sign in" }),
-    h("p", { class: "muted", text: "Sign in as admin to see MCP servers, tools, and traffic." }),
+    sso ? h("p", {}, sso) : null,
+    h("p", { class: "muted", text: sso ? "Or sign in as admin (break-glass login)." : "Sign in as admin to see MCP servers, tools, and traffic." }),
     h("div", { class: "field" }, h("label", { for: "login-user", text: "Username" }), user),
     h("div", { class: "field" }, h("label", { for: "login-password", text: "Password" }), password),
     error,
@@ -1182,10 +1211,11 @@
 
   // Say what is not protected wherever the console is reachable from more
   // than this machine: without login, the console and MCP routes
-  // (SPEC-0002-R12); with login, still the MCP routes (SPEC-0005-R16).
+  // (SPEC-0002-R12); with login, still the MCP routes (SPEC-0005-R16); and
+  // which routes share the Gateway audience (SPEC-0031-R06).
   function initNotice() {
     const el = document.getElementById("notice");
-    if (isLoopbackHost(location.hostname)) {
+    if (!noticeShown(location.hostname, state.auth)) {
       el.hidden = true;
       return;
     }

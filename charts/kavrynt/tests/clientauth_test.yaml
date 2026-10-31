@@ -174,3 +174,80 @@ tests:
       - notContains:
           path: spec.template.spec.containers[0].args
           content: --token-exchange-secret-dir=/etc/kavrynt/token-exchange
+
+  # Verifies SPEC-0031-R01: the Gateway audience is off by default.
+  - it: accepts only each route's own audience by default
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --auth-gateway-audience-routes
+
+  # Verifies SPEC-0031-R01.
+  - it: refuses the Gateway audience without MCP client authentication
+    set:
+      gateway.auth.enabled: false
+      gateway.auth.gatewayAudience:
+        enabled: true
+        routes: [team-a.*]
+    asserts:
+      - failedTemplate:
+          errorMessage: "gateway.auth.gatewayAudience: needs gateway.auth.enabled=true; without MCP client authentication routes take no tokens"
+
+  # Verifies SPEC-0031-R02.
+  - it: passes the Gateway audience routes to the Gateway
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+      gateway.auth.gatewayAudience:
+        enabled: true
+        routes: [team-a.*, team-c.reports]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --auth-gateway-audience-routes
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: team-a.*,team-c.reports
+
+  # Verifies SPEC-0031-R02.
+  - it: refuses the Gateway audience without routes
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+      gateway.auth.gatewayAudience:
+        enabled: true
+    asserts:
+      - failedTemplate:
+          errorMessage: "gateway.auth.gatewayAudience.routes: list the routes one token may reach (<namespace>.<name> or <namespace>.*)"
+
+  # Verifies SPEC-0031-R02.
+  - it: refuses the Gateway audience for every route
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+      gateway.auth.gatewayAudience:
+        enabled: true
+        routes: [team-a.*, "*"]
+    asserts:
+      - failedTemplate:
+          errorMessage: "gateway.auth.gatewayAudience.routes: \"*\" is refused; list route names or <namespace>.* patterns, so a leaked token reaches only what you name"
+
+  # Verifies SPEC-0031-R02: entries are route names or namespace patterns.
+  - it: refuses Gateway audience entries that are not routes
+    set:
+      gateway.auth.resourceURL: https://mcp.example.com
+      gateway.auth.issuers:
+        - issuer: https://login.example.com
+      gateway.auth.gatewayAudience:
+        enabled: true
+        routes: ["*.search"]
+    asserts:
+      - failedTemplate:
+          errorPattern: gatewayAudience

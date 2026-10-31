@@ -45,7 +45,7 @@ func TestPolicyInputHasTheRecordedToolHints(t *testing.T) {
 			} `json:"error"`
 		}
 		_ = json.Unmarshal(rr.Body.Bytes(), &answer)
-		if rr.Code != http.StatusForbidden || answer.Error.Message != "denied by policy: "+tc.want {
+		if rr.Code != http.StatusOK || answer.Error.Message != "denied by policy: "+tc.want {
 			t.Errorf("%s: %d %s, want the input fields %s", tc.name, rr.Code, rr.Body.String(), tc.want)
 		}
 	}

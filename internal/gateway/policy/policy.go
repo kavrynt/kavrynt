@@ -52,6 +52,10 @@ type Input struct {
 	ClientID string   `json:"client_id"`
 	Issuer   string   `json:"issuer"`
 	Scopes   []string `json:"scopes"`
+	// Audience is "route" when the token's audience is the route's own URI
+	// and "gateway" when it was accepted for the Gateway audience
+	// (SPEC-0031-R04); empty without client authentication.
+	Audience string `json:"audience"`
 
 	Route      Route  `json:"route"`
 	HTTPMethod string `json:"http_method"`

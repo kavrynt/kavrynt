@@ -6,7 +6,7 @@ CLUSTER_NAME="${KIND_CLUSTER_NAME:-kavrynt-alpha0}"
 KUBE_CONTEXT="kind-${CLUSTER_NAME}"
 CONTROL_NAMESPACE="kavrynt-system"
 E2E_NAMESPACE="kavrynt-e2e"
-LOCAL_VERSION="${LOCAL_VERSION:-1.0.0-beta.3-local}"
+LOCAL_VERSION="${LOCAL_VERSION:-1.0.0-beta.4-local}"
 KEEP_CLUSTER="${KEEP_CLUSTER:-0}"
 
 GATEWAY_IMAGE="kavrynt/gateway:${LOCAL_VERSION}"
@@ -118,6 +118,9 @@ start_gateway_port_forward() {
   local log_file="${TEMP_DIR}/gateway-port-forward.log"
   local port=""
   local i
+  # Create the log before the background kubectl does, or the first read
+  # can find no file and stop the script under set -e.
+  : >"${log_file}"
   kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" \
     port-forward --address 127.0.0.1 service/kavrynt-gateway :8080 \
     >"${log_file}" 2>&1 &
@@ -140,6 +143,7 @@ start_gateway_port_forward() {
 start_port_forward() {
   local namespace=$1 service=$2 target=$3 variable=$4 log_file port="" i
   log_file="${TEMP_DIR}/${service}-port-forward.log"
+  : >"${log_file}"
   kubectl --context "${KUBE_CONTEXT}" -n "${namespace}" \
     port-forward --address 127.0.0.1 "service/${service}" ":${target}" >"${log_file}" 2>&1 &
   PORT_FORWARD_PIDS+=("$!")
@@ -1047,10 +1051,26 @@ PLAIN_LOG="$(run_sessions sessions-plain stateful-plain)"
 grep --quiet '^done .* failed=0$' <<<"${PLAIN_LOG}" &&
   fail "a stateful three-replica server kept every session without session affinity; the test cannot tell affinity apart"
 log "without session affinity: $(tail -n 1 <<<"${PLAIN_LOG}")"
-# The port-forwarded replica served part of those requests.
-curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
-  grep --quiet "outcome=\"session_not_found\",route=\"${E2E_NAMESPACE}.stateful-plain\"" ||
-  fail "lost sessions were not recorded as session_not_found"
+# Any Gateway replica may have served the lost sessions: the session clients
+# keep their connections to whichever replica they reached, so the
+# port-forwarded replica's metrics can hold none of them. Every replica's
+# audit events record the same outcome as its metrics. The audit writer is
+# asynchronous, so the event can trail the clients by a moment.
+lost_session_audited() {
+  control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt |
+    grep '"type":"kavrynt.audit.v1"' |
+    jq --slurp --exit-status --arg ns "${E2E_NAMESPACE}" \
+      'any(.[]; .route.namespace == $ns and .route.name == "stateful-plain" and .outcome == "session_not_found")' >/dev/null
+}
+AUDITED=false
+for _ in $(seq 1 15); do
+  if lost_session_audited; then
+    AUDITED=true
+    break
+  fi
+  sleep 2
+done
+[ "${AUDITED}" = true ] || fail "lost sessions were not recorded as session_not_found"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
   mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
   --wait=false >/dev/null
@@ -1378,8 +1398,9 @@ verify_policy_decisions() {
   local status
   status="$(echo_call "${ALLOWED_TOKEN}")"
   [ "${status}" = "200" ] || fail "the policy refused an allowed client: HTTP ${status} $(cat "${TEMP_DIR}/policy-body")"
+  # Verifies SPEC-0036-R01: a denied request gets its JSON-RPC error with 200.
   status="$(echo_call "${DENIED_TOKEN}")"
-  [ "${status}" = "403" ] || fail "the policy let another client call echo: HTTP ${status}"
+  [ "${status}" = "200" ] || fail "a denied request answered HTTP ${status}, want 200 with a JSON-RPC error"
   jq --exit-status '.id == 9 and (.error.message | startswith("denied by policy"))' "${TEMP_DIR}/policy-body" >/dev/null ||
     fail "a denial is not a JSON-RPC error: $(cat "${TEMP_DIR}/policy-body")"
 }
@@ -1408,7 +1429,7 @@ sleep 2
 control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt >"${TEMP_DIR}/gateway-audit.log"
 grep '"type":"kavrynt.audit.v1"' "${TEMP_DIR}/gateway-audit.log" | jq --slurp --exit-status '
   any(.[]; .client_id == "e2e-agent" and .tool == "echo" and .decision == "allow" and .outcome == "ok" and .status == 200) and
-  any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 403) and
+  any(.[]; .client_id == "other-agent" and .tool == "echo" and .decision == "deny" and .status == 200) and
   any(.[]; .decision == "unauthenticated" and .subject == "")' >/dev/null ||
   fail "the audit events do not record the allowed, denied, and unauthenticated calls"
 if grep --fixed-strings --quiet "audit-secret-argument" "${TEMP_DIR}/gateway-audit.log"; then
@@ -1459,7 +1480,7 @@ wait_for_json "${GATEWAY_URL}/v1/routes" '.routes | length == 0' 30
 # - UPGRADE_FROM_VERSION, the previous release: kavryctl upgrade to the build
 #   under test and kavryctl rollback to it.
 LEGACY_FROM_VERSION="${LEGACY_FROM_VERSION:-0.0.5-beta.1}"
-UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.2}"
+UPGRADE_FROM_VERSION="${UPGRADE_FROM_VERSION:-1.0.0-beta.3}"
 UPGRADE_FROM_CHART="${UPGRADE_FROM_CHART:-oci://ghcr.io/kavrynt/charts/kavrynt}"
 LOCAL_IMAGE_ARGS=(
   --kube-context "${KUBE_CONTEXT}"

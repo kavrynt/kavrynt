@@ -65,7 +65,7 @@ make demo-down          # delete the cluster
       with the password step 1 prints.
 - [ ] Decide whether to connect a real agent (see below), and test it on the
       same network.
-- [ ] Confirm `1.0.0-beta.3` is published (`gh release view v1.0.0-beta.3`)
+- [ ] Confirm `1.0.0-beta.4` is published (`gh release view v1.0.0-beta.4`)
       and its `make e2e-release` run passed. See
       [Questions to prepare for](#questions-to-prepare-for).
 
@@ -81,8 +81,8 @@ make demo-down          # delete the cluster
 | 5. Discovery | 1:00 | The Operator ran MCP `initialize` and `tools/list` and recorded the tools in status. A failed discovery never affects `Ready`. Refresh the console. |
 | 6. Agent calls | 1:30 | One URL per server. A tool error is reported as a tool error, not a transport failure. |
 | 7. Live traffic | 1:00 | Method, tool, outcome, and latency per route and per tool, in the console and in Prometheus. Arguments are never recorded. Open Overview: the failing tool is listed. |
-| 8. Guardrails | 2:00 | What exists while authentication is not built yet: admission validation, credential stripping, origin checks, egress refusal, least-privilege RBAC. |
-| 9. The caveat | 0:45 | This call changed state, and nothing checked who made it. That is ADR-0003, the next roadmap item. |
+| 8. Guardrails | 2:00 | What holds even with authentication turned off, as in this demo: admission validation, credential stripping, origin checks, egress refusal, least-privilege RBAC. |
+| 9. The caveat | 0:45 | This call changed state, and nothing checked who made it, because the demo opted out of client authentication. With it on (the default), the Gateway needs a token for the route; the opt-in policy decides per tool (ADR-0003). Approvals are next. |
 | 10. Lifecycle | 0:30 | Delete the resource and the route goes away. |
 | 11. Not yet | 1:00 | Read the list in the next section verbatim. |
 
@@ -99,8 +99,13 @@ Show this list as a slide as well. Do not soften it.
 - HTTP MCP servers only. `stdio` manifests validate but are not proxied.
 - Kavrynt does not deploy MCP servers; it registers and routes to existing
   endpoints.
-- Single replica; no tested high-availability, upgrade, or backup profile.
-- Beta (`0.0.x`), one maintainer organization, no named adopters yet.
+- The demo runs one replica. A high-availability profile and upgrades are
+  tested in CI. `kavryctl export` and `import` back up and restore
+  `MCPServer` registrations only; audit events and Secrets have no backup or
+  restore workflow.
+- The demo uses the console's shared `admin` login; sign-in through an
+  identity provider is available but not shown. There are no roles.
+- Beta (`1.0.0-beta.N`), one maintainer organization, no named adopters yet.
 - Run it in trusted development or evaluation clusters only.
 
 ## Connect a real agent (optional)
@@ -127,15 +132,14 @@ does not raise the console's error rate.
 - **Licensing.** The runtime is Apache-2.0 from `0.0.5-beta.1`, the first
   release after `0.0.4-beta.1` ([ADR-0004](ADR-0004-Apache-2.0-License.md)).
   Releases up to and including `0.0.4-beta.1` remain under the Elastic
-  License 2.0. Present only once `0.0.5-beta.1` is published, so that the
-  install command in the README gives the audience an Apache-2.0 build.
+  License 2.0.
 - **Why a CRD and an Operator?** Registration lives in the Kubernetes API
   ([ADR-0002](ADR-0002-Remove-In-Cluster-Registry.md)), so namespaces, RBAC,
   GitOps, and admission apply without a separate registry service.
 - **Authentication and authorization.** Designed in
   [ADR-0003](ADR-0003-Runtime-Authorization.md). Client authentication (OAuth
-  2.1 bearer tokens, per-route audience) is implemented and opt-in; policy
-  and audit are opt-in; approvals are not built. The Gateway never forwards caller credentials
+  2.1 bearer tokens, per-route audience) is implemented and on by default;
+  policy and audit are opt-in; approvals are not built. The Gateway never forwards caller credentials
   upstream.
 - **Multi-tenancy.** Routes are namespace-qualified, and
   `global.watchNamespaces` limits the Gateway to listed namespaces with
@@ -145,8 +149,8 @@ does not raise the console's error rate.
   Everything in this demo runs without it.
 - **Governance and maturity.** See [GOVERNANCE.md](../GOVERNANCE.md),
   [MAINTAINERS.md](../MAINTAINERS.md), and [ROADMAP.md](../ROADMAP.md). The
-  roadmap applies for Sandbox only after client authentication ships and there
-  are maintainers outside one organization.
+  roadmap applies for Sandbox once there are maintainers outside one
+  organization and adopters; client authentication has shipped.
 - **Supply chain.** Images are distroless and non-root, built with a Go
   toolchain pinned by digest, and scanned by govulncheck and Trivy in CI.
   Release images and checksums are Cosign-signed by the release workflow

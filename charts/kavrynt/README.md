@@ -11,7 +11,7 @@ Kavrynt MCP Control Plane runtime chart.
 ```bash
 # With your authorization server (MCP client authentication is on by default):
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.3 \
+  --version 1.0.0-beta.4 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.resourceURL=https://mcp.example.com \
@@ -19,7 +19,7 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 
 # A trial without one: MCP routes accept unauthenticated calls.
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.3 \
+  --version 1.0.0-beta.4 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -506,7 +506,7 @@ applied. Check a values file with:
 
 ```bash
 helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.3 --values my-values.yaml >/dev/null
+  --version 1.0.0-beta.4 --values my-values.yaml >/dev/null
 ```
 
 `global` accepts additional keys for platform-injected globals.
@@ -590,10 +590,12 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |
 | `gateway.config.shutdownTimeout` | string | `10s` | Then wait this long for in-flight requests (whole seconds). The termination grace period is both plus 5 seconds |
-| `gateway.auth.enabled` | bool | `false` | Require a bearer access token for the route on every `/mcp/` request (MCP client authentication) |
+| `gateway.auth.enabled` | bool | `true` | Require a bearer access token for the route on every `/mcp/` request (MCP client authentication); `false` leaves MCP routes open |
 | `gateway.auth.resourceURL` | string | `""` | The Gateway's external https origin; required when enabled |
 | `gateway.auth.issuers` | list | `[]` | Trusted authorization servers: `issuer` (equals the tokens' `iss`), optional `jwksURI`, `allowHTTP`; at least one when enabled |
 | `gateway.auth.requiredScopes` | list | `[]` | Scopes every token must carry |
+| `gateway.auth.gatewayAudience.enabled` | bool | `false` | Let the listed routes also accept a token whose audience is `resourceURL` (SPEC-0031); needs `gateway.auth.enabled` |
+| `gateway.auth.gatewayAudience.routes` | list | `[]` | Routes one such token reaches: `<namespace>.<name>` or `<namespace>.*`; required when enabled, `*` refused |
 | `gateway.audit.enabled` | bool | `false` | Write one audit event per MCP request to the Gateway's standard output |
 | `gateway.audit.queueSize` | int | `10000` | Audit events that may wait to be written |
 | `gateway.audit.onOverflow` | string | `reject` | With a full queue: `reject` new MCP requests or `drop` their events |
@@ -604,6 +606,13 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
 | `gateway.console.auth.sessionTTL` | string | `12h` | Console session lifetime |
 | `gateway.console.auth.trustedProxies` | list | `[]` | CIDRs of the proxies in front of the Gateway; failed console logins from them count against the client their `X-Forwarded-For` names, not the proxy |
+| `gateway.console.auth.oidc.enabled` | bool | `false` | Sign in to the console through an OpenID Connect provider (SPEC-0032); needs `gateway.console.auth.enabled` |
+| `gateway.console.auth.oidc.issuer` / `allowHTTP` | string / bool | `""` / `false` | The provider's issuer; `allowHTTP` only for an in-cluster provider (the browser's authorization endpoint must still be https) |
+| `gateway.console.auth.oidc.clientID` / `clientSecret.name` / `clientSecret.key` | string | `""` / `""` / `client-secret` | The confidential client, and the Secret holding its secret (mounted, never a flag) |
+| `gateway.console.auth.oidc.redirectURL` | string | `""` | `https://<gateway host>/v1/session/oidc/callback` |
+| `gateway.console.auth.oidc.allowedSubjects` / `allowedGroups` | list | `[]` | Who may sign in; at least one entry in either is required |
+| `gateway.console.auth.oidc.groupsClaim` / `displayClaim` / `scopes` / `providerName` | string / string / list / string | `groups` / `preferred_username` / `[]` / `""` | Claims read, scopes requested besides `openid`, and the button's provider name |
+| `gateway.console.auth.oidc.keepAdminLogin` | bool | `false` | Keep the admin password as a break-glass login (warned about at start) |
 | `gateway.console.history.maxTools` | int | `500` | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool. Each replica keeps 24 hours in memory: about 29 KiB per route and 23 KiB per tool |
 | `gateway.console.grafanaURL` | string | `""` | Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the Grafana dashboards instead |
 | `gateway.metrics.scrapeAnnotations` | bool | `true` | Add `prometheus.io/*` pod annotations |

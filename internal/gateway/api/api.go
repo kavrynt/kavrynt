@@ -343,6 +343,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case r.URL.Path == "/v1/session":
 		h.session(w, r)
+	case strings.HasPrefix(r.URL.Path, "/v1/session/oidc/"):
+		// Console sign-in through the identity provider (SPEC-0032).
+		if sso, ok := h.auth.(interface {
+			ServeOIDC(http.ResponseWriter, *http.Request)
+		}); ok && h.auth != nil {
+			sso.ServeOIDC(w, r)
+		} else {
+			writeError(w, http.StatusNotFound, errors.New("console sign-in is not configured"))
+		}
 	case h.clientAuth != nil && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, metadataPrefix):
 		h.protectedResource(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):
@@ -474,7 +483,11 @@ func (h *Handler) session(w http.ResponseWriter, r *http.Request) {
 		writeError(w, http.StatusNotFound, errors.New("console login is disabled"))
 		return
 	}
-	writeJSON(w, http.StatusOK, map[string]bool{"enabled": false, "mcpAuth": h.clientAuth != nil})
+	gatewayAudience := []string{}
+	if h.clientAuth != nil {
+		gatewayAudience = h.clientAuth.GatewayAudienceRoutes()
+	}
+	writeJSON(w, http.StatusOK, map[string]any{"enabled": false, "mcpAuth": h.clientAuth != nil, "gatewayAudience": gatewayAudience})
 }
 
 func (h *Handler) listTraffic(w http.ResponseWriter, _ *http.Request) {
@@ -844,9 +857,17 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, route model.
 	if rec != nil {
 		rec.decision, rec.reason = auditv1.DecisionDeny, decision.Reason
 	}
+	// A JSON-RPC request gets its error with 200, as an MCP server answers
+	// one it refuses, so client SDKs hand the agent the reason instead of
+	// failing the transport (SPEC-0036-R01). Anything else has no response
+	// to hold the error and stays 403 (R02).
+	status := http.StatusForbidden
+	if r.Method == http.MethodPost && call.body.method != "" && len(call.body.id) > 0 {
+		status = http.StatusOK
+	}
 	w.Header().Set("Cache-Control", "no-store")
-	writeRPCError(w, http.StatusForbidden, call.body.id, policyDeniedCode, message)
-	h.finish(r, routeName, call, outcomeDenied, http.StatusForbidden, time.Since(start), body.n, 0)
+	writeRPCError(w, status, call.body.id, policyDeniedCode, message)
+	h.finish(r, routeName, call, outcomeDenied, status, time.Since(start), body.n, 0)
 	return false
 }
 
@@ -923,6 +944,7 @@ func policyInput(r *http.Request, routeName string) policy.Input {
 	input.Route.Namespace, input.Route.Name, _ = strings.Cut(routeName, ".")
 	if identity, ok := clientauth.IdentityFrom(r.Context()); ok {
 		input.Subject, input.ClientID, input.Issuer, input.Scopes = identity.Subject, identity.ClientID, identity.Issuer, identity.Scopes
+		input.Audience = identity.Audience
 	}
 	return input
 }

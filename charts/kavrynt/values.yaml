@@ -33,14 +33,14 @@ gateway:
   fullnameOverride: kavrynt-gateway
   image:
     repository: kavrynt/gateway
-    tag: 1.0.0-beta.3
+    tag: 1.0.0-beta.4
     pullPolicy: IfNotPresent
 
 operator:
   fullnameOverride: kavrynt-operator
   image:
     repository: kavrynt/operator
-    tag: 1.0.0-beta.3
+    tag: 1.0.0-beta.4
     pullPolicy: IfNotPresent
 
 # NetworkPolicies that keep MCP traffic on the Gateway path, so clients
