@@ -148,6 +148,7 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 .sidebar-foot { margin-top: auto; padding: 14px 18px; font-size: 12px; border-top: 1px solid rgba(255, 255, 255, .08); }
 .gw-status { display: flex; align-items: center; gap: 8px; }
 .gw-version { color: var(--sidebar-muted); margin-top: 4px; word-break: break-all; }
+.sidebar .muted { color: var(--sidebar-muted); }
 .dot { width: 8px; height: 8px; border-radius: 50%; background: #64748b; flex-shrink: 0; }
 .dot.ok { background: #22c55e; box-shadow: 0 0 0 3px rgba(34, 197, 94, .2); }
 .dot.bad { background: #ef4444; box-shadow: 0 0 0 3px rgba(239, 68, 68, .2); }
@@ -394,6 +395,8 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .signed-out .sidebar { display: none; }
 .signed-out .content { background: radial-gradient(circle at 50% 30%, rgba(255, 138, 31, .14), transparent 45%), var(--sidebar); min-height: 100vh; }
 .signed-out .main { padding: 0; }
+.signed-out .empty { color: var(--sidebar-muted); }
+.signed-out .empty h3 { color: var(--sidebar-text); }
 .login-wrap { display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 22px; min-height: 100vh; padding: 32px 16px; }
 .login-logo { display: block; width: 220px; max-width: 70vw; height: auto; border-radius: 18px; border: 1px solid rgba(255, 138, 31, .19); box-shadow: 0 24px 60px rgba(0, 0, 0, .45); }
 .login { width: 100%; max-width: 380px; background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius); box-shadow: 0 24px 60px rgba(0, 0, 0, .35); padding: 24px; position: relative; overflow: hidden; }

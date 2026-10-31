@@ -340,6 +340,9 @@
       current = { page: "login", update: null };
       if (state.auth.checked) renderLogin(root);
       else put(root, emptyState("Loading…"));
+      // Logging out hides the control that had focus; the admin form then
+      // moves it on to the password field.
+      root.focus({ preventScroll: true });
       return;
     }
     const { page: requested, rest, params } = parseHash(location.hash);
