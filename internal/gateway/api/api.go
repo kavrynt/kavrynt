@@ -617,13 +617,13 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	// A known oversized body is refused before any of it is read or sent
 	// (SPEC-0038-R01).
 	if r.ContentLength > h.maxRequestBytes {
-		h.refuseTooLarge(w, r, route.Name, mcpCall{method: labelUnknown}, start)
+		h.refuseTooLarge(w, r, route.Name, mcpCall{method: labelUnknown}, start, 0)
 		return
 	}
 
 	call, body, err := inspectRequest(r)
 	if isTooLarge(err) {
-		h.refuseTooLarge(w, r, route.Name, call, start)
+		h.refuseTooLarge(w, r, route.Name, call, start, 0)
 		return
 	}
 	if err != nil {
@@ -765,7 +765,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		if err == nil {
 			_ = resp.Body.Close()
 		}
-		h.refuseTooLarge(w, r, route.Name, call, start)
+		h.refuseTooLarge(w, r, route.Name, call, start, upstreamBody.sent())
 		return
 	}
 	if err != nil {
@@ -1028,8 +1028,9 @@ func writeRPCError(w http.ResponseWriter, status int, id json.RawMessage, code i
 
 // refuseTooLarge answers a request whose body is larger than the request
 // size limit with 413 and records it as a client error (SPEC-0038-R01,
-// R04). The connection is closed so the rest of the body is not read.
-func (h *Handler) refuseTooLarge(w http.ResponseWriter, r *http.Request, route string, call mcpCall, start time.Time) {
+// R04). The connection is closed so the rest of the body is not read. sent
+// is how much of the body already reached the MCP server.
+func (h *Handler) refuseTooLarge(w http.ResponseWriter, r *http.Request, route string, call mcpCall, start time.Time, sent int64) {
 	message := fmt.Sprintf("request body is larger than %d bytes; raise --max-request-bytes (chart value gateway.config.maxRequestBytes) to allow it", h.maxRequestBytes)
 	if rec := auditRecordFrom(r); rec != nil {
 		rec.decision, rec.reason = auditv1.DecisionInvalid, message
@@ -1040,7 +1041,7 @@ func (h *Handler) refuseTooLarge(w http.ResponseWriter, r *http.Request, route s
 	} else {
 		writeError(w, http.StatusRequestEntityTooLarge, errors.New(message))
 	}
-	h.finish(r, route, call, outcomeClientError, http.StatusRequestEntityTooLarge, time.Since(start), 0, 0)
+	h.finish(r, route, call, outcomeClientError, http.StatusRequestEntityTooLarge, time.Since(start), sent, 0)
 }
 
 // isTooLarge reports a read that passed the request size limit.

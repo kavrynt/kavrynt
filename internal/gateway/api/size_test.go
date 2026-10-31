@@ -2,6 +2,7 @@ package api
 
 import (
 	"encoding/json"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -121,10 +122,16 @@ func TestOversizedBodyWithAnUpstreamAnswer(t *testing.T) {
 			_, _ = io.Copy(io.Discard, req.Body)
 			return okResponse(req)
 		})
-		handler.SetMaxRequestBytes(int64(maxInspectBytes + 64<<10))
+		limit := maxInspectBytes + 64<<10
+		handler.SetMaxRequestBytes(int64(limit))
 		if rr := chunked(handler, callOfSize(maxInspectBytes+512<<10)); rr.Code != http.StatusRequestEntityTooLarge {
 			t.Fatalf("server answered a body cut at the limit: %d, want 413", rr.Code)
 		}
+		// The server received the body up to the limit, so the refusal
+		// counts those bytes (Prometheus writes counters this large with an
+		// exponent).
+		requireSeries(t, get(handler, "/metrics").Body.String(),
+			fmt.Sprintf(`kavrynt_gateway_mcp_bytes_total{direction="in",route="team-a.demo"} %g`, float64(limit)))
 	})
 	t.Run("answer before the body", func(t *testing.T) {
 		read := make(chan struct{})
