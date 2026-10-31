@@ -197,7 +197,8 @@ func TestUnknownFieldsAreNotCalledAltered(t *testing.T) {
 	}
 }
 
-// Verifies SPEC-0035-R06: a member added to a written line is a break even
+// Verifies SPEC-0035-R03 and SPEC-0035-R06: a member added to a written
+// line is a break that names it, even
 // though the known fields still re-encode to the hash, because nothing
 // covers the added member; a rewritten newer line is a break too.
 func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
@@ -229,7 +230,7 @@ func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
 		"repeated member": {strings.Replace(string(second), `"tool":""`, `"tool":"delete_all","tool":""`, 1), `repeats "tool"`},
 		// route null decodes to an empty Route and stops the member scan,
 		// which must not let a member after it through.
-		// The member after it is still found and named (SPEC-0035-R03).
+		// The member after it is still found and named.
 		"route not an object":                {strings.Replace(emptyRoute, `"route":{"namespace":"","name":""}`, `"route":null`, 1), `"approved_by"`},
 		"route not an object, nothing added": {strings.Replace(string(blankLine), `"route":{"namespace":"","name":""}`, `"route":null`, 1), "altered"},
 	} {
