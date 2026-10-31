@@ -1051,9 +1051,14 @@ PLAIN_LOG="$(run_sessions sessions-plain stateful-plain)"
 grep --quiet '^done .* failed=0$' <<<"${PLAIN_LOG}" &&
   fail "a stateful three-replica server kept every session without session affinity; the test cannot tell affinity apart"
 log "without session affinity: $(tail -n 1 <<<"${PLAIN_LOG}")"
-# The port-forwarded replica served part of those requests.
-curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
-  grep --quiet "outcome=\"session_not_found\",route=\"${E2E_NAMESPACE}.stateful-plain\"" ||
+# Any Gateway replica may have served the lost sessions: the session clients
+# keep their connections to whichever replica they reached, so the
+# port-forwarded replica's metrics can hold none of them. Every replica's
+# audit events record the same outcome as its metrics.
+control_logs app.kubernetes.io/name=gateway,app.kubernetes.io/instance=kavrynt |
+  grep '"type":"kavrynt.audit.v1"' |
+  jq --slurp --exit-status --arg ns "${E2E_NAMESPACE}" \
+    'any(.[]; .route.namespace == $ns and .route.name == "stateful-plain" and .outcome == "session_not_found")' >/dev/null ||
   fail "lost sessions were not recorded as session_not_found"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
   mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
