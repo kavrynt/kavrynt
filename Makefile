@@ -1,6 +1,6 @@
 SHELL := /bin/bash
 
-LOCAL_VERSION ?= 1.0.0-beta.4-local
+LOCAL_VERSION ?= 1.0.0-beta.5-local
 IMAGES := gateway operator
 CHART := charts/kavrynt
 # The chart refuses to render without MCP client authentication settings or

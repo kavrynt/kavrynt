@@ -41,7 +41,7 @@ can reach the Gateway:
 
 ```bash
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.4 \
+  --version 1.0.0-beta.5 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -157,7 +157,7 @@ including GKE, EKS, AKS, OpenShift, and local Kind clusters.
 ### Install the control plane
 
 ```bash
-export KAVRYNT_VERSION=1.0.0-beta.4
+export KAVRYNT_VERSION=1.0.0-beta.5
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
