@@ -1062,11 +1062,15 @@ lost_session_audited() {
     jq --slurp --exit-status --arg ns "${E2E_NAMESPACE}" \
       'any(.[]; .route.namespace == $ns and .route.name == "stateful-plain" and .outcome == "session_not_found")' >/dev/null
 }
+AUDITED=false
 for _ in $(seq 1 15); do
-  lost_session_audited && break
+  if lost_session_audited; then
+    AUDITED=true
+    break
+  fi
   sleep 2
 done
-lost_session_audited || fail "lost sessions were not recorded as session_not_found"
+[ "${AUDITED}" = true ] || fail "lost sessions were not recorded as session_not_found"
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
   mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
   --wait=false >/dev/null
