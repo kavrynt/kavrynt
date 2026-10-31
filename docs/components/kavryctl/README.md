@@ -35,8 +35,10 @@ and links a runbook.
   the check.
 - **`ReadFailed`**: the API server answered with an error other than
   "forbidden" or "not found", for example a timeout or an overloaded
-  API server. Check that `kubectl get --raw /readyz` succeeds with the same
-  kubeconfig and context, then run doctor again.
+  API server, or, for `servers`, the `MCPServer` CRD is not installed or not
+  served (the `crd` check is `skipped` when you may not read CRDs). Check
+  that `kubectl get --raw /readyz` and `kubectl get crd mcpservers.kavrynt.io`
+  succeed with the same kubeconfig and context, then run doctor again.
 - **Exit `2`**: doctor could not start or finish: invalid arguments, a
   kubeconfig it cannot use, or a cluster it cannot reach at all. With
   `--anonymize` the error details are left out, since they can name the API
