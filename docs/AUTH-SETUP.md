@@ -174,9 +174,21 @@ The same token on another route answers `401` with
 
 ## Console sign-in with Keycloak
 
-The console can use the same Keycloak for people (SPEC-0032). Create a
-confidential client with the standard flow and the Gateway's callback as
-its redirect URL, and a group mapper so ID tokens carry `groups`:
+The console can use Keycloak for people too (SPEC-0032). This was not yet
+run against a live provider; the unit tests cover the flow. Before you
+start:
+
+- **Keycloak must be reachable at an `https` URL** from people's browsers,
+  for example through an Ingress, and `KC_HOSTNAME` must be that URL. The
+  lab of step 1 (`http://keycloak.idp.svc.cluster.local:8080`) works for
+  agents' tokens but not here: the browser cannot reach it, and its ID
+  tokens would name an `http` issuer that differs from the one below.
+- **Use the `$KC` and `A` variables of step 2** (an admin token for that
+  Keycloak) in the commands below.
+
+Create a confidential client with the standard flow and the Gateway's
+callback as its redirect URL, and a group mapper so ID tokens carry
+`groups`:
 
 ```bash
 GATEWAY=https://mcp.example.com      # the console's external URL
@@ -200,9 +212,8 @@ helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VE
   --set 'gateway.console.auth.oidc.allowedGroups={platform}'
 ```
 
-The browser goes to Keycloak's authorization endpoint, which must be
-`https`: the in-cluster `http://keycloak.idp.svc` of the lab above works for
-agents' tokens but not for console sign-in. Add people to the `platform`
+Set `issuer` to `KC_HOSTNAME` followed by `/realms/agents`, exactly as it
+appears in the ID tokens' `iss`. Add people to the `platform`
 group in Keycloak; others get "not allowed". The admin password then stops
 working unless `keepAdminLogin` is set.
 

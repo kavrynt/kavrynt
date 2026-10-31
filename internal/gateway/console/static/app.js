@@ -191,7 +191,9 @@
   // traffic, or Playground data stays on screen or in memory (SPEC-0005-R14).
   function signedOut(message) {
     const wasSignedIn = state.auth.signedIn;
-    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
+    // checked: false until /v1/session says again which sign-ins the login
+    // page offers; a signed-in answer did not carry them (SPEC-0032-R03).
+    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "", checked: false });
     Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set(),
       alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null, history: null, historyFor: "", historyPath: "", historyError: null });
     resetPlayground();
@@ -199,6 +201,7 @@
     drawAlertCount();
     render();
     if (wasSignedIn && message) toast(message);
+    checkSession().then(render);
   }
 
   async function signedIn() {
@@ -220,9 +223,10 @@
     clear(el);
     el.hidden = !(state.auth.enabled && state.auth.signedIn);
     if (el.hidden) return;
-    // How the person signed in (SPEC-0032-R11), as text.
-    const via = state.auth.method === "oidc" ? "signed in with SSO" : "signed in as admin";
-    put(el, h("span", { class: "user-name", text: state.auth.username, title: via + (state.auth.expiresAt ? "; session ends " + new Date(state.auth.expiresAt).toLocaleString() : "") }),
+    // How the person signed in, as visible text (SPEC-0032-R11).
+    const via = state.auth.method === "oidc" ? "SSO" : "admin login";
+    put(el, h("span", { class: "user-name", text: state.auth.username, title: state.auth.expiresAt ? "Session ends " + new Date(state.auth.expiresAt).toLocaleString() : undefined }),
+      h("span", { class: "muted small", text: "(" + via + ")" }),
       h("button", { type: "button", class: "linkish", onclick: logout }, "Log out"));
   }
 
