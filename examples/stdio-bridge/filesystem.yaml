@@ -8,6 +8,12 @@
 #   kubectl apply -f filesystem.yaml
 #   kubectl -n kavrynt-try wait mcpserver/files --for=condition=ToolsDiscovered --timeout=3m
 #
+# The bridge runs stateful (--stateful): a stdio server can ask its client
+# for something mid-call, as the filesystem server asks for roots, and only
+# a session gives that request a way back. Stateless, tools/list works but
+# tool calls stall. With more than one bridge replica, set
+# spec.sessionAffinity: MCPSession so each session stays on its pod.
+#
 # For trying the pattern only: npx downloads both packages when the pod
 # starts. For real use, build an image with exact, reviewed versions of the
 # bridge and the server, and mount only the data the server should see.
@@ -63,7 +69,7 @@ spec:
           command:
             - npx
             - -y
-            - supergateway@3
+            - supergateway@4
             - --stdio
             - npx -y @modelcontextprotocol/server-filesystem /data
             - --outputTransport
@@ -72,6 +78,11 @@ spec:
             - "8000"
             - --streamableHttpPath
             - /mcp
+            - --stateful
+            # End sessions idle for 30 minutes, so clients that leave
+            # without DELETE do not keep stdio processes running.
+            - --sessionTimeout
+            - "1800000"
           ports:
             - containerPort: 8000
           resources:
