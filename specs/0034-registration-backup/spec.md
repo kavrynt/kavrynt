@@ -54,7 +54,8 @@ evaluations ask how a cluster is rebuilt.
   can hold a key, and the document MUST carry the annotation
   `kavrynt.io/redacted-environment` listing those keys, unless
   `--include-environment` is given, which MUST print a warning that the
-  file then may hold credentials.
+  file then may hold credentials. `-o` writes the file with mode `0600`,
+  also when it existed with a wider mode.
 - **SPEC-0034-R02** The file MUST begin with a comment naming the export
   time, the source kubeconfig context name (never the API server address),
   the Operator version (the
@@ -65,6 +66,12 @@ evaluations ask how a cluster is rebuilt.
   (`<namespace>.<name>`, `<namespace>.<name>.origin`). It MUST NOT contain
   Secret data and MUST NOT read Secrets.
 - **SPEC-0034-R03** Every document MUST pass `kavryctl validate`.
+
+- **SPEC-0034-R09** Every value of `spec.args` MUST be written empty, and
+  the document MUST carry the annotation `kavrynt.io/redacted-args` with
+  their number, unless `--include-args` is given, which MUST print the same
+  warning: an argument such as `--token=...` can hold a key. `import` MUST
+  refuse a document that still carries the annotation (R04).
 
 ### Import
 
@@ -87,10 +94,13 @@ evaluations ask how a cluster is rebuilt.
 - **SPEC-0034-R07** `import` MUST NOT create namespaces. A document whose
   namespace does not exist MUST be refused with a message naming it.
 - **SPEC-0034-R08** After applying, `import` MUST wait up to `--wait`
-  (default `60s`, `0` to skip) for each imported server's conditions and
+  (default `60s`, `0` to skip) for each imported server's conditions of
+  its current generation (an overwrite's old `Ready` does not count) and
   report the servers that are not `Ready`, with their reason, and those
   whose `ToolsDiscovered` is `False` with reason `CredentialUnavailable`,
   naming the upstream credentials Secret keys to provide.
+- **SPEC-0034-R10** `import` MUST refuse a file larger than 16 MiB before
+  parsing any of it.
 
 ## Acceptance criteria
 

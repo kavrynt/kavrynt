@@ -71,12 +71,14 @@ kavryctl import mcpservers.yaml
   namespace, labels, annotations (without kubectl's last-applied copy), and
   `spec`. It never reads Secrets; its header names the upstream credentials
   Secret keys to provide.
-- **Environment values:** `spec.environment` values are written empty and
-  listed in the `kavrynt.io/redacted-environment` annotation, since the map
-  can hold a key. Fill them in and remove the annotation before importing,
-  or export with `--include-environment` and store the file like a secret.
+- **Environment values and arguments:** `spec.environment` values and
+  `spec.args` are written empty, listed in the
+  `kavrynt.io/redacted-environment` and `kavrynt.io/redacted-args`
+  annotations, since either can hold a key. Fill them in and remove the
+  annotations before importing, or export with `--include-environment` and
+  `--include-args` and store the file like a secret.
 - **What `import` refuses, before writing anything:**
-  - invalid documents, and two documents for one server;
+  - files over 16 MiB, invalid documents, and two documents for one server;
   - redacted values not yet filled in;
   - namespaces that do not exist (it never creates them);
   - servers that exist with another spec, labels, or annotations.

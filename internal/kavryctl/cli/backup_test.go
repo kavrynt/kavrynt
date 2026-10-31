@@ -3,8 +3,10 @@ package cli
 import (
 	"bytes"
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -222,8 +224,13 @@ func TestImportDryRun(t *testing.T) {
 // write is refused and named.
 func TestImportConflict(t *testing.T) {
 	existing := mcpServer("team-a", "search")
-	conflict := interceptor.Funcs{Update: func(context.Context, client.WithWatch, client.Object, ...client.UpdateOption) error {
-		return apierrors.NewConflict(schema.GroupResource{Group: "kavrynt.io", Resource: "mcpservers"}, "search", nil)
+	// The check's dry run passes; someone changes the server before the
+	// real update.
+	conflict := interceptor.Funcs{Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+		if slices.Contains((&client.UpdateOptions{}).ApplyOptions(opts).DryRun, metav1.DryRunAll) {
+			return nil
+		}
+		return apierrors.NewConflict(schema.GroupResource{Group: "kavrynt.io", Resource: "mcpservers"}, "search", errors.New("changed"))
 	}}
 	useBackupClient(t, conflict, namespace("team-a"), existing)
 	file := filepath.Join(t.TempDir(), "in.yaml")
@@ -264,5 +271,103 @@ func TestImportReportsReadiness(t *testing.T) {
 	if code != 0 || !strings.Contains(out, "add team-a.search and team-a.search.origin") ||
 		!strings.Contains(out, "team-a/billing is not Ready after 1s: "+kavryntv1alpha1.ReasonEndpointNotAllowed) || strings.Contains(out, "team-x") {
 		t.Fatalf("readiness report: exit %d\n%s", code, out)
+	}
+}
+
+// Verifies SPEC-0034-R01 and SPEC-0034-R09: spec.args are written empty and
+// counted unless --include-args, which warns; -o makes an existing file
+// private before writing.
+func TestExportRedactsArgsAndKeepsFilesPrivate(t *testing.T) {
+	stdio := mcpServer("team-a", "tool")
+	stdio.Spec = kavryntv1alpha1.MCPServerSpec{Version: "1.0.0", Transport: "stdio", Command: "tool", Args: []string{"--token=args-s3cret", "--verbose"}}
+	useBackupClient(t, interceptor.Funcs{}, namespace("team-a"), stdio)
+	out, _, code := run2("export", "-n", "team-a")
+	if code != 0 || strings.Contains(out, "args-s3cret") || !strings.Contains(out, redactedArgsAnnotation+": \"2\"") {
+		t.Fatalf("default export: exit %d\n%s", code, out)
+	}
+	if out, errOut, _ := run2("export", "-n", "team-a", "--include-args"); !strings.Contains(out, "args-s3cret") || !strings.Contains(errOut, "may hold credentials") {
+		t.Fatalf("--include-args: %s %s", out, errOut)
+	}
+
+	file := filepath.Join(t.TempDir(), "existing.yaml")
+	if err := os.WriteFile(file, []byte(strings.Repeat("old content\n", 100)), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := run2("export", "-n", "team-a", "-o", file); code != 0 {
+		t.Fatal(errOut)
+	}
+	info, _ := os.Stat(file)
+	data, _ := os.ReadFile(file)
+	if info.Mode().Perm() != 0o600 || strings.Contains(string(data), "old content") {
+		t.Fatalf("existing file: mode %v\n%s", info.Mode(), data)
+	}
+}
+
+// Verifies SPEC-0034-R04, SPEC-0034-R05, SPEC-0034-R09, and SPEC-0034-R10:
+// redacted args are refused; an overwrite the API server refuses in the
+// dry run stops the whole import; a file over 16 MiB is refused unread.
+func TestImportChecksBeforeOverwriting(t *testing.T) {
+	refuseUpdate := interceptor.Funcs{Update: func(ctx context.Context, c client.WithWatch, obj client.Object, opts ...client.UpdateOption) error {
+		if slices.Contains((&client.UpdateOptions{}).ApplyOptions(opts).DryRun, metav1.DryRunAll) {
+			return apierrors.NewInvalid(schema.GroupKind{Group: "kavrynt.io", Kind: "MCPServer"}, "search", nil)
+		}
+		return c.Update(ctx, obj, opts...)
+	}}
+	target := useBackupClient(t, refuseUpdate, namespace("team-a"), mcpServer("team-a", "search"))
+	dir := t.TempDir()
+	file := filepath.Join(dir, "in.yaml")
+	doc := "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata: {name: %s, namespace: team-a}\nspec: {version: 2.0.0, transport: http, endpoint: http://%s.team-a.svc:8080}\n"
+	data := strings.ReplaceAll(doc, "%s", "search") + "---\n" + strings.ReplaceAll(doc, "%s", "new")
+	if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	out, _, code := run2("import", "--overwrite", "--wait", "0", file)
+	if code != 1 || !strings.Contains(out, "refuses the overwrite") {
+		t.Fatalf("refused overwrite: exit %d\n%s", code, out)
+	}
+	if err := target.Get(context.Background(), client.ObjectKey{Namespace: "team-a", Name: "new"}, &kavryntv1alpha1.MCPServer{}); !apierrors.IsNotFound(err) {
+		t.Fatalf("a refused overwrite let another document be written: %v", err)
+	}
+
+	args := "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata: {name: tool, namespace: team-a, annotations: {kavrynt.io/redacted-args: \"1\"}}\nspec: {version: 1.0.0, transport: stdio, command: tool, args: [\"\"]}\n"
+	if err := os.WriteFile(file, []byte(args), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, code := run2("import", "--wait", "0", file); code != 1 || !strings.Contains(out, "spec.args were redacted") {
+		t.Fatalf("redacted args: exit %d\n%s", code, out)
+	}
+
+	big := filepath.Join(dir, "big.yaml")
+	if err := os.WriteFile(big, bytes.Repeat([]byte("#\n"), maxImportBytes/2+1), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if _, errOut, code := run2("import", big); code != 1 || !strings.Contains(errOut, "larger than 16 MiB") {
+		t.Fatalf("large file: exit %d %s", code, errOut)
+	}
+}
+
+// Verifies SPEC-0034-R08: after an overwrite, a Ready condition of the old
+// generation does not count.
+func TestImportWaitsForTheNewGeneration(t *testing.T) {
+	stale := interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
+		if err := c.Get(ctx, key, obj, opts...); err != nil {
+			return err
+		}
+		if server, ok := obj.(*kavryntv1alpha1.MCPServer); ok {
+			server.Generation = 2
+			ready := condition(kavryntv1alpha1.ConditionReady, "True", kavryntv1alpha1.ReasonRoutable, "")
+			ready.ObservedGeneration = 1
+			server.Status.Conditions = []metav1.Condition{ready, condition(kavryntv1alpha1.ConditionToolsDiscovered, "True", kavryntv1alpha1.ReasonDiscovered, "")}
+		}
+		return nil
+	}}
+	useBackupClient(t, stale, namespace("team-a"), mcpServer("team-a", "search"))
+	file := filepath.Join(t.TempDir(), "in.yaml")
+	doc := "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata: {name: search, namespace: team-a}\nspec: {version: 2.0.0, transport: http, endpoint: http://search.team-a.svc:8080}\n"
+	if err := os.WriteFile(file, []byte(doc), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if out, _, _ := run2("import", "--overwrite", "--wait", "1s", file); !strings.Contains(out, "team-a/search is not Ready after 1s: Pending") || strings.Contains(out, "every imported MCPServer is Ready") {
+		t.Fatalf("stale Ready counted:\n%s", out)
 	}
 }

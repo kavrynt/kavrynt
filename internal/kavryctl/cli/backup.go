@@ -7,6 +7,7 @@ import (
 	"maps"
 	"os"
 	"slices"
+	"strconv"
 	"strings"
 	"time"
 
@@ -25,7 +26,14 @@ import (
 // (SPEC-0034-R01). import refuses documents that still carry it (R04).
 const redactedAnnotation = "kavrynt.io/redacted-environment"
 
+// redactedArgsAnnotation counts the spec.args an export wrote empty
+// (SPEC-0034-R09); import refuses documents that still carry it.
+const redactedArgsAnnotation = "kavrynt.io/redacted-args"
+
 const lastAppliedAnnotation = "kubectl.kubernetes.io/last-applied-configuration"
+
+// maxImportBytes bounds the file import reads (SPEC-0034-R10).
+const maxImportBytes = 16 << 20
 
 // kubeContextName is the kubeconfig context a command uses, named in the
 // export header instead of the API server address (SPEC-0034-R02). Tests
@@ -66,6 +74,7 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	fs.BoolVar(allNamespaces, "A", false, "Shorthand for --all-namespaces")
 	outFile := fs.String("o", "", "Write to this file (mode 0600) instead of standard output")
 	includeEnv := fs.Bool("include-environment", false, "Keep spec.environment values (the file may then hold credentials)")
+	includeArgs := fs.Bool("include-args", false, "Keep spec.args values (the file may then hold credentials)")
 	releaseNamespace := fs.String("release-namespace", "kavrynt-system", "Namespace of the Kavrynt release, for the Operator version")
 	if err := fs.Parse(args); err != nil {
 		return 2
@@ -114,6 +123,17 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 			out.Annotations[redactedAnnotation] = strings.Join(keys, ",")
 			redactions = append(redactions, fmt.Sprintf("%s/%s: %s", out.Namespace, out.Name, strings.Join(keys, ", ")))
 		}
+		// Arguments can carry a key too (--token=...); they are written
+		// empty and counted, and import refuses them until filled in
+		// (SPEC-0034-R09).
+		if len(out.Spec.Args) > 0 && !*includeArgs {
+			out.Spec.Args = make([]string, len(out.Spec.Args))
+			if out.Annotations == nil {
+				out.Annotations = map[string]string{}
+			}
+			out.Annotations[redactedArgsAnnotation] = strconv.Itoa(len(out.Spec.Args))
+			redactions = append(redactions, fmt.Sprintf("%s/%s: %d spec.args", out.Namespace, out.Name, len(out.Spec.Args)))
+		}
 		if out.Spec.Credential != nil {
 			key := out.Namespace + "." + out.Name
 			credentials = append(credentials, key+", "+key+".origin")
@@ -143,7 +163,7 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 		}
 	}
 	if len(redactions) > 0 {
-		fmt.Fprintf(&file, "# spec.environment values written empty (see the %s annotation);\n# fill them in and remove the annotation before importing:\n", redactedAnnotation)
+		fmt.Fprintf(&file, "# spec.environment and spec.args values written empty (see the %s and\n# %s annotations); fill them in and remove the annotations before importing:\n", redactedAnnotation, redactedArgsAnnotation)
 		for _, line := range redactions {
 			fmt.Fprintf(&file, "#   %s\n", line)
 		}
@@ -153,16 +173,42 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	if *includeEnv {
 		fmt.Fprintln(stderr, "warning: --include-environment keeps spec.environment values; the export may hold credentials")
 	}
+	if *includeArgs {
+		fmt.Fprintln(stderr, "warning: --include-args keeps spec.args values; the export may hold credentials")
+	}
 	if *outFile == "" {
 		fmt.Fprint(stdout, file.String())
 		return 0
 	}
-	if err := os.WriteFile(*outFile, []byte(file.String()), 0o600); err != nil {
+	if err := writePrivateFile(*outFile, file.String()); err != nil {
 		fmt.Fprintf(stderr, "export failed: %v\n", err)
 		return 1
 	}
 	fmt.Fprintf(stdout, "exported %s to %s\n", plural(len(servers.Items), "MCPServer"), *outFile)
 	return 0
+}
+
+// writePrivateFile writes data to path with mode 0600, also when the file
+// existed with a wider mode: the mode is set before anything is written.
+func writePrivateFile(path, data string) error {
+	// #nosec G304 -- writing the file the user names is the command's purpose.
+	f, err := os.OpenFile(path, os.O_WRONLY|os.O_CREATE, 0o600)
+	if err != nil {
+		return err
+	}
+	if err := f.Chmod(0o600); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if err := f.Truncate(0); err != nil {
+		_ = f.Close()
+		return err
+	}
+	if _, err := f.WriteString(data); err != nil {
+		_ = f.Close()
+		return err
+	}
+	return f.Close()
 }
 
 // operatorVersion is the image tag of the Operator Deployment in namespace,
@@ -186,7 +232,10 @@ func operatorVersion(ctx context.Context, c client.Client, namespace string) str
 type importPlan struct {
 	server   *kavryntv1alpha1.MCPServer
 	existing *kavryntv1alpha1.MCPServer
-	action   string // create, unchanged, overwrite
+	// updated is the object an overwrite sends, checked by a server-side
+	// dry run before anything is written.
+	updated *kavryntv1alpha1.MCPServer
+	action  string // create, unchanged, overwrite
 }
 
 func (p importPlan) key() string { return p.server.Namespace + "/" + p.server.Name }
@@ -205,8 +254,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintln(stderr, "usage: kavryctl import [--overwrite] [--dry-run] [--wait 60s] <file>")
 		return 2
 	}
-	// #nosec G304 -- reading the file the user names is the command's purpose.
-	data, err := os.ReadFile(fs.Arg(0))
+	data, err := readImportFile(fs.Arg(0))
 	if err != nil {
 		fmt.Fprintf(stderr, "import failed: %v\n", err)
 		return 1
@@ -247,9 +295,7 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 		case "overwrite":
 			// The resourceVersion read in the check makes a concurrent change
 			// a conflict instead of a lost update.
-			updated := copyServer(plan.existing)
-			updated.Labels, updated.Annotations, updated.Spec = plan.server.Labels, mergeLastApplied(plan.existing, plan.server.Annotations), plan.server.Spec
-			err = c.Update(ctx, updated, dryUpdate...)
+			err = c.Update(ctx, copyServer(plan.updated), dryUpdate...)
 		}
 		switch {
 		case apierrors.IsConflict(err) || apierrors.IsAlreadyExists(err):
@@ -276,6 +322,25 @@ func runImport(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
+// readImportFile reads at most maxImportBytes and refuses a larger file
+// before parsing any of it (SPEC-0034-R10).
+func readImportFile(path string) ([]byte, error) {
+	// #nosec G304 -- reading the file the user names is the command's purpose.
+	f, err := os.Open(path)
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+	data, err := io.ReadAll(io.LimitReader(f, maxImportBytes+1))
+	if err != nil {
+		return nil, err
+	}
+	if len(data) > maxImportBytes {
+		return nil, fmt.Errorf("%s is larger than %d MiB; split it", path, maxImportBytes>>20)
+	}
+	return data, nil
+}
+
 // planImport checks every document before anything is written
 // (SPEC-0034-R04, R05, R07) and returns the plans, or every problem.
 func planImport(ctx context.Context, c client.Client, defaultNamespace string, docs [][]byte, overwrite bool) ([]importPlan, []string) {
@@ -299,6 +364,10 @@ func planImport(ctx context.Context, c client.Client, defaultNamespace string, d
 			continue
 		}
 		seen[key] = true
+		if count, ok := server.Annotations[redactedArgsAnnotation]; ok {
+			problems = append(problems, fmt.Sprintf("%s: %s spec.args were redacted; fill them in and remove the %s annotation", key, count, redactedArgsAnnotation))
+			continue
+		}
 		if keys, ok := server.Annotations[redactedAnnotation]; ok {
 			problems = append(problems, fmt.Sprintf("%s: spec.environment was redacted; fill in %s and remove the %s annotation", key, keys, redactedAnnotation))
 			continue
@@ -339,6 +408,14 @@ func planImport(ctx context.Context, c client.Client, defaultNamespace string, d
 				plan.action = "unchanged"
 			case overwrite:
 				plan.action = "overwrite"
+				plan.updated = copyServer(existing)
+				plan.updated.Labels, plan.updated.Annotations, plan.updated.Spec = server.Labels, mergeLastApplied(existing, server.Annotations), server.Spec
+				// The update is checked like a create, so an admission or
+				// validation refusal stops the import before any write.
+				if err := c.Update(ctx, copyServer(plan.updated), client.DryRunAll); err != nil {
+					problems = append(problems, fmt.Sprintf("%s: the API server refuses the overwrite: %v", key, err))
+					continue
+				}
 			default:
 				problems = append(problems, key+": exists with another spec, labels, or annotations; --overwrite replaces it")
 				continue
@@ -389,7 +466,9 @@ func reportReadiness(c client.Client, plans []importPlan, wait time.Duration, w 
 			cancel()
 			ready := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady)
 			discovered := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
-			if err == nil && ready != nil && ready.Status == "True" && discovered != nil {
+			// Conditions of the stored spec, not one an overwrite replaced.
+			current := ready != nil && ready.ObservedGeneration == server.Generation
+			if err == nil && current && ready.Status == "True" && discovered != nil {
 				if discovered.Reason == kavryntv1alpha1.ReasonCredentialUnavailable {
 					key := plan.server.Namespace + "." + plan.server.Name
 					fmt.Fprintf(w, "%s is Ready but needs its credential: add %s and %s to the upstream credentials Secret\n", plan.key(), key, key+".origin")
@@ -414,7 +493,7 @@ func reportReadiness(c client.Client, plans []importPlan, wait time.Duration, w 
 		_ = c.Get(ctx, client.ObjectKey{Namespace: plan.server.Namespace, Name: plan.server.Name}, server)
 		cancel()
 		reason := "Pending"
-		if ready := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady); ready != nil && ready.Status != "True" {
+		if ready := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionReady); ready != nil && ready.Status != "True" && ready.ObservedGeneration == server.Generation {
 			reason = ready.Reason
 		}
 		fmt.Fprintf(w, "%s is not Ready after %s: %s (kubectl describe mcpserver -n %s %s)\n", plan.key(), wait, reason, plan.server.Namespace, plan.server.Name)

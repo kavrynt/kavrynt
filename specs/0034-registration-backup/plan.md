@@ -26,8 +26,9 @@
   `0600`.
 - **Import, check:** parse every document, refuse duplicates, redaction
   annotations, missing namespaces, documents the API server refuses
-  (server-side dry-run create), and existing servers that differ without
-  `--overwrite`. Any refusal prints every problem and writes nothing.
+  (server-side dry-run create, or dry-run update for an overwrite), and
+  existing servers that differ without `--overwrite`; a file over 16 MiB is
+  refused before parsing. Any refusal prints every problem and writes nothing.
 - **Import, write:** create, or update with the resourceVersion read in the
   check (a concurrent change is a conflict, reported as changed by
   someone else). `--dry-run` does the writes with `DryRunAll`. Then wait
@@ -55,7 +56,9 @@
 | R05 | `cli.TestImportRoundTrip` |
 | R06 | `cli.TestImportDryRun` |
 | R07 | `cli.TestImportRefusesBeforeWriting`, `cli.TestImportRoundTrip` |
-| R08 | `cli.TestImportReportsReadiness` |
+| R08 | `cli.TestImportReportsReadiness`, `cli.TestImportWaitsForTheNewGeneration` |
+| R09 | `cli.TestExportRedactsArgsAndKeepsFilesPrivate`, `cli.TestImportChecksBeforeOverwriting` |
+| R10 | `cli.TestImportChecksBeforeOverwriting` |
 
 Also run against a real Kind cluster with three MCP servers: export, an
 import dry run reporting every server unchanged, and the restore of a
