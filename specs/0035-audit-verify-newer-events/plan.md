@@ -47,6 +47,7 @@
 | R03 | `auditv1.TestUnknownFieldsAreNotCalledAltered` |
 | R04 | `audit.TestWriterPutsTheHashLast` |
 | R05 | `auditv1.TestVerifyAcceptsNewerEventsAsWritten`, `cli.TestAuditVerify` |
+| R06 | `auditv1.TestAddedFieldsAreNotTrustedByReencoding` |
 
 ## Rollout
 

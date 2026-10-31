@@ -196,3 +196,51 @@ func TestUnknownFieldsAreNotCalledAltered(t *testing.T) {
 		t.Fatalf("edited current event: %+v", s.Breaks)
 	}
 }
+
+// Verifies SPEC-0035-R03 and SPEC-0035-R06: a member added to a written
+// line is a break that names it, even
+// though the known fields still re-encode to the hash, because nothing
+// covers the added member; a rewritten newer line is a break too.
+func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
+	current := chain("gw-a/1", 2)
+	first, _ := json.Marshal(current[0])
+	second, _ := json.Marshal(current[1])
+	injected := strings.Replace(string(second), `"tool":""`, `"tool":"","approved_by":"alice"`, 1)
+	s, _ := Verify(strings.NewReader(string(first) + "\n" + injected + "\n"))
+	if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 || !strings.Contains(s.Breaks[0].Problem, `"approved_by"`) || s.UnknownFields != 0 {
+		t.Fatalf("injected field: breaks %+v, unknown %d", s.Breaks, s.UnknownFields)
+	}
+
+	newer := newerChain("gw-new/1", 2)
+	if s, _ := Verify(strings.NewReader(strings.Join(newer, "\n"))); len(s.Breaks) != 0 || s.UnknownFields != 2 {
+		t.Fatalf("newer chain as written: %+v", s)
+	}
+
+	// An event the Gateway refused before routing has an empty route.
+	blank := Event{Type: Type, Instance: "gw-a/1", Seq: 2, PrevHash: current[0].Hash, Decision: DecisionInvalid}
+	blank.Hash = ComputeHash(blank)
+	blankLine, _ := json.Marshal(blank)
+	// The added member comes after route, where a stopped scan would miss it.
+	emptyRoute := strings.Replace(string(blankLine), `"http_method":""`, `"http_method":"","approved_by":"alice"`, 1)
+
+	// A member added inside route, and a repeated member whose last value is
+	// the original: decoding hides both, so re-encoding would match.
+	for name, tc := range map[string]struct{ edited, want string }{
+		"nested member":   {strings.Replace(string(second), `"name":"search"}`, `"name":"search","approved_by":"alice"}`, 1), `"route.approved_by"`},
+		"repeated member": {strings.Replace(string(second), `"tool":""`, `"tool":"delete_all","tool":""`, 1), `repeats "tool"`},
+		// route null decodes to an empty Route and stops the member scan,
+		// which must not let a member after it through.
+		// The member after it is still found and named.
+		"route not an object":                {strings.Replace(emptyRoute, `"route":{"namespace":"","name":""}`, `"route":null`, 1), `"approved_by"`},
+		"route not an object, nothing added": {strings.Replace(string(blankLine), `"route":{"namespace":"","name":""}`, `"route":null`, 1), "altered"},
+	} {
+		s, _ := Verify(strings.NewReader(string(first) + "\n" + tc.edited + "\n"))
+		if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 || !strings.Contains(s.Breaks[0].Problem, tc.want) {
+			t.Fatalf("%s: breaks %+v, want one naming %s", name, s.Breaks, tc.want)
+		}
+	}
+	// A collector's re-encoding of a known-fields line still verifies.
+	if s, _ := Verify(strings.NewReader(reencode(t, string(first)) + "\n" + reencode(t, string(second)) + "\n")); len(s.Breaks) != 0 {
+		t.Fatalf("re-encoded chain: %+v", s.Breaks)
+	}
+}

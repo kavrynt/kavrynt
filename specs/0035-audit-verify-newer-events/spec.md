@@ -68,6 +68,14 @@ say "verify with the Gateway's release".
 - **SPEC-0035-R05** After a run without breaks, `kavryctl audit verify` MUST
   say how many events carried fields it does not know, when there were
   any: their hashes cover those fields, but it did not interpret them.
+- **SPEC-0035-R06** An event whose line holds members this version does
+  not know (at the top level or inside `route`), or repeats a member of an
+  object, MUST verify only by R01; a repeated member that does not verify
+  is reported as altered. When R01 fails, it MUST be a break
+  under R03 even if its known fields re-encode to its hash (R02): the
+  re-encoding does not cover those members, so one added after the Gateway
+  hashed the line would otherwise pass unseen. R02 applies only to events
+  without such members.
 
 ## Acceptance criteria
 
@@ -85,12 +93,18 @@ say "verify with the Gateway's release".
   altered (R03).
 - Given any event the Gateway writes, then its line ends with the `"hash"`
   member and verifies by R01 (R04).
+- Given an event without unknown fields to which someone adds a member,
+  such as `"approved_by":"alice"` or `route.approved_by`, or repeats one,
+  such as `"tool":"delete_all","tool":""`, then it is a break that names the
+  member, and `verify` exits non-zero (R06).
 
 ## Security and privacy
 
 The hash still covers every byte of the event but the hash member, unknown
 members included, so adding, removing, or editing any member of a line is
-still detected. The unknown-fields break is only possible for a line that
+still detected. A member this version does not know is trusted only when
+the line verifies as written (R06): the re-encoding fallback covers known
+fields only. The unknown-fields break is only possible for a line that
 does not verify; it changes the explanation, not whether it is a break, and
 `verify` still exits non-zero. An edited line with unknown fields is
 reported this way rather than as altered, because without knowing those
