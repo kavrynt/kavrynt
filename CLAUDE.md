@@ -106,6 +106,11 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   EndpointSlices, no shared state), answers `404` for sessions of pods that
   are gone, and the Operator discovers from one pod. Lost sessions are
   `session_not_found` for every server.
+- Request size limit (SPEC-0038): every `/mcp/` request body is at most
+  `gateway.config.maxRequestBytes` (4 MiB); a larger `Content-Length` gets
+  `413` before the server is reached, a body without one is cut at the
+  limit. The Operator drops control characters other than newline and tab
+  from tool descriptions and keeps no schema that has one in any string.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
   forwarding and drops upstream `Set-Cookie`, `Server`, and `X-Powered-By`.
 - Gateway and Operator discovery refuse link-local, cloud metadata, and
@@ -203,8 +208,10 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
 
 - Trial users consume approved alpha or beta images, `kavryctl` binaries, Helm
   charts, and runbooks.
-- Customer-facing docs (`product-docs`) may link to this repository. Ask the
-  owner before adding source links to the marketing website.
+- The website (`website`, kavrynt.com) and the product docs (`product-docs`,
+  docs.kavrynt.com) link to this repository as the runtime's source: keep the
+  links in their navigation and footers, and link it wherever a page says the
+  runtime is open source.
 - Hosted features (cross-cluster inventory, enterprise identity, billing) belong
   in `kavrynt-cloud`, not here.
 

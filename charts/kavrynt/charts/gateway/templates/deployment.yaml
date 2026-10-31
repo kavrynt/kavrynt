@@ -80,6 +80,8 @@ spec:
             {{- end }}
             - --request-timeout
             - {{ .Values.config.requestTimeout | quote }}
+            - --max-request-bytes
+            - {{ .Values.config.maxRequestBytes | int64 | quote }}
             - --shutdown-delay
             - {{ .Values.config.shutdownDelay | default "5s" | quote }}
             - --shutdown-timeout

@@ -247,9 +247,9 @@ func buildResult(raw []json.RawMessage) Result {
 		seen[tool.Name] = true
 		bounded := kavryntv1alpha1.MCPServerTool{
 			Name:        tool.Name,
-			Description: truncate(tool.Description, MaxDescriptionLength),
+			Description: truncate(printable(tool.Description), MaxDescriptionLength),
 		}
-		if schema, err := CanonicalJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' {
+		if schema, err := CanonicalJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' && !hasControl(schema) {
 			bounded.InputSchema = &runtime.RawExtension{Raw: schema}
 		}
 		bounded.Annotations = behaviorHints(tool.Annotations)
@@ -313,6 +313,41 @@ func statusSize(tools []kavryntv1alpha1.MCPServerTool) int {
 		}
 	}
 	return size
+}
+
+// unwanted is a control character other than newline and tab: text a server
+// reports must not drive the terminal of whoever reads the status, as
+// kubectl describe prints it unescaped.
+func unwanted(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }
+
+// printable drops unwanted characters from display text.
+func printable(value string) string {
+	if strings.IndexFunc(value, unwanted) < 0 {
+		return value
+	}
+	return strings.Map(func(r rune) rune {
+		if unwanted(r) {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+// hasControl reports whether a canonical JSON value has an unwanted character
+// in any string, member names included. Such a schema is not kept rather than
+// rewritten, since dropping characters from a const, enum, pattern, or name
+// would change what it allows.
+func hasControl(canonical []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(canonical))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
+		}
+		if s, ok := token.(string); ok && strings.IndexFunc(s, unwanted) >= 0 {
+			return true
+		}
+	}
 }
 
 // truncate shortens value to at most max characters.

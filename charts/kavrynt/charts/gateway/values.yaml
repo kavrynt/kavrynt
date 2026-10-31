@@ -20,7 +20,7 @@ topologySpreadConstraints: []
 
 image:
   repository: kavrynt/gateway
-  tag: 1.0.0-beta.4
+  tag: 1.0.0-beta.5
   pullPolicy: IfNotPresent
 
 imagePullSecrets: []
@@ -40,6 +40,10 @@ service:
 config:
   addr: ":8080"
   requestTimeout: "30s"
+  # Largest request body an MCP route accepts, in bytes; larger requests get
+  # 413 (SPEC-0038). A larger Content-Length never reaches the MCP server; a
+  # body without one is forwarded up to the limit, then cut. 4 MiB by default.
+  maxRequestBytes: 4194304
   # Extra request headers never forwarded to MCP servers. Authorization,
   # Cookie, and Proxy-Authorization are always removed (no token passthrough).
   stripRequestHeaders: []

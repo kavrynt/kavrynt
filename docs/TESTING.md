@@ -58,7 +58,7 @@ kubectl auth can-i create customresourcedefinitions   # expect: yes
 ## 2. Install Kavrynt
 
 ```bash
-export KAVRYNT_VERSION=1.0.0-beta.4
+export KAVRYNT_VERSION=1.0.0-beta.5
 
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
   --version "$KAVRYNT_VERSION" \
@@ -273,8 +273,8 @@ answer `HTTP 403` with the same body.
 chained with SHA-256. Install `kavryctl` and verify the chain:
 
 ```bash
-curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/v1.0.0-beta.4/scripts/install.sh \
-  | KAVRYNT_VERSION=v1.0.0-beta.4 sh
+curl -fsSL https://raw.githubusercontent.com/kavrynt/kavrynt/v1.0.0-beta.5/scripts/install.sh \
+  | KAVRYNT_VERSION=v1.0.0-beta.5 sh
 export PATH="$HOME/.kavrynt/bin:$PATH"
 
 kubectl -n kavrynt-system logs -l app.kubernetes.io/name=gateway --prefix=false --tail=-1 \
@@ -358,7 +358,7 @@ Your feedback decides what we build next. Please
 [open a tester feedback issue](https://github.com/kavrynt/kavrynt/issues/new?template=tester_feedback.yml),
 even if everything worked. It helps to include:
 
-- the output of `kavryctl doctor --anonymize` (kavryctl 1.0.0-beta.4 or
+- the output of `kavryctl doctor --anonymize` (kavryctl 1.0.0-beta.5 or
   later): a read-only check of the installation and its MCP servers, with
   what to do for each problem and no secrets, endpoints, or names;
 - your Kubernetes platform and version, and the Kavrynt version;

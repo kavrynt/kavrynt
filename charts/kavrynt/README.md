@@ -11,7 +11,7 @@ Kavrynt MCP Control Plane runtime chart.
 ```bash
 # With your authorization server (MCP client authentication is on by default):
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.4 \
+  --version 1.0.0-beta.5 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.resourceURL=https://mcp.example.com \
@@ -19,7 +19,7 @@ helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 
 # A trial without one: MCP routes accept unauthenticated calls.
 helm upgrade --install kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.4 \
+  --version 1.0.0-beta.5 \
   --namespace kavrynt-system \
   --create-namespace \
   --set gateway.auth.enabled=false
@@ -506,7 +506,7 @@ applied. Check a values file with:
 
 ```bash
 helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
-  --version 1.0.0-beta.4 --values my-values.yaml >/dev/null
+  --version 1.0.0-beta.5 --values my-values.yaml >/dev/null
 ```
 
 `global` accepts additional keys for platform-injected globals.
@@ -586,6 +586,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.service.port` | int | `8080` | Service port |
 | `gateway.config.addr` | string | `":8080"` | Listen address |
 | `gateway.config.requestTimeout` | string | `"30s"` | Upstream request timeout; event streams only until response headers |
+| `gateway.config.maxRequestBytes` | int | `4194304` | Largest request body an MCP route accepts, 1024 to 1073741824 bytes; larger requests get `413`. A larger `Content-Length` never reaches the MCP server; a body without one is forwarded up to the limit, then cut |
 | `gateway.config.stripRequestHeaders` | list | `[]` | Extra request headers never forwarded. `Authorization`, `Cookie`, and `Proxy-Authorization` are always removed. |
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |
