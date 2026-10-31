@@ -246,7 +246,9 @@ func TestListToolsBoundsUntrustedMetadata(t *testing.T) {
 }
 
 // Text a server reports reaches terminals through kubectl describe, so
-// control characters other than newline and tab are dropped from it.
+// control characters other than newline and tab are dropped from
+// descriptions, and a schema that has any is not kept: rewriting it would
+// change what it allows.
 func TestListToolsDropsControlCharacters(t *testing.T) {
 	escape := "\x1b[2J\x1b]0;owned\x07\r"
 	clean := map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string", "description": "query\n\tterm"}}}
@@ -254,20 +256,21 @@ func TestListToolsDropsControlCharacters(t *testing.T) {
 		map[string]any{"name": "evil", "description": "safe" + escape + "\nnext\ttab\u0085",
 			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"a" + escape + "b": map[string]any{"description": escape + "ok"}}}},
 		map[string]any{"name": "clean", "description": "plain", "inputSchema": clean},
+		map[string]any{"name": "const", "inputSchema": map[string]any{"type": "object", "properties": map[string]any{"mode": map[string]any{"const": "a\rb"}}}},
 	)
 	result, err := listTools(t, server)
 	if err != nil {
 		t.Fatal(err)
 	}
-	if len(result.Tools) != 2 {
-		t.Fatalf("tools = %d, want 2", len(result.Tools))
+	if len(result.Tools) != 3 {
+		t.Fatalf("tools = %d, want 3", len(result.Tools))
 	}
 	evil := result.Tools[0]
 	if want := "safe[2J]0;owned\nnext\ttab"; evil.Description != want {
 		t.Fatalf("description = %q, want %q", evil.Description, want)
 	}
-	if evil.InputSchema == nil || string(evil.InputSchema.Raw) != `{"properties":{"a[2J]0;ownedb":{"description":"[2J]0;ownedok"}},"type":"object"}` {
-		t.Fatalf("schema = %v", evil.InputSchema)
+	if evil.InputSchema != nil || result.Tools[2].InputSchema != nil {
+		t.Fatalf("schemas with control characters were kept: %v, %v", evil.InputSchema, result.Tools[2].InputSchema)
 	}
 	want, err := json.Marshal(clean)
 	if err != nil {

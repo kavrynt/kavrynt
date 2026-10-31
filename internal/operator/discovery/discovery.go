@@ -249,7 +249,7 @@ func buildResult(raw []json.RawMessage) Result {
 			Name:        tool.Name,
 			Description: truncate(printable(tool.Description), MaxDescriptionLength),
 		}
-		if schema, err := printableJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' {
+		if schema, err := CanonicalJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' && !hasControl(schema) {
 			bounded.InputSchema = &runtime.RawExtension{Raw: schema}
 		}
 		bounded.Annotations = behaviorHints(tool.Annotations)
@@ -315,11 +315,13 @@ func statusSize(tools []kavryntv1alpha1.MCPServerTool) int {
 	return size
 }
 
-// printable drops control characters other than newline and tab, so text a
-// server reports cannot drive the terminal of whoever reads the status, as
+// unwanted is a control character other than newline and tab: text a server
+// reports must not drive the terminal of whoever reads the status, as
 // kubectl describe prints it unescaped.
+func unwanted(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }
+
+// printable drops unwanted characters from display text.
 func printable(value string) string {
-	unwanted := func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }
 	if strings.IndexFunc(value, unwanted) < 0 {
 		return value
 	}
@@ -331,37 +333,21 @@ func printable(value string) string {
 	}, value)
 }
 
-// printableJSON is CanonicalJSON with printable applied to every string,
-// member names included.
-func printableJSON(raw []byte) ([]byte, error) {
-	decoder := json.NewDecoder(bytes.NewReader(raw))
-	decoder.UseNumber()
-	var value any
-	if err := decoder.Decode(&value); err != nil {
-		return nil, err
-	}
-	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
-		return nil, errors.New("trailing data after JSON value")
-	}
-	return json.Marshal(printableValue(value))
-}
-
-func printableValue(value any) any {
-	switch v := value.(type) {
-	case string:
-		return printable(v)
-	case []any:
-		for i := range v {
-			v[i] = printableValue(v[i])
+// hasControl reports whether a canonical JSON value has an unwanted character
+// in any string, member names included. Such a schema is not kept rather than
+// rewritten, since dropping characters from a const, enum, pattern, or name
+// would change what it allows.
+func hasControl(canonical []byte) bool {
+	decoder := json.NewDecoder(bytes.NewReader(canonical))
+	for {
+		token, err := decoder.Token()
+		if err != nil {
+			return false
 		}
-	case map[string]any:
-		out := make(map[string]any, len(v))
-		for name, member := range v {
-			out[printable(name)] = printableValue(member)
+		if s, ok := token.(string); ok && strings.IndexFunc(s, unwanted) >= 0 {
+			return true
 		}
-		return out
 	}
-	return value
 }
 
 // truncate shortens value to at most max characters.
