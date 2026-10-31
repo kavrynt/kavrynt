@@ -191,7 +191,9 @@
   // traffic, or Playground data stays on screen or in memory (SPEC-0005-R14).
   function signedOut(message) {
     const wasSignedIn = state.auth.signedIn;
-    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "" });
+    // checked: false until /v1/session says again which sign-ins the login
+    // page offers; a signed-in answer did not carry them (SPEC-0032-R03).
+    Object.assign(state.auth, { signedIn: false, username: "", expiresAt: "", checked: false });
     Object.assign(state, { servers: [], serversLoaded: false, serversError: null, traffic: [], seenTrafficId: 0, freshIds: new Set(),
       alerts: [], alertsInstance: "", alertsLoaded: false, alertsError: null, history: null, historyFor: "", historyPath: "", historyError: null });
     resetPlayground();
@@ -199,6 +201,7 @@
     drawAlertCount();
     render();
     if (wasSignedIn && message) toast(message);
+    checkSession().then(render);
   }
 
   async function signedIn() {
@@ -220,11 +223,24 @@
     clear(el);
     el.hidden = !(state.auth.enabled && state.auth.signedIn);
     if (el.hidden) return;
+    // How the person signed in, as visible text (SPEC-0032-R11).
+    const via = state.auth.method === "oidc" ? "SSO" : "admin login";
     put(el, h("span", { class: "user-name", text: state.auth.username, title: state.auth.expiresAt ? "Session ends " + new Date(state.auth.expiresAt).toLocaleString() : undefined }),
+      h("span", { class: "muted small", text: "(" + via + ")" }),
       h("button", { type: "button", class: "linkish", onclick: logout }, "Log out"));
   }
 
   function renderLogin(root) {
+    // Sign-in through the identity provider (SPEC-0032-R03), and the admin
+    // password only while it is on (R10).
+    const sso = state.auth.sso ? h("a", { class: "btn primary", href: state.auth.sso.href, text: state.auth.sso.label }) : null;
+    if (!state.auth.adminLogin) {
+      put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },
+        h("h1", { text: "Sign in" }),
+        h("p", { class: "muted", text: "Sign in to see MCP servers, tools, and traffic." }),
+        sso || h("p", { class: "error-text", text: "Sign-in is not available. Ask the platform team." }))));
+      return;
+    }
     const user = h("input", { type: "text", id: "login-user", name: "username", value: "admin", autocomplete: "username", required: true });
     const password = h("input", { type: "password", id: "login-password", name: "password", autocomplete: "current-password", required: true });
     const error = h("p", { class: "error-text", role: "alert" });
@@ -255,7 +271,8 @@
       },
     },
     h("h1", { text: "Sign in" }),
-    h("p", { class: "muted", text: "Sign in as admin to see MCP servers, tools, and traffic." }),
+    sso ? h("p", {}, sso) : null,
+    h("p", { class: "muted", text: sso ? "Or sign in as admin (break-glass login)." : "Sign in as admin to see MCP servers, tools, and traffic." }),
     h("div", { class: "field" }, h("label", { for: "login-user", text: "Username" }), user),
     h("div", { class: "field" }, h("label", { for: "login-password", text: "Password" }), password),
     error,

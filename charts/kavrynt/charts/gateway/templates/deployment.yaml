@@ -137,6 +137,13 @@ spec:
             {{- with .Values.console.auth.trustedProxies }}
             - --console-trusted-proxies={{ join "," . }}
             {{- end }}
+            {{- if include "gateway.consoleOIDCEnabled" . }}
+            {{- $oidc := .Values.console.auth.oidc }}
+            {{- /* Settings only; the client secret is a mounted file (SPEC-0032-R02). */}}
+            - --console-oidc
+            - {{ omit $oidc "enabled" "clientSecret" | toJson | quote }}
+            - --console-oidc-secret-file=/etc/kavrynt/console-oidc/{{ $oidc.clientSecret.key | default "client-secret" }}
+            {{- end }}
             {{- else }}
             - --console-auth=false
             {{- end }}
@@ -178,6 +185,11 @@ spec:
               mountPath: /etc/kavrynt/console-auth
               readOnly: true
             {{- end }}
+            {{- if include "gateway.consoleOIDCEnabled" . }}
+            - name: console-oidc
+              mountPath: /etc/kavrynt/console-oidc
+              readOnly: true
+            {{- end }}
             {{- if $credentials }}
             - name: upstream-credentials
               mountPath: /etc/kavrynt/upstream-credentials
@@ -210,6 +222,12 @@ spec:
         - name: console-auth
           secret:
             secretName: {{ include "gateway.consoleAuthSecret" . }}
+            defaultMode: 0444
+        {{- end }}
+        {{- if include "gateway.consoleOIDCEnabled" . }}
+        - name: console-oidc
+          secret:
+            secretName: {{ .Values.console.auth.oidc.clientSecret.name | quote }}
             defaultMode: 0444
         {{- end }}
         {{- if $credentials }}

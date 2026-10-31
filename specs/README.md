@@ -156,7 +156,7 @@ against the assistant's summary of them.
 | [0029](0029-mcpserver-endpoint-scope/spec.md) | MCPServer endpoint scope | Implemented |
 | [0030](0030-console-login-behind-proxy/spec.md) | Console login limits behind a proxy | Implemented |
 | [0031](0031-gateway-audience/spec.md) | Gateway audience | Implemented |
-| [0032](0032-console-sso/spec.md) | Console sign-in through the authorization server | Draft |
+| [0032](0032-console-sso/spec.md) | Console sign-in through the authorization server | Implemented |
 | [0033](0033-kavryctl-doctor/spec.md) | kavryctl doctor | Implemented |
 | [0034](0034-registration-backup/spec.md) | Registration export and import | Implemented |
 | [0035](0035-audit-verify-newer-events/spec.md) | Verifying audit events from newer Gateways | Implemented |

@@ -161,6 +161,33 @@ console:
     # X-Forwarded-For names, not against the proxy (SPEC-0030). List only
     # the proxies: an address listed here can name any client.
     trustedProxies: []
+    # Sign in through your identity provider instead of the shared admin
+    # password (SPEC-0032). Register a confidential client whose redirect
+    # URL is https://<gateway host>/v1/session/oidc/callback. Only the
+    # listed subjects and groups get a console session.
+    oidc:
+      enabled: false
+      # Must equal the ID tokens' iss; https unless allowHTTP (in-cluster
+      # only; the browser's authorization endpoint must still be https).
+      issuer: ""
+      allowHTTP: false
+      clientID: ""
+      # Secret in the release namespace with the client secret; mounted by
+      # the kubelet, never passed as a flag.
+      clientSecret:
+        name: ""
+        key: client-secret
+      redirectURL: ""
+      # Shown on the "Sign in with ..." button.
+      providerName: ""
+      # Scopes besides openid, for example [profile, groups].
+      scopes: []
+      allowedSubjects: []
+      allowedGroups: []
+      groupsClaim: groups
+      displayClaim: preferred_username
+      # Keep the admin password login as a break-glass login; warned about.
+      keepAdminLogin: false
   # Dashboards (SPEC-0024): each replica keeps 24 hours of its own calls in
   # memory, about 29 KiB per route and 23 KiB per tool (about 27 MiB for
   # 300 routes with the default cap).

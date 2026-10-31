@@ -73,6 +73,10 @@ type Authenticator struct {
 	// client (SPEC-0030-R01).
 	trustedProxies []netip.Prefix
 
+	// oidc, when set, signs people in through the identity provider
+	// (SPEC-0032).
+	oidc *OIDC
+
 	mu       sync.Mutex
 	failures map[string]*failures
 }
@@ -130,6 +134,9 @@ func (a *Authenticator) credentials() (credentials, error) {
 type session struct {
 	Subject string `json:"sub"`
 	Expires int64  `json:"exp"`
+	// Method is "oidc" for a sign-in through the identity provider; empty
+	// for the admin login (SPEC-0032-R11).
+	Method string `json:"method,omitempty"`
 }
 
 // mac binds a session to the signing key and to the current password, so a
@@ -169,13 +176,15 @@ func (c credentials) verify(token string, now time.Time) (session, bool) {
 		return session{}, false
 	}
 	var s session
-	if json.Unmarshal(payload, &s) != nil || s.Subject != Username || now.Unix() >= s.Expires {
+	if json.Unmarshal(payload, &s) != nil || s.Subject == "" || now.Unix() >= s.Expires {
 		return session{}, false
 	}
 	return s, true
 }
 
-// current returns the request's valid session.
+// current returns the request's valid session. A session counts only while
+// its sign-in method is enabled: an admin session ends when SSO replaces the
+// admin login, an SSO session when SSO is turned off (SPEC-0032-R10).
 func (a *Authenticator) current(r *http.Request) (session, bool) {
 	cookie, err := r.Cookie(CookieName)
 	if err != nil {
@@ -185,7 +194,15 @@ func (a *Authenticator) current(r *http.Request) (session, bool) {
 	if err != nil {
 		return session{}, false
 	}
-	return creds.verify(cookie.Value, a.now())
+	s, ok := creds.verify(cookie.Value, a.now())
+	switch {
+	case !ok:
+		return session{}, false
+	case s.Method == methodOIDC:
+		return s, a.oidc != nil
+	default:
+		return s, s.Subject == Username && a.adminLoginEnabled()
+	}
 }
 
 // Authorized reports whether r carries a valid session.
@@ -216,12 +233,23 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		if !ok {
 			// The Gateway audience routes are configuration for signed-in
 			// users only; the login page does not name them.
-			writeJSON(w, http.StatusUnauthorized, map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth})
+			body := map[string]any{"error": "login required", "enabled": true, "mcpAuth": a.mcpAuth, "adminLogin": a.adminLoginEnabled()}
+			if a.oidc != nil {
+				// The console offers "Sign in with <providerName>" (SPEC-0032-R03).
+				body["oidc"] = map[string]string{"providerName": a.oidc.ProviderName, "start": StartPath}
+			}
+			writeJSON(w, http.StatusUnauthorized, body)
 			return
 		}
+		method := s.Method
+		if method == "" {
+			method = methodAdmin
+		}
 		writeJSON(w, http.StatusOK, map[string]any{
-			"enabled":   true,
-			"username":  s.Subject,
+			"enabled":  true,
+			"username": s.Subject,
+			// How the person signed in (SPEC-0032-R11).
+			"method":    method,
 			"expiresAt": time.Unix(s.Expires, 0).UTC().Format(time.RFC3339),
 			"mcpAuth":   a.mcpAuth,
 			// Routes reachable with one token for the Gateway audience.
@@ -239,6 +267,11 @@ func (a *Authenticator) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 }
 
 func (a *Authenticator) login(w http.ResponseWriter, r *http.Request) {
+	if !a.adminLoginEnabled() {
+		// SSO replaced the shared password (SPEC-0032-R10).
+		writeJSON(w, http.StatusNotFound, map[string]string{"error": "the admin login is off; sign in with the identity provider"})
+		return
+	}
 	// JSON only: a cross-site HTML form cannot send it without a CORS
 	// preflight, and the Gateway's origin check still applies.
 	if mediaType, _, err := mime.ParseMediaType(r.Header.Get("Content-Type")); err != nil || mediaType != "application/json" {
@@ -302,7 +335,7 @@ func (a *Authenticator) setCookie(w http.ResponseWriter, r *http.Request, value 
 		MaxAge:   maxAge,
 		HttpOnly: true,
 		SameSite: http.SameSiteStrictMode,
-		Secure:   r.TLS != nil || strings.EqualFold(r.Header.Get("X-Forwarded-Proto"), "https"),
+		Secure:   secureRequest(r),
 	})
 }
 

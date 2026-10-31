@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-30 |
 | Issue | to be opened |
@@ -158,8 +158,6 @@ SSO" from the known limitations), `ROADMAP.md`.
 
 ## Open questions
 
-- Should SSO reuse the issuer list of `gateway.auth.issuers`, or have its
-  own `issuer`? Recommended: its own, since the console may use another
-  provider or realm than agents. The owner decides.
-- Should `allowedGroups` also gate `/v1/alerts` and `/v1/history` per
-  group, for example per namespace? Recommended: not now (non-goal: roles).
+Resolved when accepted (see [plan.md](plan.md)): SSO has its own `issuer`,
+separate from `gateway.auth.issuers`; groups do not gate parts of the
+console (no roles).

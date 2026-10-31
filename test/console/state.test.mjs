@@ -102,10 +102,10 @@ test("a poller started in a hidden page waits until it is visible", () => {
 
 test("session responses map to login off, signed in, or login required, and fail closed", () => {
   const { sessionState } = state;
-  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth: false, gatewayAudience: [] });
+  assert.deepEqual(sessionState(200, { enabled: false }), { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth: false, gatewayAudience: [], method: "admin", sso: null, adminLogin: true });
   assert.deepEqual(sessionState(200, { enabled: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z" }),
-    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z", mcpAuth: false, gatewayAudience: [] });
-  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth: false, gatewayAudience: [] });
+    { enabled: true, signedIn: true, username: "admin", expiresAt: "2026-10-23T13:00:00Z", mcpAuth: false, gatewayAudience: [], method: "admin", sso: null, adminLogin: true });
+  assert.deepEqual(sessionState(401, { error: "login required", enabled: true }), { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth: false, gatewayAudience: [], method: "admin", sso: null, adminLogin: true });
   // Anything unexpected is not a session; the console then shows the login form.
   for (const [status, body] of [[200, {}], [200, null], [500, null], [403, { error: "origin not allowed" }]]) {
     assert.equal(sessionState(status, body), null, status + " " + JSON.stringify(body));
@@ -186,4 +186,19 @@ test("the notice names the routes that share the Gateway audience", () => {
   assert.equal(noticeShown("localhost", auth), true);
   assert.equal(noticeShown("localhost", { ...auth, gatewayAudience: [] }), false);
   assert.equal(noticeShown("kavrynt.example.com", { ...auth, gatewayAudience: [] }), true);
+});
+
+// Verifies SPEC-0032-R03 and SPEC-0032-R11: the console learns from
+// /v1/session whether SSO is offered, whether the admin password is, and how
+// the person signed in; the SSO link is always the Gateway's own start path.
+test("the session state carries console sign-in through the identity provider", () => {
+  const { sessionState, ssoOffer } = state;
+  const page = sessionState(401, { enabled: true, adminLogin: false, oidc: { providerName: "Keycloak", start: "/v1/session/oidc/start" } });
+  assert.deepEqual(page.sso, { label: "Sign in with Keycloak", href: "/v1/session/oidc/start" });
+  assert.equal(page.adminLogin, false);
+  assert.equal(sessionState(200, { enabled: true, username: "priya", method: "oidc" }).method, "oidc");
+  assert.equal(sessionState(200, { enabled: true, username: "admin" }).method, "admin");
+  assert.equal(ssoOffer({ providerName: "Evil", start: "https://evil.example.com/" }), null);
+  assert.equal(ssoOffer({ providerName: 7, start: "/v1/session/oidc/start" }), null);
+  assert.equal(ssoOffer({ providerName: " ", start: "/v1/session/oidc/start" }).label, "Sign in with your identity provider");
 });

@@ -35,8 +35,11 @@ These are documented gaps, not vulnerabilities:
   password. It protects the console, `/v1/servers`, `/v1/traffic`,
   `/v1/alerts`, and `/v1/history` only; `/v1/routes` and `/metrics` stay
   reachable by anyone who can reach the Gateway (`/v1/routes` lists no
-  endpoints while MCP client authentication is on). There are no other
-  users, roles, or SSO.
+  endpoints while MCP client authentication is on). Sign-in through your
+  identity provider (`gateway.console.auth.oidc`) replaces the shared
+  password with listed users and groups, unless
+  `gateway.console.auth.oidc.keepAdminLogin` keeps the password as a
+  break-glass login beside them. There are no roles within the console.
 - The opt-in Gateway audience (`gateway.auth.gatewayAudience`) lets one
   token reach every listed route, so a leaked token for it reaches all of
   them. It is off by default, refuses `*`, and is visible in policy input,

@@ -453,7 +453,8 @@ the current release is not production-security complete:
 - Optional NetworkPolicies keep labelled MCP server pods reachable only from
   the Gateway and the Operator, and limit who can call the Gateway
   (`networkPolicy` values; needs a CNI that enforces NetworkPolicy).
-- The console has a single `admin` login with a generated password. It
+- The console has a single `admin` login with a generated password, or
+  sign-in through your identity provider for listed users and groups. It
   protects the console and the endpoints it reads, not MCP routes: anyone
   who can reach the Gateway can still call every routed tool.
 - Gateway and Operator are single-replica by default; the tested
