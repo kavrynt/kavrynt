@@ -72,15 +72,18 @@ var routeFields = map[string]bool{"namespace": true, "name": true}
 // does not have (at the top level and inside route, as "route.<name>") and
 // the members an object repeats. Decoding keeps only the last of repeated
 // members and drops unknown ones, so neither shows in the decoded Event.
-func members(line string) (unknown, repeated []string) {
+// complete is false when the scan could not read the whole line (for
+// example a route that is not an object): members after that point are
+// unseen.
+func members(line string) (unknown, repeated []string, complete bool) {
 	dec := json.NewDecoder(strings.NewReader(line))
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
-		return nil, nil
+		return nil, nil, false
 	}
-	walkMembers(dec, "", knownFields, &unknown, &repeated)
+	complete = walkMembers(dec, "", knownFields, &unknown, &repeated)
 	slices.Sort(unknown)
 	slices.Sort(repeated)
-	return unknown, repeated
+	return unknown, repeated, complete
 }
 
 // walkMembers reads the members of an object whose opening brace was read,
@@ -182,7 +185,7 @@ func Verify(r io.Reader) (Summary, error) {
 		} else if e.PrevHash != s.hash {
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "prev_hash does not match the previous event"})
 		}
-		unknown, repeated := members(line)
+		unknown, repeated, complete := members(line)
 		// The written line first, then the known fields re-encoded, for
 		// lines a collector rewrote (SPEC-0035-R02). Re-encoding covers only
 		// what decoding kept, so a line with unknown members (at any level
@@ -193,7 +196,11 @@ func Verify(r io.Reader) (Summary, error) {
 			if len(unknown) > 0 {
 				summary.UnknownFields++
 			}
-		case len(unknown) == 0 && len(repeated) == 0 && ComputeHash(e) == e.Hash:
+		case complete && len(unknown) == 0 && len(repeated) == 0 && ComputeHash(e) == e.Hash:
+		case !complete:
+			// The Gateway always writes route as an object; a line the scan
+			// cannot read whole may hide members from it.
+			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "hash does not match the event (altered)"})
 		case len(repeated) > 0:
 			// The Gateway never repeats a member; readers disagree on which
 			// value counts.

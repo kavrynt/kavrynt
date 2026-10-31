@@ -215,11 +215,21 @@ func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
 		t.Fatalf("newer chain as written: %+v", s)
 	}
 
+	// An event the Gateway refused before routing has an empty route.
+	blank := Event{Type: Type, Instance: "gw-a/1", Seq: 2, PrevHash: current[0].Hash, Decision: DecisionInvalid}
+	blank.Hash = ComputeHash(blank)
+	blankLine, _ := json.Marshal(blank)
+	// The added member comes after route, where a stopped scan would miss it.
+	emptyRoute := strings.Replace(string(blankLine), `"http_method":""`, `"http_method":"","approved_by":"alice"`, 1)
+
 	// A member added inside route, and a repeated member whose last value is
 	// the original: decoding hides both, so re-encoding would match.
 	for name, tc := range map[string]struct{ edited, want string }{
 		"nested member":   {strings.Replace(string(second), `"name":"search"}`, `"name":"search","approved_by":"alice"}`, 1), `"route.approved_by"`},
 		"repeated member": {strings.Replace(string(second), `"tool":""`, `"tool":"delete_all","tool":""`, 1), `repeats "tool"`},
+		// route null decodes to an empty Route and stops the member scan,
+		// which must not let a member after it through.
+		"route not an object": {strings.Replace(emptyRoute, `"route":{"namespace":"","name":""}`, `"route":null`, 1) + "", "altered"},
 	} {
 		s, _ := Verify(strings.NewReader(string(first) + "\n" + tc.edited + "\n"))
 		if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 || !strings.Contains(s.Breaks[0].Problem, tc.want) {
