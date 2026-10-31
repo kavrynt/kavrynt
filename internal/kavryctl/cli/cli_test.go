@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"os"
 	"path/filepath"
 	"strings"
@@ -14,11 +15,14 @@ import (
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	apiextensionsv1 "k8s.io/apiextensions-apiserver/pkg/apis/apiextensions/v1"
+	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
 	"k8s.io/apimachinery/pkg/runtime"
+	"k8s.io/apimachinery/pkg/runtime/schema"
 	"k8s.io/apimachinery/pkg/types"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/client/fake"
+	"sigs.k8s.io/controller-runtime/pkg/client/interceptor"
 )
 
 const httpManifest = `apiVersion: kavrynt.io/v1alpha1
@@ -302,4 +306,46 @@ func rehashLine(t *testing.T, line, prev string) string {
 	}
 	sum := sha256.Sum256([]byte(prev + body + "}"))
 	return body + `,"hash":"` + hex.EncodeToString(sum[:]) + `"}`
+}
+
+// Verifies SPEC-0037-R01, SPEC-0037-R02, and SPEC-0037-R03: an empty list
+// names its namespace and kavryctl list -A, counts servers elsewhere when it
+// may, and stays quiet about them when it may not.
+func TestEmptyListPointsToOtherNamespaces(t *testing.T) {
+	server := func(namespace, name string) *kavryntv1alpha1.MCPServer {
+		return &kavryntv1alpha1.MCPServer{
+			ObjectMeta: metav1.ObjectMeta{Name: name, Namespace: namespace},
+			Spec:       kavryntv1alpha1.MCPServerSpec{Version: "1.0.0", Transport: "http", Endpoint: "http://" + name},
+		}
+	}
+	useFakeClient(t, "default", server("team-a", "search"), server("team-b", "billing"), server("team-c", "files"))
+	out, errOut, code := run(t, "list")
+	if code != 0 || strings.TrimSpace(out) != "no MCPServers found in namespace default; 3 in other namespaces: kavryctl list -A" || errOut != "" {
+		t.Fatalf("list: code=%d out=%q err=%q", code, out, errOut)
+	}
+
+	scheme := runtime.NewScheme()
+	if err := kavryntv1alpha1.AddToScheme(scheme); err != nil {
+		t.Fatal(err)
+	}
+	refusing := fake.NewClientBuilder().WithScheme(scheme).WithObjects(server("team-a", "search")).
+		WithInterceptorFuncs(interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+			if (&client.ListOptions{}).ApplyOptions(opts).Namespace == "" {
+				return apierrors.NewForbidden(schema.GroupResource{Group: "kavrynt.io", Resource: "mcpservers"}, "", errors.New("cluster-wide list not allowed"))
+			}
+			return c.List(ctx, list, opts...)
+		}}).Build()
+	if msg := emptyListMessage(context.Background(), refusing, "default", "kavryctl list -A"); msg != "no MCPServers found in namespace default (kavryctl list -A lists every namespace)" {
+		t.Fatalf("refused cluster-wide list: %q", msg)
+	}
+
+	// The suggested command keeps the cluster the user chose.
+	if out, _, _ := run(t, "list", "--context", "staging", "--kubeconfig", "/tmp/my config"); !strings.Contains(out, `kavryctl list -A --kubeconfig '/tmp/my config' --context staging`) {
+		t.Fatalf("hint without the chosen cluster: %q", out)
+	}
+
+	useFakeClient(t, "default")
+	if out, _, code := run(t, "list", "-A"); code != 0 || strings.TrimSpace(out) != "no MCPServers found" {
+		t.Fatalf("list -A with no servers: code=%d out=%q", code, out)
+	}
 }
