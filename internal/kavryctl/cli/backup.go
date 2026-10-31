@@ -187,7 +187,6 @@ type importPlan struct {
 	server   *kavryntv1alpha1.MCPServer
 	existing *kavryntv1alpha1.MCPServer
 	action   string // create, unchanged, overwrite
-	refusal  string
 }
 
 func (p importPlan) key() string { return p.server.Namespace + "/" + p.server.Name }
