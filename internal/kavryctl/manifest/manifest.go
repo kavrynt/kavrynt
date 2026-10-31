@@ -70,3 +70,44 @@ func Parse(data []byte) (*kavryntv1alpha1.MCPServer, error) {
 	}
 	return server, nil
 }
+
+// Marshal writes server as a YAML manifest holding only what Parse reads:
+// apiVersion, kind, name, namespace, labels, annotations, and spec.
+func Marshal(server *kavryntv1alpha1.MCPServer) ([]byte, error) {
+	return yaml.Marshal(document{
+		APIVersion: kavryntv1alpha1.GroupVersion.String(),
+		Kind:       kavryntv1alpha1.MCPServerKind,
+		Metadata: metadata{
+			Name:        server.Name,
+			Namespace:   server.Namespace,
+			Labels:      server.Labels,
+			Annotations: server.Annotations,
+		},
+		Spec: server.Spec,
+	})
+}
+
+// SplitDocuments splits a YAML stream at lines that are exactly "---" and
+// drops documents that hold only comments or blank lines.
+func SplitDocuments(data []byte) [][]byte {
+	var docs [][]byte
+	var current []string
+	flush := func() {
+		for _, line := range current {
+			if t := strings.TrimSpace(line); t != "" && !strings.HasPrefix(t, "#") {
+				docs = append(docs, []byte(strings.Join(current, "\n")))
+				break
+			}
+		}
+		current = nil
+	}
+	for _, line := range strings.Split(string(data), "\n") {
+		if strings.TrimRight(line, " \t\r") == "---" {
+			flush()
+			continue
+		}
+		current = append(current, line)
+	}
+	flush()
+	return docs
+}

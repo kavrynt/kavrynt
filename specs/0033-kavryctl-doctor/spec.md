@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-10-30 |
 | Issue | to be opened |
@@ -140,9 +140,7 @@ something fails), the tester feedback issue template (paste
 
 ## Open questions
 
-- Should `doctor` also check the chart's optional features (policy ConfigMap
-  present, audit on, NetworkPolicies)? Recommended: report them as `info`
-  lines in a later version; the first version checks what breaks a trial.
-- Should check 3 read versions from the Helm release instead of image tags?
-  Recommended: image tags, so `doctor` does not need the `helm` binary or
-  read the Helm release Secret.
+Resolved when accepted (see [plan.md](plan.md)): optional features (policy,
+audit, NetworkPolicies) are left for a later version; versions are read
+from image tags, so `doctor` needs neither `helm` nor the Helm release
+Secret.

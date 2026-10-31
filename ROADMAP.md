@@ -49,6 +49,10 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   routes, with policy and audit telling it apart from a per-route token.
 - Console sign-in through your identity provider, for listed users and
   groups, instead of the shared admin password.
+- `kavryctl doctor`: a read-only installation report, safe to paste into a
+  public issue with `--anonymize`.
+- `kavryctl export` and `import`: restore registrations into a rebuilt
+  cluster, checking every document before writing any.
 
 ## Next
 
@@ -56,9 +60,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
 2. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
    Cloud ingestion service and an end-to-end test) and usage events.
-3. Recovery workflows (restoring registrations into a new cluster).
-4. Diagnostics for testers and support: one command that checks an
-   installation and reports what is wrong, without secrets.
+3. More installation checks in `kavryctl doctor` (policy, audit, and
+   NetworkPolicy settings).
 
 ## Project and community
 
