@@ -468,8 +468,10 @@ func reportReadiness(c client.Client, plans []importPlan, wait time.Duration, w 
 			discovered := meta.FindStatusCondition(server.Status.Conditions, kavryntv1alpha1.ConditionToolsDiscovered)
 			// Conditions of the stored spec, not one an overwrite replaced.
 			current := ready != nil && ready.ObservedGeneration == server.Generation
-			if err == nil && current && ready.Status == "True" && discovered != nil {
-				if discovered.Reason == kavryntv1alpha1.ReasonCredentialUnavailable {
+			// ToolsDiscovered is absent while the Operator runs without
+			// discovery; it only tells whether the credential is missing.
+			if err == nil && current && ready.Status == "True" {
+				if discovered != nil && discovered.Reason == kavryntv1alpha1.ReasonCredentialUnavailable {
 					key := plan.server.Namespace + "." + plan.server.Name
 					fmt.Fprintf(w, "%s is Ready but needs its credential: add %s and %s to the upstream credentials Secret\n", plan.key(), key, key+".origin")
 				}

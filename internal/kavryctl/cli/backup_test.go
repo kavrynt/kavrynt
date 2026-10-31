@@ -244,12 +244,14 @@ func TestImportConflict(t *testing.T) {
 }
 
 // Verifies SPEC-0034-R08: after importing, the servers that are not Ready
-// are reported with their reason, and a Ready server without its credential
-// names the Secret keys to add.
+// are reported with their reason, a Ready server without its credential
+// names the Secret keys to add, and a Ready server counts without
+// ToolsDiscovered, which the Operator leaves out when discovery is off.
 func TestImportReportsReadiness(t *testing.T) {
 	status := map[string][]metav1.Condition{
 		"search":  {condition(kavryntv1alpha1.ConditionReady, "True", kavryntv1alpha1.ReasonRoutable, ""), condition(kavryntv1alpha1.ConditionToolsDiscovered, "False", kavryntv1alpha1.ReasonCredentialUnavailable, "")},
 		"billing": {condition(kavryntv1alpha1.ConditionReady, "False", kavryntv1alpha1.ReasonEndpointNotAllowed, "endpoint reaches team-x")},
+		"docs":    {condition(kavryntv1alpha1.ConditionReady, "True", kavryntv1alpha1.ReasonRoutable, "")},
 	}
 	withStatus := interceptor.Funcs{Get: func(ctx context.Context, c client.WithWatch, key client.ObjectKey, obj client.Object, opts ...client.GetOption) error {
 		if err := c.Get(ctx, key, obj, opts...); err != nil {
@@ -263,13 +265,14 @@ func TestImportReportsReadiness(t *testing.T) {
 	useBackupClient(t, withStatus, namespace("team-a"))
 	file := filepath.Join(t.TempDir(), "in.yaml")
 	doc := "apiVersion: kavrynt.io/v1alpha1\nkind: MCPServer\nmetadata: {name: %s, namespace: team-a}\nspec: {version: 1.0.0, transport: http, endpoint: http://%s.team-a.svc:8080}\n"
-	data := strings.ReplaceAll(doc, "%s", "search") + "---\n" + strings.ReplaceAll(doc, "%s", "billing")
+	data := strings.ReplaceAll(doc, "%s", "search") + "---\n" + strings.ReplaceAll(doc, "%s", "billing") + "---\n" + strings.ReplaceAll(doc, "%s", "docs")
 	if err := os.WriteFile(file, []byte(data), 0o600); err != nil {
 		t.Fatal(err)
 	}
 	out, _, code := run2("import", "--wait", "1s", file)
 	if code != 0 || !strings.Contains(out, "add team-a.search and team-a.search.origin") ||
-		!strings.Contains(out, "team-a/billing is not Ready after 1s: "+kavryntv1alpha1.ReasonEndpointNotAllowed) || strings.Contains(out, "team-x") {
+		!strings.Contains(out, "team-a/billing is not Ready after 1s: "+kavryntv1alpha1.ReasonEndpointNotAllowed) || strings.Contains(out, "team-x") ||
+		strings.Contains(out, "team-a/docs is") {
 		t.Fatalf("readiness report: exit %d\n%s", code, out)
 	}
 }
