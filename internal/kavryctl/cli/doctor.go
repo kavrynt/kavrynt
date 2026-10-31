@@ -35,6 +35,9 @@ const (
 
 const docsBase = "https://github.com/kavrynt/kavrynt/blob/main/"
 
+// readFailedDoc explains a ReadFailed check (SPEC-0033-R05).
+const readFailedDoc = "docs/components/kavryctl/README.md#doctor"
+
 // doctorCheck is one line of the report. It never holds condition
 // messages, endpoints, or Secret data (SPEC-0033-R07).
 type doctorCheck struct {
@@ -170,7 +173,7 @@ func (d *doctor) checkCRD(ctx context.Context) error {
 			Fix: "install the Kavrynt Helm chart, which installs the MCPServer CRD", Link: docsBase + "charts/kavrynt/README.md"})
 	case err != nil:
 		d.add(doctorCheck{ID: "crd", Result: resultFail, Subject: "mcpservers.kavrynt.io", Reason: "ReadFailed",
-			Fix: "check access to the API server and retry", Link: docsBase + "charts/kavrynt/README.md"})
+			Fix: "check access to the API server and retry", Link: docsBase + readFailedDoc})
 	default:
 		served := slices.ContainsFunc(crd.Spec.Versions, func(v apiextensionsv1.CustomResourceDefinitionVersion) bool {
 			return v.Name == kavryntv1alpha1.GroupVersion.Version && v.Served
@@ -303,7 +306,7 @@ func (d *doctor) checkServers(ctx context.Context) {
 			return
 		case err != nil:
 			d.add(doctorCheck{ID: "servers", Result: resultFail, Subject: "mcpservers", Reason: "ReadFailed",
-				Fix: "check access to the API server and retry", Link: docsBase + "charts/kavrynt/README.md"})
+				Fix: "check access to the API server and retry", Link: docsBase + readFailedDoc})
 			return
 		}
 		seen += len(servers.Items)

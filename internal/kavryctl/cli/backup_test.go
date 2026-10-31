@@ -308,6 +308,22 @@ func TestExportRedactsArgsAndKeepsFilesPrivate(t *testing.T) {
 
 // Verifies SPEC-0034-R01: an endpoint query string is exported as stored,
 // with a warning naming the server, since it can hold a key.
+// Verifies SPEC-0034-R02: when the Operator Deployment cannot be listed,
+// the header says the version is unknown and the export still succeeds.
+func TestExportWithoutOperatorAccess(t *testing.T) {
+	forbidden := interceptor.Funcs{List: func(ctx context.Context, c client.WithWatch, list client.ObjectList, opts ...client.ListOption) error {
+		if _, ok := list.(*appsv1.DeploymentList); ok {
+			return apierrors.NewForbidden(schema.GroupResource{Group: "apps", Resource: "deployments"}, "", errors.New("no access"))
+		}
+		return c.List(ctx, list, opts...)
+	}}
+	useBackupClient(t, forbidden, sourceCluster()...)
+	out, _, code := run2("export", "-A")
+	if code != 0 || !strings.Contains(out, "# Operator version: unknown\n") {
+		t.Fatalf("export without Deployment access: exit %d\n%s", code, out)
+	}
+}
+
 func TestExportWarnsAboutEndpointQueries(t *testing.T) {
 	keyed := mcpServer("team-a", "keyed")
 	keyed.Spec.Endpoint = "http://keyed.team-a.svc:8080/mcp?key=q-s3cret"

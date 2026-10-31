@@ -207,6 +207,7 @@ test("the session state carries console sign-in through the identity provider", 
 // ended the session.
 test("logoutDone accepts only an ended session", () => {
   const { logoutDone } = state;
-  for (const status of [200, 204, 401]) assert.equal(logoutDone(status), true, String(status));
-  for (const status of [0, 403, 500, 502, 503]) assert.equal(logoutDone(status), false, String(status));
+  for (const status of [200, 204]) assert.equal(logoutDone(status), true, String(status));
+  // A 401 comes from a proxy in front of the Gateway, never from it.
+  for (const status of [0, 401, 403, 500, 502, 503]) assert.equal(logoutDone(status), false, String(status));
 });

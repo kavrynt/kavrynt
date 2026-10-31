@@ -96,10 +96,11 @@
     return null;
   }
 
-  // logoutDone tells whether DELETE /v1/session ended the session: 2xx, or
-  // 401 when it had already ended. Anything else leaves the cookie valid.
+  // logoutDone tells whether DELETE /v1/session ended the session. The
+  // Gateway always answers 204, also without a session; anything else came
+  // from somewhere else and leaves the cookie valid.
   function logoutDone(status) {
-    return (status >= 200 && status < 300) || status === 401;
+    return status >= 200 && status < 300;
   }
 
   // ssoOffer reads the login page's identity provider offer. The link is
