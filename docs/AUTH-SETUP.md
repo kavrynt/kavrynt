@@ -172,6 +172,40 @@ The same token on another route answers `401` with
 | `503` with `Retry-After` | The Gateway cannot load Keycloak's keys: check the issuer URL, `allowHTTP`, and that the Gateway can reach the Service |
 | The chart refuses the values | `resourceURL` is not `https`, or has a path |
 
+## Console sign-in with Keycloak
+
+The console can use the same Keycloak for people (SPEC-0032). Create a
+confidential client with the standard flow and the Gateway's callback as
+its redirect URL, and a group mapper so ID tokens carry `groups`:
+
+```bash
+GATEWAY=https://mcp.example.com      # the console's external URL
+curl -s "${A[@]}" $KC/admin/realms/agents/clients -d '{
+  "clientId": "kavrynt-console", "secret": "console-secret",
+  "publicClient": false, "standardFlowEnabled": true, "serviceAccountsEnabled": false,
+  "redirectUris": ["'"$GATEWAY"'/v1/session/oidc/callback"],
+  "attributes": {"pkce.code.challenge.method": "S256"},
+  "protocolMappers": [{"name": "groups", "protocol": "openid-connect",
+    "protocolMapper": "oidc-group-membership-mapper",
+    "config": {"claim.name": "groups", "full.path": "false", "id.token.claim": "true"}}]}'
+kubectl -n kavrynt-system create secret generic kavrynt-console-oidc --from-literal=client-secret=console-secret
+helm upgrade kavrynt oci://ghcr.io/kavrynt/charts/kavrynt --version "$KAVRYNT_VERSION" \
+  -n kavrynt-system --reset-then-reuse-values \
+  --set gateway.console.auth.oidc.enabled=true \
+  --set gateway.console.auth.oidc.issuer=https://keycloak.example.com/realms/agents \
+  --set gateway.console.auth.oidc.clientID=kavrynt-console \
+  --set gateway.console.auth.oidc.clientSecret.name=kavrynt-console-oidc \
+  --set gateway.console.auth.oidc.redirectURL=$GATEWAY/v1/session/oidc/callback \
+  --set gateway.console.auth.oidc.providerName=Keycloak \
+  --set 'gateway.console.auth.oidc.allowedGroups={platform}'
+```
+
+The browser goes to Keycloak's authorization endpoint, which must be
+`https`: the in-cluster `http://keycloak.idp.svc` of the lab above works for
+agents' tokens but not for console sign-in. Add people to the `platform`
+group in Keycloak; others get "not allowed". The admin password then stops
+working unless `keepAdminLogin` is set.
+
 ## Many servers per agent
 
 Each route has its own audience, so an agent that calls ten MCP servers

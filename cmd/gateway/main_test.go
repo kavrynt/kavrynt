@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"github.com/kavrynt/kavrynt/internal/gateway/api"
+	"github.com/kavrynt/kavrynt/internal/gateway/auth"
 	"github.com/kavrynt/kavrynt/internal/gateway/routing"
 )
 
@@ -204,5 +205,43 @@ func TestGatewayAudienceConfiguration(t *testing.T) {
 	warnGatewayAudience(slog.New(slog.NewTextHandler(&logs, nil)), "https://mcp.example.com", nil)
 	if logs.Len() != 0 {
 		t.Fatalf("Gateway audience off: logged %q", logs.String())
+	}
+}
+
+// Verifies SPEC-0032-R01 and SPEC-0032-R10: console sign-in needs the
+// console login, the https callback URL, and an allow list, and keeping the
+// admin login is warned about at start.
+func TestConsoleOIDCConfiguration(t *testing.T) {
+	dir := t.TempDir()
+	consoleAuth := auth.New(dir, time.Hour)
+	ok := `{"issuer":"https://login.example.com/realms/agents","clientID":"kavrynt-console","redirectURL":"https://mcp.example.com/v1/session/oidc/callback","allowedGroups":["platform"]}`
+	var logs bytes.Buffer
+	logger := slog.New(slog.NewTextHandler(&logs, nil))
+	for name, tc := range map[string]struct {
+		auth *auth.Authenticator
+		raw  string
+	}{
+		"without the console login": {nil, ok},
+		"http callback":             {consoleAuth, strings.Replace(ok, "https://mcp", "http://mcp", 1)},
+		"another callback path":     {consoleAuth, strings.Replace(ok, "/v1/session/oidc/callback", "/callback", 1)},
+		"no allow list":             {consoleAuth, strings.Replace(ok, `,"allowedGroups":["platform"]`, "", 1)},
+		"http issuer":               {consoleAuth, strings.Replace(ok, "https://login", "http://login", 1)},
+		// The secret comes from the mounted Secret only (SPEC-0032-R02).
+		"secret in the flag": {consoleAuth, strings.Replace(ok, `"clientID"`, `"clientSecret":"x","clientID"`, 1)},
+	} {
+		if err := enableConsoleOIDC(tc.auth, tc.raw, filepath.Join(dir, "secret"), logger); err == nil {
+			t.Errorf("%s: configured", name)
+		}
+	}
+	if err := enableConsoleOIDC(consoleAuth, ok, filepath.Join(dir, "secret"), logger); err != nil || logs.Len() != 0 {
+		t.Fatalf("valid configuration: %v %s", err, logs.String())
+	}
+	kept := strings.Replace(ok, `"allowedGroups"`, `"keepAdminLogin":true,"allowedGroups"`, 1)
+	if err := enableConsoleOIDC(auth.New(dir, time.Hour), kept, filepath.Join(dir, "secret"), logger); err != nil ||
+		!strings.Contains(logs.String(), "level=WARN") || !strings.Contains(logs.String(), "shared admin password still opens the console") {
+		t.Fatalf("keepAdminLogin: %v %s", err, logs.String())
+	}
+	if err := enableConsoleOIDC(nil, "", "", logger); err != nil {
+		t.Fatalf("off: %v", err)
 	}
 }

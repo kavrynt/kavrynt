@@ -785,6 +785,34 @@ the Gateway's service account has no RBAC on Secrets.
 - `console.auth.enabled=false` (flag `--console-auth=false`) turns the login
   off; `/v1/servers` and `/v1/traffic` are then open as before.
 
+#### Sign-in through your identity provider
+
+With `console.auth.oidc.enabled` (flags `--console-oidc` and
+`--console-oidc-secret-file`; SPEC-0032), people sign in to the console with
+your OpenID Connect provider instead of the shared password. Only the
+subjects in `allowedSubjects`, or members of a group in `allowedGroups`
+(from the `groupsClaim`, default `groups`), get a session.
+
+- Register a confidential client whose redirect URL is
+  `https://<gateway host>/v1/session/oidc/callback`, and put its secret in a
+  Secret named by `console.auth.oidc.clientSecret`; the kubelet mounts it,
+  and it never appears in flags or logs.
+- The console offers "Sign in with `providerName`". The Gateway redirects to
+  the provider's authorization endpoint (from its metadata, always `https`)
+  with PKCE (`S256`), `state`, and `nonce`, kept in a signed cookie for 10
+  minutes. The callback exchanges the code (`client_secret_basic`) and
+  verifies the ID token: signature, issuer, times, `aud` the client ID
+  (with `azp` when there are other audiences), and `nonce`.
+- The session has the cookie properties above and names the person by
+  `displayClaim` (default `preferred_username`, then `sub`). The console
+  header shows how they signed in.
+- The admin password login answers `404` and its sessions stop counting,
+  unless `keepAdminLogin: true` keeps it as a break-glass login, which the
+  Gateway warns about at start.
+- Refused sign-ins are logged with a reason, never with the code or a
+  token. Sign-in sessions end with their lifetime; there is no single logout
+  at the provider.
+
 **What the login does not protect.** It covers the console and the two
 endpoints it reads. It is not client authentication: unless MCP client
 authentication is on, `/mcp/` routes stay open, so anyone who can reach the

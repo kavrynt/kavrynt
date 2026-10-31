@@ -50,6 +50,8 @@ func main() {
 	exchangeAudiences := flag.String("token-exchange-audiences", getenv("KAVRYNT_TOKEN_EXCHANGE_AUDIENCES", ""), `JSON object from namespace (or "*") to the audiences tokens may be exchanged for; empty allows none`)
 	consoleTrustedProxies := flag.String("console-trusted-proxies", getenv("KAVRYNT_CONSOLE_TRUSTED_PROXIES", ""), "Comma-separated CIDRs of proxies whose X-Forwarded-For names the client for the console login limit")
 	consoleAuthDir := flag.String("console-auth-dir", getenv("KAVRYNT_CONSOLE_AUTH_DIR", ""), "Directory with the console admin password and sessionKey files, normally a mounted Secret")
+	consoleOIDC := flag.String("console-oidc", getenv("KAVRYNT_CONSOLE_OIDC", ""), `Console sign-in through an identity provider, as JSON: {"issuer":"https://...","clientID":"...","redirectURL":"https://<gateway>/v1/session/oidc/callback","allowedGroups":[...],"allowedSubjects":[...]} (SPEC-0032); needs --console-auth`)
+	consoleOIDCSecret := flag.String("console-oidc-secret-file", getenv("KAVRYNT_CONSOLE_OIDC_SECRET_FILE", ""), "File with the console sign-in client secret, from a mounted Secret")
 	consoleSessionTTL := flag.Duration("console-session-ttl", auth.DefaultSessionTTL, "Console session lifetime")
 	authEnabled := flag.Bool("auth", false, "Require a bearer access token for the route on every /mcp/ request (MCP client authentication)")
 	authResourceURL := flag.String("auth-resource-url", getenv("KAVRYNT_AUTH_RESOURCE_URL", ""), "External https origin of the Gateway; a route's token audience is <url>/mcp/<route>")
@@ -83,6 +85,10 @@ func main() {
 	consoleAuth, err := newConsoleAuth(*consoleEnabled, *consoleAuthEnabled, *consoleAuthDir, *consoleSessionTTL, *consoleTrustedProxies)
 	if err != nil {
 		slog.Error("configure console login", "error", err)
+		os.Exit(1)
+	}
+	if err := enableConsoleOIDC(consoleAuth, *consoleOIDC, *consoleOIDCSecret, slog.Default()); err != nil {
+		slog.Error("configure console sign-in", "error", err)
 		os.Exit(1)
 	}
 
@@ -340,6 +346,61 @@ func newConsoleAuth(consoleEnabled, authEnabled bool, dir string, ttl time.Durat
 	a := auth.New(dir, ttl)
 	a.TrustProxies(proxies)
 	return a, nil
+}
+
+// consoleOIDCConfig is the JSON of --console-oidc.
+type consoleOIDCConfig struct {
+	Issuer          string   `json:"issuer"`
+	AllowHTTP       bool     `json:"allowHTTP,omitempty"`
+	ClientID        string   `json:"clientID"`
+	RedirectURL     string   `json:"redirectURL"`
+	ProviderName    string   `json:"providerName,omitempty"`
+	Scopes          []string `json:"scopes,omitempty"`
+	AllowedSubjects []string `json:"allowedSubjects,omitempty"`
+	AllowedGroups   []string `json:"allowedGroups,omitempty"`
+	GroupsClaim     string   `json:"groupsClaim,omitempty"`
+	DisplayClaim    string   `json:"displayClaim,omitempty"`
+	KeepAdminLogin  bool     `json:"keepAdminLogin,omitempty"`
+}
+
+// enableConsoleOIDC turns on console sign-in through an identity provider
+// (SPEC-0032). It needs the console login, whose session key signs the
+// sessions, and refuses settings the chart also refuses (R01).
+func enableConsoleOIDC(consoleAuth *auth.Authenticator, raw, secretFile string, logger *slog.Logger) error {
+	if strings.TrimSpace(raw) == "" {
+		return nil
+	}
+	if consoleAuth == nil {
+		return errors.New("--console-oidc needs the console login (--console and --console-auth)")
+	}
+	var cfg consoleOIDCConfig
+	decoder := json.NewDecoder(strings.NewReader(raw))
+	decoder.DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
+		return fmt.Errorf("--console-oidc must be a JSON object: %w", err)
+	}
+	redirect, err := url.Parse(cfg.RedirectURL)
+	if err != nil || redirect.Scheme != "https" || redirect.Host == "" || redirect.Path != auth.CallbackPath {
+		return fmt.Errorf("redirectURL must be the Gateway's https URL ending in %s", auth.CallbackPath)
+	}
+	if len(cfg.AllowedSubjects) == 0 && len(cfg.AllowedGroups) == 0 {
+		return errors.New("list allowedSubjects or allowedGroups: nobody else may sign in")
+	}
+	provider, err := clientauth.NewConsoleProvider(clientauth.ConsoleProviderConfig{
+		Issuer: cfg.Issuer, AllowHTTP: cfg.AllowHTTP, ClientID: cfg.ClientID, SecretFile: secretFile,
+	}, egress.Transport(false))
+	if err != nil {
+		return err
+	}
+	consoleAuth.EnableOIDC(auth.OIDC{
+		Provider: provider, ProviderName: cfg.ProviderName, ClientID: cfg.ClientID, RedirectURL: cfg.RedirectURL,
+		Scopes: cfg.Scopes, AllowedSubjects: cfg.AllowedSubjects, AllowedGroups: cfg.AllowedGroups,
+		GroupsClaim: cfg.GroupsClaim, DisplayClaim: cfg.DisplayClaim, KeepAdminLogin: cfg.KeepAdminLogin,
+	})
+	if cfg.KeepAdminLogin {
+		logger.Warn("console sign-in through the identity provider is on, and the shared admin password still opens the console (keepAdminLogin)")
+	}
+	return nil
 }
 
 // warnUnauthenticated says at start that MCP routes are open when client

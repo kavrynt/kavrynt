@@ -85,10 +85,23 @@
     const mcpAuth = Boolean(body && body.mcpAuth === true);
     // gatewayAudience: routes one token for the Gateway reaches (SPEC-0031-R06).
     const gatewayAudience = routeList(body && body.gatewayAudience);
-    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth, gatewayAudience };
-    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || ""), mcpAuth, gatewayAudience };
-    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth, gatewayAudience };
+    // Console sign-in through the identity provider (SPEC-0032): how the
+    // person signed in, and on the login page what is offered.
+    const method = body && body.method === "oidc" ? "oidc" : "admin";
+    const sso = ssoOffer(body && body.oidc);
+    const adminLogin = !(body && body.adminLogin === false);
+    if (status === 200 && body && body.enabled === false) return { enabled: false, signedIn: true, username: "", expiresAt: "", mcpAuth, gatewayAudience, method, sso, adminLogin };
+    if (status === 200 && body && body.username) return { enabled: true, signedIn: true, username: String(body.username), expiresAt: String(body.expiresAt || ""), mcpAuth, gatewayAudience, method, sso, adminLogin };
+    if (status === 401) return { enabled: true, signedIn: false, username: "", expiresAt: "", mcpAuth, gatewayAudience, method, sso, adminLogin };
     return null;
+  }
+
+  // ssoOffer reads the login page's identity provider offer. The link is
+  // always the Gateway's own start path, never a URL from the answer.
+  function ssoOffer(value) {
+    if (!value || typeof value.providerName !== "string" || value.start !== "/v1/session/oidc/start") return null;
+    const name = value.providerName.trim().slice(0, 64) || "your identity provider";
+    return { label: "Sign in with " + name, href: "/v1/session/oidc/start" };
   }
 
   // routeList keeps the strings of a route list from the Gateway. The
@@ -158,5 +171,5 @@
     }
   }
 
-  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, loginMessage, authFailureMessage, notice, noticeShown });
+  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, ssoOffer, loginMessage, authFailureMessage, notice, noticeShown });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).state = {}));

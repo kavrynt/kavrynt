@@ -343,6 +343,15 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		}
 	case r.URL.Path == "/v1/session":
 		h.session(w, r)
+	case strings.HasPrefix(r.URL.Path, "/v1/session/oidc/"):
+		// Console sign-in through the identity provider (SPEC-0032).
+		if sso, ok := h.auth.(interface {
+			ServeOIDC(http.ResponseWriter, *http.Request)
+		}); ok && h.auth != nil {
+			sso.ServeOIDC(w, r)
+		} else {
+			writeError(w, http.StatusNotFound, errors.New("console sign-in is not configured"))
+		}
 	case h.clientAuth != nil && r.Method == http.MethodGet && strings.HasPrefix(r.URL.Path, metadataPrefix):
 		h.protectedResource(w, r)
 	case strings.HasPrefix(r.URL.Path, "/mcp/"):

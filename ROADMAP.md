@@ -47,16 +47,17 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   Gateway.
 - An opt-in Gateway audience: one token can reach a listed group of MCP
   routes, with policy and audit telling it apart from a per-route token.
+- Console sign-in through your identity provider, for listed users and
+  groups, instead of the shared admin password.
 
 ## Next
 
 1. Approvals for sensitive tool calls
    ([ADR-0003](docs/ADR-0003-Runtime-Authorization.md)).
-2. The console signed in through the authorization server.
-3. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
+2. Audit delivery to Kavrynt Cloud (the Gateway side is built; it needs the
    Cloud ingestion service and an end-to-end test) and usage events.
-4. Recovery workflows (restoring registrations into a new cluster).
-5. Diagnostics for testers and support: one command that checks an
+3. Recovery workflows (restoring registrations into a new cluster).
+4. Diagnostics for testers and support: one command that checks an
    installation and reports what is wrong, without secrets.
 
 ## Project and community

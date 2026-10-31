@@ -183,3 +183,72 @@ tests:
       gateway.console.auth.trustedProxies: [10.0.0.1]
     asserts:
       - failedTemplate: {}
+
+  # Verifies SPEC-0032-R01 and SPEC-0032-R02: console sign-in passes its
+  # settings without the client secret, which is a mounted file.
+  - it: passes console sign-in settings and mounts the client secret
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.oidc:
+        enabled: true
+        issuer: https://login.example.com/realms/agents
+        clientID: kavrynt-console
+        clientSecret: {name: console-oidc, key: secret}
+        redirectURL: https://mcp.example.com/v1/session/oidc/callback
+        providerName: Keycloak
+        allowedGroups: [platform]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --console-oidc-secret-file=/etc/kavrynt/console-oidc/secret
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: console-oidc
+            secret: {secretName: console-oidc, defaultMode: 0444}
+      # The exact settings: no clientSecret.
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: '{"allowHTTP":false,"allowedGroups":["platform"],"allowedSubjects":[],"clientID":"kavrynt-console","displayClaim":"preferred_username","groupsClaim":"groups","issuer":"https://login.example.com/realms/agents","keepAdminLogin":false,"providerName":"Keycloak","redirectURL":"https://mcp.example.com/v1/session/oidc/callback","scopes":[]}'
+
+  # Verifies SPEC-0032-R01: incomplete settings are refused at render.
+  - it: refuses console sign-in without the console login
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.enabled: false
+      gateway.console.auth.oidc: {enabled: true, issuer: https://login.example.com, clientID: c, clientSecret: {name: s}, redirectURL: https://mcp.example.com/v1/session/oidc/callback, allowedGroups: [platform]}
+    asserts:
+      - failedTemplate:
+          errorPattern: needs gateway.console.enabled and gateway.console.auth.enabled
+
+  # Verifies SPEC-0032-R01.
+  - it: refuses console sign-in without an allow list
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.oidc: {enabled: true, issuer: https://login.example.com, clientID: c, clientSecret: {name: s}, redirectURL: https://mcp.example.com/v1/session/oidc/callback}
+    asserts:
+      - failedTemplate:
+          errorPattern: list allowedSubjects or allowedGroups
+
+  # Verifies SPEC-0032-R01.
+  - it: refuses console sign-in without its settings or with an http issuer
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.oidc: {enabled: true, issuer: http://keycloak.idp.svc:8080/realms/a, clientID: c, clientSecret: {name: s}, redirectURL: https://mcp.example.com/v1/session/oidc/callback, allowedGroups: [platform]}
+    asserts:
+      - failedTemplate:
+          errorPattern: issuer uses http
+
+  # Verifies SPEC-0032-R01: the redirect URL is the Gateway's https callback.
+  - it: refuses a redirect URL that is not the https callback
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.enabled: false
+      gateway.console.auth.oidc: {enabled: true, issuer: https://login.example.com, clientID: c, clientSecret: {name: s}, redirectURL: http://mcp.example.com/callback, allowedGroups: [platform]}
+    asserts:
+      - failedTemplate:
+          errorPattern: redirectURL

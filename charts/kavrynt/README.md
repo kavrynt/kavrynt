@@ -606,6 +606,13 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.console.auth.existingSecret` | string | `""` | Secret with `password` and `sessionKey` keys to use instead of the generated `<release>-gateway-console-admin` |
 | `gateway.console.auth.sessionTTL` | string | `12h` | Console session lifetime |
 | `gateway.console.auth.trustedProxies` | list | `[]` | CIDRs of the proxies in front of the Gateway; failed console logins from them count against the client their `X-Forwarded-For` names, not the proxy |
+| `gateway.console.auth.oidc.enabled` | bool | `false` | Sign in to the console through an OpenID Connect provider (SPEC-0032); needs `gateway.console.auth.enabled` |
+| `gateway.console.auth.oidc.issuer` / `allowHTTP` | string / bool | `""` / `false` | The provider's issuer; `allowHTTP` only for an in-cluster provider (the browser's authorization endpoint must still be https) |
+| `gateway.console.auth.oidc.clientID` / `clientSecret.name` / `clientSecret.key` | string | `""` / `""` / `client-secret` | The confidential client, and the Secret holding its secret (mounted, never a flag) |
+| `gateway.console.auth.oidc.redirectURL` | string | `""` | `https://<gateway host>/v1/session/oidc/callback` |
+| `gateway.console.auth.oidc.allowedSubjects` / `allowedGroups` | list | `[]` | Who may sign in; at least one entry in either is required |
+| `gateway.console.auth.oidc.groupsClaim` / `displayClaim` / `scopes` / `providerName` | string / string / list / string | `groups` / `preferred_username` / `[]` / `""` | Claims read, scopes requested besides `openid`, and the button's provider name |
+| `gateway.console.auth.oidc.keepAdminLogin` | bool | `false` | Keep the admin password as a break-glass login (warned about at start) |
 | `gateway.console.history.maxTools` | int | `500` | Tools the console dashboards chart on their own, across routes (1 to 10000); further tools count as their route's `other` tool. Each replica keeps 24 hours in memory: about 29 KiB per route and 23 KiB per tool |
 | `gateway.console.grafanaURL` | string | `""` | Grafana base URL (http or https) the console dashboards link for cluster-wide history; empty names the Grafana dashboards instead |
 | `gateway.metrics.scrapeAnnotations` | bool | `true` | Add `prometheus.io/*` pod annotations |

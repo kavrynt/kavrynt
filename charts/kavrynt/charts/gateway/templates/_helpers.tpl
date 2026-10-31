@@ -86,6 +86,29 @@ true
 {{- if and $console.enabled $auth.enabled -}}true{{- end -}}
 {{- end -}}
 
+{{/*
+"true" when console sign-in through the identity provider is on. Fails
+rendering for settings the Gateway would refuse (SPEC-0032-R01).
+*/}}
+{{- define "gateway.consoleOIDCEnabled" -}}
+{{- $oidc := (((.Values.console | default dict).auth | default dict).oidc | default dict) -}}
+{{- if $oidc.enabled -}}
+{{- if not (include "gateway.consoleAuthEnabled" .) -}}
+{{- fail "gateway.console.auth.oidc: needs gateway.console.enabled and gateway.console.auth.enabled; the console session key signs the sessions" -}}
+{{- end -}}
+{{- if or (not $oidc.issuer) (not $oidc.clientID) (not ($oidc.clientSecret | default dict).name) (not $oidc.redirectURL) -}}
+{{- fail "gateway.console.auth.oidc: set issuer, clientID, clientSecret.name, and redirectURL (https://<gateway host>/v1/session/oidc/callback)" -}}
+{{- end -}}
+{{- if and (hasPrefix "http://" $oidc.issuer) (not $oidc.allowHTTP) -}}
+{{- fail "gateway.console.auth.oidc.issuer uses http; set allowHTTP: true for an in-cluster identity provider" -}}
+{{- end -}}
+{{- if and (not $oidc.allowedSubjects) (not $oidc.allowedGroups) -}}
+{{- fail "gateway.console.auth.oidc: list allowedSubjects or allowedGroups; nobody else may sign in" -}}
+{{- end -}}
+true
+{{- end -}}
+{{- end -}}
+
 {{/* The Secret holding the console admin password and session key. */}}
 {{- define "gateway.consoleAuthSecret" -}}
 {{- $auth := (.Values.console | default dict).auth | default dict -}}
