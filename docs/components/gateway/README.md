@@ -274,10 +274,14 @@ not `false`; MCP's defaults for absent hints are `readOnlyHint: false`,
 policy sees hints only once a discovery of the current spec has succeeded:
 after a failed discovery or a spec change, every tool has
 `tool_annotations: {}` and `tool_discovered: false`, and so does a tool the
-server added since the last discovery. A denied request gets `403` with
-a JSON-RPC error (`code` -32001, `message` `denied by policy: <reason>`, the
-policy's `reason` with control characters removed and at most 200
-characters) and outcome `denied`. With a policy, a `POST` the Gateway cannot
+server added since the last discovery. A denied JSON-RPC request gets
+`200` with a JSON-RPC error (`code` -32001, `message` `denied by policy:
+<reason>`, the policy's `reason` with control characters removed and at most
+200 characters), as an MCP server answers a request it refuses, so MCP
+client SDKs give the agent the reason (SPEC-0036). A denied notification,
+response, `GET`, or `DELETE` has no response to carry it and gets `403` with
+the same body. Either way the outcome is `denied`, the audit event's decision
+is `deny`, and the request never reaches the server. With a policy, a `POST` the Gateway cannot
 read (not a single JSON object, over 1 MiB, `tools/call` without a string
 `params.name`) or whose `Mcp-Method`/`Mcp-Name` headers disagree with the body
 gets `400`. None of these reach the MCP server.
@@ -310,9 +314,23 @@ mount the current ConfigMap and load it before they are ready. Policies
 cannot reach the network (`http.send`, `net.lookup_ip_addr`) or the Gateway's
 environment (`opa.runtime`). Whoever can edit the ConfigMap controls
 authorization: restrict it with RBAC. Examples, tested in CI:
-[`examples/policy`](../../examples/policy) (allow authenticated callers, a
-per-client tool allow-list, read-only methods, and read-only tools of
-trusted servers by their reported hints).
+[`examples/policy`](../../../examples/policy) (allow authenticated callers, a
+per-client tool allow-list, read-only methods, read-only tools of trusted
+servers by their reported hints, and tools that may be destructive only for
+listed clients).
+
+**Write hint-based policies to fail closed.** Once the Operator records a
+failed discovery, every tool has `tool_annotations: {}` and
+`tool_discovered: false` until a discovery succeeds again. That happens when
+a discovery (every 5 minutes, and after changes) finds the server
+unreachable, for example while its pod restarts; a restart that falls
+between two discoveries keeps the previous hints. A deny rule such as
+`input.tool_annotations.destructiveHint == true` then matches nothing and
+the destructive tools are allowed, and listed with `filterToolsList`. Allow on hints instead (`tool_discovered` and
+`readOnlyHint == true`, or `destructiveHint == false`) and treat everything
+else as unknown, as
+[`deny-destructive-tools.rego`](../../../examples/policy/deny-destructive-tools.rego)
+does. An absent `destructiveHint` means `true` in MCP.
 
 **Filtered tool lists.** With `--policy-filter-tools-list` (chart:
 `gateway.policy.filterToolsList`, off by default) a `tools/list` answer keeps
@@ -807,7 +825,8 @@ tool arguments, and results are never recorded.
   `forbidden` (missing scope, `403`), and `auth_unavailable` (issuer keys
   unavailable, `503`); `credential_unavailable` (`503`) when a server's
   stored upstream credential is missing or not pinned to its endpoint;
-  `denied` (`403`) when the tool authorization policy refuses the call;
+  `denied` (`200` with a JSON-RPC error for a request, `403` otherwise) when
+  the tool authorization policy refuses the call;
   `protocol_error` (`400`) when the request is not well-formed MCP
   Streamable HTTP; `exchange_failed` (`502`/`503`) when the caller's
   token could not be exchanged for the server; and `session_not_found`

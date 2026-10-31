@@ -160,4 +160,5 @@ against the assistant's summary of them.
 | [0033](0033-kavryctl-doctor/spec.md) | kavryctl doctor | Draft |
 | [0034](0034-registration-backup/spec.md) | Registration export and import | Draft |
 | [0035](0035-audit-verify-newer-events/spec.md) | Verifying audit events from newer Gateways | Implemented |
+| [0036](0036-readable-policy-denials/spec.md) | Policy denials that MCP clients can read | Implemented |
 | [0037](0037-kavryctl-list-hint/spec.md) | kavryctl list points to other namespaces | Implemented |
