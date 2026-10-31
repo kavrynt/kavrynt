@@ -214,4 +214,20 @@ func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
 	if s, _ := Verify(strings.NewReader(strings.Join(newer, "\n"))); len(s.Breaks) != 0 || s.UnknownFields != 2 {
 		t.Fatalf("newer chain as written: %+v", s)
 	}
+
+	// A member added inside route, and a repeated member whose last value is
+	// the original: decoding hides both, so re-encoding would match.
+	for name, tc := range map[string]struct{ edited, want string }{
+		"nested member":   {strings.Replace(string(second), `"name":"search"}`, `"name":"search","approved_by":"alice"}`, 1), `"route.approved_by"`},
+		"repeated member": {strings.Replace(string(second), `"tool":""`, `"tool":"delete_all","tool":""`, 1), `repeats "tool"`},
+	} {
+		s, _ := Verify(strings.NewReader(string(first) + "\n" + tc.edited + "\n"))
+		if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 || !strings.Contains(s.Breaks[0].Problem, tc.want) {
+			t.Fatalf("%s: breaks %+v, want one naming %s", name, s.Breaks, tc.want)
+		}
+	}
+	// A collector's re-encoding of a known-fields line still verifies.
+	if s, _ := Verify(strings.NewReader(reencode(t, string(first)) + "\n" + reencode(t, string(second)) + "\n")); len(s.Breaks) != 0 {
+		t.Fatalf("re-encoded chain: %+v", s.Breaks)
+	}
 }

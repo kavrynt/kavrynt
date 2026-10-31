@@ -65,38 +65,81 @@ func verifiesAsWritten(line string, e Event) bool {
 	return hex.EncodeToString(sum.Sum(nil)) == e.Hash
 }
 
-// unknownFields returns the top-level members of line that Event does not
-// have, sorted.
-func unknownFields(line string) []string {
-	var members map[string]json.RawMessage
-	if json.Unmarshal([]byte(line), &members) != nil {
-		return nil
+// routeFields are the members of Route, from its JSON tags.
+var routeFields = map[string]bool{"namespace": true, "name": true}
+
+// members walks line's JSON tokens and returns, sorted, the members Event
+// does not have (at the top level and inside route, as "route.<name>") and
+// the members an object repeats. Decoding keeps only the last of repeated
+// members and drops unknown ones, so neither shows in the decoded Event.
+func members(line string) (unknown, repeated []string) {
+	dec := json.NewDecoder(strings.NewReader(line))
+	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+		return nil, nil
 	}
-	var unknown []string
-	for name := range members {
-		if !knownFields[name] {
-			unknown = append(unknown, name)
+	walkMembers(dec, "", knownFields, &unknown, &repeated)
+	slices.Sort(unknown)
+	slices.Sort(repeated)
+	return unknown, repeated
+}
+
+// walkMembers reads the members of an object whose opening brace was read,
+// through its closing brace. It reports false on malformed input.
+func walkMembers(dec *json.Decoder, prefix string, known map[string]bool, unknown, repeated *[]string) bool {
+	seen := map[string]bool{}
+	for dec.More() {
+		t, err := dec.Token()
+		if err != nil {
+			return false
+		}
+		name, _ := t.(string)
+		path := prefix + name
+		if seen[name] {
+			*repeated = append(*repeated, path)
+		}
+		seen[name] = true
+		if !known[name] {
+			*unknown = append(*unknown, path)
+		}
+		if prefix == "" && name == "route" {
+			// Route is an object in every event Verify decoded.
+			if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+				return false
+			}
+			if !walkMembers(dec, "route.", routeFields, unknown, repeated) {
+				return false
+			}
+			continue
+		}
+		var skip json.RawMessage
+		if dec.Decode(&skip) != nil {
+			return false
 		}
 	}
-	slices.Sort(unknown)
-	return unknown
+	_, err := dec.Token()
+	return err == nil
+}
+
+// quoted quotes names for a break message, at most five, each bounded.
+func quoted(names []string) []string {
+	out := make([]string, 0, 6)
+	for _, name := range names[:min(len(names), 5)] {
+		if len(name) > 64 {
+			name = name[:64] + "..."
+		}
+		out = append(out, fmt.Sprintf("%q", name))
+	}
+	if len(names) > 5 {
+		out = append(out, fmt.Sprintf("and %d more", len(names)-5))
+	}
+	return out
 }
 
 // unknownProblem explains a break of an event with unknown members, naming
 // at most five of them, quoted and bounded (SPEC-0035-R03).
 func unknownProblem(unknown []string) string {
-	names := make([]string, 0, 5)
-	for _, name := range unknown[:min(len(unknown), 5)] {
-		if len(name) > 64 {
-			name = name[:64] + "..."
-		}
-		names = append(names, fmt.Sprintf("%q", name))
-	}
-	if len(unknown) > 5 {
-		names = append(names, fmt.Sprintf("and %d more", len(unknown)-5))
-	}
 	return "hash does not match, and the event has fields this kavryctl does not know (" +
-		strings.Join(names, ", ") + "), so it cannot tell an edit from a rewrite on the way: " +
+		strings.Join(quoted(unknown), ", ") + "), so it cannot tell an edit from a rewrite on the way: " +
 		"verify the original lines with the Gateway's release or a newer kavryctl"
 }
 
@@ -139,18 +182,22 @@ func Verify(r io.Reader) (Summary, error) {
 		} else if e.PrevHash != s.hash {
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "prev_hash does not match the previous event"})
 		}
-		unknown := unknownFields(line)
+		unknown, repeated := members(line)
 		// The written line first, then the known fields re-encoded, for
 		// lines a collector rewrote (SPEC-0035-R02). Re-encoding covers only
-		// the known fields, so a line with others must verify as written: a
-		// member added after the Gateway hashed the line is not covered
-		// (SPEC-0035-R06).
+		// what decoding kept, so a line with unknown members (at any level
+		// Event has) or repeated members must verify as written: either
+		// could be added after the Gateway hashed the line (SPEC-0035-R06).
 		switch {
 		case verifiesAsWritten(line, e):
 			if len(unknown) > 0 {
 				summary.UnknownFields++
 			}
-		case len(unknown) == 0 && ComputeHash(e) == e.Hash:
+		case len(unknown) == 0 && len(repeated) == 0 && ComputeHash(e) == e.Hash:
+		case len(repeated) > 0:
+			// The Gateway never repeats a member; readers disagree on which
+			// value counts.
+			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "hash does not match the event (altered): it repeats " + strings.Join(quoted(repeated), ", ")})
 		case len(unknown) > 0:
 			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, unknownProblem(unknown)})
 		default:
