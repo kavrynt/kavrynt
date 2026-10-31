@@ -245,6 +245,39 @@ func TestListToolsBoundsUntrustedMetadata(t *testing.T) {
 	}
 }
 
+// Text a server reports reaches terminals through kubectl describe, so
+// control characters other than newline and tab are dropped from it.
+func TestListToolsDropsControlCharacters(t *testing.T) {
+	escape := "\x1b[2J\x1b]0;owned\x07\r"
+	clean := map[string]any{"type": "object", "properties": map[string]any{"q": map[string]any{"type": "string", "description": "query\n\tterm"}}}
+	server := newFakeServer(
+		map[string]any{"name": "evil", "description": "safe" + escape + "\nnext\ttab\u0085",
+			"inputSchema": map[string]any{"type": "object", "properties": map[string]any{"a" + escape + "b": map[string]any{"description": escape + "ok"}}}},
+		map[string]any{"name": "clean", "description": "plain", "inputSchema": clean},
+	)
+	result, err := listTools(t, server)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(result.Tools) != 2 {
+		t.Fatalf("tools = %d, want 2", len(result.Tools))
+	}
+	evil := result.Tools[0]
+	if want := "safe[2J]0;owned\nnext\ttab"; evil.Description != want {
+		t.Fatalf("description = %q, want %q", evil.Description, want)
+	}
+	if evil.InputSchema == nil || string(evil.InputSchema.Raw) != `{"properties":{"a[2J]0;ownedb":{"description":"[2J]0;ownedok"}},"type":"object"}` {
+		t.Fatalf("schema = %v", evil.InputSchema)
+	}
+	want, err := json.Marshal(clean)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if canonical, err := CanonicalJSON(want); err != nil || string(result.Tools[1].InputSchema.Raw) != string(canonical) {
+		t.Fatalf("a clean schema changed: %s, want %s", result.Tools[1].InputSchema.Raw, canonical)
+	}
+}
+
 func TestListToolsCapsToolCountAndStatusSize(t *testing.T) {
 	var tools []any
 	for i := 0; i < mcpmeta.MaxToolsPerServer+5; i++ {

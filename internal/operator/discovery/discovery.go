@@ -247,9 +247,9 @@ func buildResult(raw []json.RawMessage) Result {
 		seen[tool.Name] = true
 		bounded := kavryntv1alpha1.MCPServerTool{
 			Name:        tool.Name,
-			Description: truncate(tool.Description, MaxDescriptionLength),
+			Description: truncate(printable(tool.Description), MaxDescriptionLength),
 		}
-		if schema, err := CanonicalJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' {
+		if schema, err := printableJSON(tool.InputSchema); err == nil && len(schema) <= MaxSchemaBytes && schema[0] == '{' {
 			bounded.InputSchema = &runtime.RawExtension{Raw: schema}
 		}
 		bounded.Annotations = behaviorHints(tool.Annotations)
@@ -313,6 +313,55 @@ func statusSize(tools []kavryntv1alpha1.MCPServerTool) int {
 		}
 	}
 	return size
+}
+
+// printable drops control characters other than newline and tab, so text a
+// server reports cannot drive the terminal of whoever reads the status, as
+// kubectl describe prints it unescaped.
+func printable(value string) string {
+	unwanted := func(r rune) bool { return unicode.IsControl(r) && r != '\n' && r != '\t' }
+	if strings.IndexFunc(value, unwanted) < 0 {
+		return value
+	}
+	return strings.Map(func(r rune) rune {
+		if unwanted(r) {
+			return -1
+		}
+		return r
+	}, value)
+}
+
+// printableJSON is CanonicalJSON with printable applied to every string,
+// member names included.
+func printableJSON(raw []byte) ([]byte, error) {
+	decoder := json.NewDecoder(bytes.NewReader(raw))
+	decoder.UseNumber()
+	var value any
+	if err := decoder.Decode(&value); err != nil {
+		return nil, err
+	}
+	if _, err := decoder.Token(); !errors.Is(err, io.EOF) {
+		return nil, errors.New("trailing data after JSON value")
+	}
+	return json.Marshal(printableValue(value))
+}
+
+func printableValue(value any) any {
+	switch v := value.(type) {
+	case string:
+		return printable(v)
+	case []any:
+		for i := range v {
+			v[i] = printableValue(v[i])
+		}
+	case map[string]any:
+		out := make(map[string]any, len(v))
+		for name, member := range v {
+			out[printable(name)] = printableValue(member)
+		}
+		return out
+	}
+	return value
 }
 
 // truncate shortens value to at most max characters.
