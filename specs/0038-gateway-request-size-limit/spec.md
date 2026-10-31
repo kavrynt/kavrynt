@@ -46,7 +46,9 @@ limits that trust the Gateway in front of them.
   Gateway's JSON error.
 - **SPEC-0038-R02** For a request body without `Content-Length`, the
   Gateway MUST forward at most the request size limit to the MCP server,
-  and MUST answer `413` when the body is larger, unless an earlier check
+  and MUST answer `413` when the body passes the limit before the MCP
+  server answers (a server that answers first, without reading the body,
+  keeps its answer), unless an earlier check
   refuses it first: with the tool authorization policy on, a body too
   large to classify (over 1 MiB) is refused with `400` by SPEC-0012
   before anything is forwarded.
@@ -55,7 +57,8 @@ limits that trust the Gateway in front of them.
   `--max-request-bytes` and the chart value
   `gateway.config.maxRequestBytes`; the chart MUST reject a value that is
   not an integer between 1024 and 1073741824.
-- **SPEC-0038-R04** A refused oversized request MUST be counted with
+- **SPEC-0038-R04** A request refused by the request size limit MUST be
+  counted with
   outcome `client_error` and status `413`, and its audit event MUST have
   decision `invalid` and a reason that names the limit.
 

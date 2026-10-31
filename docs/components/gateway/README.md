@@ -66,8 +66,11 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   MCP route (SPEC-0038). A larger `Content-Length` gets `413` before
   anything reaches the MCP server (a JSON-RPC error with `id` `null` for a
   `POST`); a body without a length is streamed up to the limit and then
-  cut with `413`. Refusals count as `client_error` and are audited as
-  `invalid`.
+  cut with `413`. With the tool authorization policy on, a `POST` body
+  without a length that is too large to classify (over 1 MiB) is refused
+  with `400` before anything is forwarded (SPEC-0012), so it never reaches
+  the size check. Refusals by the limit count as `client_error` and are
+  audited as `invalid`.
 - No token passthrough: `Authorization`, `Cookie`, and `Proxy-Authorization`
   are always removed before forwarding, along with hop-by-hop headers and
   headers named in `Connection`. Upstream `Set-Cookie` is dropped because

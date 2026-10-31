@@ -111,6 +111,37 @@ func TestOversizedChunkedBodyIsCutAndRefused(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0038-R02: a body that passed the limit before the MCP server
+// answered gets 413 even when the server answers instead of failing, and a
+// server that answers before reading the body (the transport then sends it
+// after RoundTrip returns) is not a data race.
+func TestOversizedBodyWithAnUpstreamAnswer(t *testing.T) {
+	t.Run("answer after the limit", func(t *testing.T) {
+		handler, _ := demoHandler(t, func(req *http.Request) (*http.Response, error) {
+			_, _ = io.Copy(io.Discard, req.Body)
+			return okResponse(req)
+		})
+		handler.SetMaxRequestBytes(int64(maxInspectBytes + 64<<10))
+		if rr := chunked(handler, callOfSize(maxInspectBytes+512<<10)); rr.Code != http.StatusRequestEntityTooLarge {
+			t.Fatalf("server answered a body cut at the limit: %d, want 413", rr.Code)
+		}
+	})
+	t.Run("answer before the body", func(t *testing.T) {
+		read := make(chan struct{})
+		handler, _ := demoHandler(t, func(req *http.Request) (*http.Response, error) {
+			go func() {
+				defer close(read)
+				_, _ = io.Copy(io.Discard, req.Body)
+			}()
+			return okResponse(req)
+		})
+		if rr := chunked(handler, callOfSize(4096)); rr.Code != http.StatusOK {
+			t.Fatalf("server answering before reading the body: %d, want 200", rr.Code)
+		}
+		<-read
+	})
+}
+
 // Verifies SPEC-0038-R03: 4 MiB by default, and SetMaxRequestBytes (the
 // --max-request-bytes flag) changes it.
 func TestRequestSizeLimitDefaultAndSetting(t *testing.T) {

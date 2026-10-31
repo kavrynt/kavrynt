@@ -634,7 +634,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	upstreamBody := &countingReader{r: body}
 	gatewayError := func(status int, err error) {
 		writeError(w, status, err)
-		h.finish(r, route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.n, 0)
+		h.finish(r, route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.sent(), 0)
 	}
 	if err := checkProtocol(r, call.body); err != nil {
 		if h.strictProtocol {
@@ -711,7 +711,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 				rec.decision, rec.reason = auditv1.DecisionUnavailable, "upstream credential unavailable"
 			}
 			writeError(w, http.StatusServiceUnavailable, errors.New("upstream credential unavailable"))
-			h.finish(r, route.Name, call, outcomeCredentialUnavailable, http.StatusServiceUnavailable, time.Since(start), upstreamBody.n, 0)
+			h.finish(r, route.Name, call, outcomeCredentialUnavailable, http.StatusServiceUnavailable, time.Since(start), upstreamBody.sent(), 0)
 			return
 		}
 		req.Header.Set(route.Credential.HeaderName(), route.Credential.HeaderValue(value))
@@ -725,7 +725,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 				rec.decision, rec.reason = auditv1.DecisionUnavailable, err.Error()
 			}
 			writeError(w, status, err)
-			h.finish(r, route.Name, call, outcomeExchangeFailed, status, time.Since(start), upstreamBody.n, 0)
+			h.finish(r, route.Name, call, outcomeExchangeFailed, status, time.Since(start), upstreamBody.sent(), 0)
 			return
 		}
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -743,7 +743,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 				rec.decision, rec.reason = decision, err.Error()
 			}
 			writeError(w, status, err)
-			h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
+			h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.sent(), 0)
 			return
 		}
 		podTag = tag
@@ -756,9 +756,15 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		rec.decision = auditv1.DecisionAllow
 	}
 	resp, err := h.client.Do(req)
-	if err != nil && isTooLarge(upstreamBody.err) {
+	if isTooLarge(upstreamBody.failure()) {
 		// The body passed the limit while it was forwarded; the server got
-		// at most the limit and the request was cut (SPEC-0038-R02).
+		// at most the limit and the request was cut, even if the server
+		// answered it (SPEC-0038-R02). A server that answers before the body
+		// reaches the limit keeps its answer: waiting for the rest of a body
+		// it never reads could last until the request timeout.
+		if err == nil {
+			_ = resp.Body.Close()
+		}
 		h.refuseTooLarge(w, r, route.Name, call, start)
 		return
 	}
@@ -769,7 +775,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			outcome, status, message = outcomeTimeout, http.StatusGatewayTimeout, errRequestTimeout.Error()
 		}
 		writeError(w, status, errors.New(message))
-		h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.n, 0)
+		h.finish(r, route.Name, call, outcome, status, time.Since(start), upstreamBody.sent(), 0)
 		return
 	}
 	defer resp.Body.Close()
@@ -798,7 +804,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		if copyErr != nil {
 			outcome = outcomeIncomplete
 		}
-		h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
+		h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.sent(), written)
 		if copyErr == nil {
 			h.proxied.Add(1)
 		}
@@ -839,7 +845,7 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			outcome = outcomeTimeout
 		}
 	}
-	h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.n, written)
+	h.finish(r, route.Name, call, outcome, resp.StatusCode, time.Since(start), upstreamBody.sent(), written)
 	if copyErr == nil {
 		h.proxied.Add(1)
 	}
@@ -858,7 +864,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, route model.
 			rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
 		}
 		writeError(w, http.StatusBadRequest, err)
-		h.finish(r, routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.n, 0)
+		h.finish(r, routeName, call, outcomeClientError, http.StatusBadRequest, time.Since(start), body.sent(), 0)
 		return false
 	}
 	input := policyInput(r, route.Name)
@@ -904,7 +910,7 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, route model.
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	writeRPCError(w, status, call.body.id, policyDeniedCode, message)
-	h.finish(r, routeName, call, outcomeDenied, status, time.Since(start), body.n, 0)
+	h.finish(r, routeName, call, outcomeDenied, status, time.Since(start), body.sent(), 0)
 	return false
 }
 
