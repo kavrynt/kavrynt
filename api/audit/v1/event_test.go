@@ -229,7 +229,9 @@ func TestAddedFieldsAreNotTrustedByReencoding(t *testing.T) {
 		"repeated member": {strings.Replace(string(second), `"tool":""`, `"tool":"delete_all","tool":""`, 1), `repeats "tool"`},
 		// route null decodes to an empty Route and stops the member scan,
 		// which must not let a member after it through.
-		"route not an object": {strings.Replace(emptyRoute, `"route":{"namespace":"","name":""}`, `"route":null`, 1) + "", "altered"},
+		// The member after it is still found and named (SPEC-0035-R03).
+		"route not an object":                {strings.Replace(emptyRoute, `"route":{"namespace":"","name":""}`, `"route":null`, 1), `"approved_by"`},
+		"route not an object, nothing added": {strings.Replace(string(blankLine), `"route":{"namespace":"","name":""}`, `"route":null`, 1), "altered"},
 	} {
 		s, _ := Verify(strings.NewReader(string(first) + "\n" + tc.edited + "\n"))
 		if len(s.Breaks) != 1 || s.Breaks[0].Seq != 2 || !strings.Contains(s.Breaks[0].Problem, tc.want) {

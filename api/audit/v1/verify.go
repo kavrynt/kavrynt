@@ -2,6 +2,7 @@ package v1
 
 import (
 	"bufio"
+	"bytes"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -80,7 +81,8 @@ func members(line string) (unknown, repeated []string, complete bool) {
 	if t, err := dec.Token(); err != nil || t != json.Delim('{') {
 		return nil, nil, false
 	}
-	complete = walkMembers(dec, "", knownFields, &unknown, &repeated)
+	var routeNotObject bool
+	complete = walkMembers(dec, "", knownFields, &unknown, &repeated, &routeNotObject) && !routeNotObject
 	slices.Sort(unknown)
 	slices.Sort(repeated)
 	return unknown, repeated, complete
@@ -88,7 +90,7 @@ func members(line string) (unknown, repeated []string, complete bool) {
 
 // walkMembers reads the members of an object whose opening brace was read,
 // through its closing brace. It reports false on malformed input.
-func walkMembers(dec *json.Decoder, prefix string, known map[string]bool, unknown, repeated *[]string) bool {
+func walkMembers(dec *json.Decoder, prefix string, known map[string]bool, unknown, repeated *[]string, notObject *bool) bool {
 	seen := map[string]bool{}
 	for dec.More() {
 		t, err := dec.Token()
@@ -105,11 +107,20 @@ func walkMembers(dec *json.Decoder, prefix string, known map[string]bool, unknow
 			*unknown = append(*unknown, path)
 		}
 		if prefix == "" && name == "route" {
-			// Route is an object in every event Verify decoded.
-			if t, err := dec.Token(); err != nil || t != json.Delim('{') {
+			// The Gateway always writes route as an object. Anything else
+			// (null decodes to an empty Route) makes the scan incomplete,
+			// which refuses re-encoding, but the members after it are still
+			// read so they can be named.
+			var value json.RawMessage
+			if dec.Decode(&value) != nil {
 				return false
 			}
-			if !walkMembers(dec, "route.", routeFields, unknown, repeated) {
+			sub := json.NewDecoder(bytes.NewReader(value))
+			if t, err := sub.Token(); err != nil || t != json.Delim('{') {
+				*notObject = true
+				continue
+			}
+			if !walkMembers(sub, "route.", routeFields, unknown, repeated, notObject) {
 				return false
 			}
 			continue
@@ -197,10 +208,6 @@ func Verify(r io.Reader) (Summary, error) {
 				summary.UnknownFields++
 			}
 		case complete && len(unknown) == 0 && len(repeated) == 0 && ComputeHash(e) == e.Hash:
-		case !complete:
-			// The Gateway always writes route as an object; a line the scan
-			// cannot read whole may hide members from it.
-			summary.Breaks = append(summary.Breaks, Break{e.Instance, e.Seq, "hash does not match the event (altered)"})
 		case len(repeated) > 0:
 			// The Gateway never repeats a member; readers disagree on which
 			// value counts.
