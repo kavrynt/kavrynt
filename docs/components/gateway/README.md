@@ -769,6 +769,9 @@ the Gateway's service account has no RBAC on Secrets.
 - To change the password, update the Secret's `password` key. Every session
   ends once the kubelet updates the mount (about a minute); no restart is
   needed.
+- Sessions are signed, not stored, so **Log out** removes the cookie from
+  that browser only: a copy of the cookie keeps working until it expires.
+  To end every session at once, change the password.
 - After five failed logins from one client within a minute, logins from
   that client get `429` until the minute has passed. The client is the
   connection's address. Behind an Ingress or load balancer that is the
