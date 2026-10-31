@@ -106,6 +106,11 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   EndpointSlices, no shared state), answers `404` for sessions of pods that
   are gone, and the Operator discovers from one pod. Lost sessions are
   `session_not_found` for every server.
+- Request size limit (SPEC-0038): every `/mcp/` request body is at most
+  `gateway.config.maxRequestBytes` (4 MiB); a larger `Content-Length` gets
+  `413` before the server is reached, a body without one is cut at the
+  limit. The Operator drops control characters from tool descriptions and
+  keeps no schema that has them.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
   forwarding and drops upstream `Set-Cookie`, `Server`, and `X-Powered-By`.
 - Gateway and Operator discovery refuse link-local, cloud metadata, and
