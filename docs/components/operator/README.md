@@ -64,6 +64,15 @@ Restrict the Gateway's destinations separately, for example with an egress
 NetworkPolicy for the Gateway, if namespace owners must not reach other
 namespaces that way.
 
+The same holds for a Service in the server's own namespace that forwards
+elsewhere: an `ExternalName` Service whose name points at another
+namespace, or a Service without a selector whose EndpointSlices list
+another namespace's pods. The Operator judges the endpoint by its host name
+only, so such a server is `Ready` and its route reaches the other
+namespace. Until SPEC-0039 is implemented, keep namespace owners from
+creating `ExternalName` Services and EndpointSlices (RBAC or an admission
+policy), or restrict the Gateway's egress.
+
 ## Tool discovery
 
 For each `Ready` server the Operator opens one short MCP session with
