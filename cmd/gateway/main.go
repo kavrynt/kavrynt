@@ -44,6 +44,7 @@ func main() {
 	watchNamespaces := flag.String("watch-namespaces", getenv("KAVRYNT_WATCH_NAMESPACES", ""), "Comma-separated namespaces to watch for MCPServer resources (empty watches all)")
 	stripHeaders := flag.String("strip-request-headers", getenv("KAVRYNT_STRIP_REQUEST_HEADERS", ""), "Comma-separated extra request headers never forwarded upstream (Authorization, Cookie, and Proxy-Authorization are always removed)")
 	requestTimeout := flag.Duration("request-timeout", api.DefaultRequestTimeout, "Upstream request timeout (event streams: until response headers)")
+	maxRequestBytes := flag.Int64("max-request-bytes", api.DefaultMaxRequestBytes, "Largest request body an MCP route accepts; larger requests get 413")
 	allowedOrigins := flag.String("allowed-origins", getenv("KAVRYNT_ALLOWED_ORIGINS", ""), "Comma-separated browser origins (scheme://host[:port]) allowed besides loopback; requests from other origins are rejected")
 	consoleEnabled := flag.Bool("console", true, "Serve the read-only web console at /ui/")
 	consoleAuthEnabled := flag.Bool("console-auth", true, "Require the console admin login for the console and /v1/servers, /v1/traffic, /v1/alerts (with --console); MCP routes are not affected")
@@ -142,6 +143,11 @@ func main() {
 	})
 	handler.StripRequestHeaders(splitList(*stripHeaders)...)
 	handler.SetRequestTimeout(*requestTimeout)
+	if *maxRequestBytes <= 0 {
+		slog.Error("configure request size limit", "error", "--max-request-bytes must be positive")
+		os.Exit(1)
+	}
+	handler.SetMaxRequestBytes(*maxRequestBytes)
 	handler.AllowOrigins(splitList(*allowedOrigins)...)
 	handler.SetInstance(*instance)
 	handler.SetStrictProtocol(*strictProtocol)

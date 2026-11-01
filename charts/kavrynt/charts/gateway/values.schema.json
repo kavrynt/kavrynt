@@ -196,6 +196,11 @@
         "requestTimeout": {
           "$ref": "#/definitions/duration"
         },
+        "maxRequestBytes": {
+          "type": "integer",
+          "minimum": 1024,
+          "maximum": 1073741824
+        },
         "stripRequestHeaders": {
           "type": "array",
           "items": {

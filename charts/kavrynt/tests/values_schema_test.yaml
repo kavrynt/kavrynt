@@ -119,6 +119,30 @@ tests:
       - failedTemplate:
           errorPattern: "requestTimeout"
 
+  # Verifies SPEC-0038-R03.
+  - it: rejects a request size limit of zero
+    set:
+      gateway.config.maxRequestBytes: 0
+    asserts:
+      - failedTemplate:
+          errorPattern: "maxRequestBytes"
+
+  # Verifies SPEC-0038-R03.
+  - it: rejects a request size limit above 1 GiB
+    set:
+      gateway.config.maxRequestBytes: 2147483648
+    asserts:
+      - failedTemplate:
+          errorPattern: "maxRequestBytes"
+
+  # Verifies SPEC-0038-R03.
+  - it: rejects a request size limit with a unit
+    set:
+      gateway.config.maxRequestBytes: 4Mi
+    asserts:
+      - failedTemplate:
+          errorPattern: "maxRequestBytes"
+
   # Verifies SPEC-0003-R04.
   - it: rejects a malformed scrape interval
     set:

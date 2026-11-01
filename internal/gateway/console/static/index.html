@@ -17,12 +17,14 @@
   <script src="playground.js" defer></script>
   <script src="app.js" defer></script>
 </head>
-<body>
+<!-- signed-out until GET /v1/session says otherwise: the sign-in page
+     shows no navigation, so nothing is drawn before the session check. -->
+<body class="signed-out">
   <a class="skip-link" href="#main">Skip to content</a>
   <div class="shell">
     <nav class="sidebar" aria-label="Main">
       <a class="brand" href="#/overview">
-        <img src="logo.svg" alt="" width="28" height="28">
+        <img class="brand-mark" src="logo.svg" alt="" width="30" height="30">
         <span>Kavrynt</span>
       </a>
       <ul class="nav">

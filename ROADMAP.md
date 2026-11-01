@@ -53,6 +53,8 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   public issue with `--anonymize`.
 - `kavryctl export` and `import`: restore registrations into a rebuilt
   cluster, checking every document before writing any.
+- A request size limit on MCP routes (4 MiB by default): larger requests
+  get `413`, and an MCP server never receives more than the limit.
 
 ## Next
 

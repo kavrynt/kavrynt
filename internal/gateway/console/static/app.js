@@ -235,22 +235,30 @@
       h("button", { type: "button", class: "linkish", onclick: logout }, "Log out"));
   }
 
+  // loginPage puts a sign-in card under the Kavrynt logo, alone on the
+  // page: the navigation is hidden while signed out.
+  function loginPage(root, card) {
+    put(root, h("div", { class: "login-wrap" },
+      h("img", { class: "login-logo", src: "kavrynt-logo.svg", alt: "Kavrynt", width: 220, height: 209 }),
+      card));
+  }
+
   function renderLogin(root) {
     // Sign-in through the identity provider (SPEC-0032-R03), and the admin
     // password only while it is on (R10).
     if (state.auth.unreachable) {
-      put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },
+      loginPage(root, h("div", { class: "login" },
         h("h1", { text: "Sign in" }),
         h("p", { class: "error-text", role: "alert", text: "Could not reach the Gateway to see how to sign in." }),
-        h("button", { type: "button", class: "btn primary", onclick: () => checkSession().then(render) }, "Try again"))));
+        h("button", { type: "button", class: "btn primary", onclick: () => checkSession().then(render) }, "Try again")));
       return;
     }
     const sso = state.auth.sso ? h("a", { class: "btn primary", href: state.auth.sso.href, text: state.auth.sso.label }) : null;
     if (!state.auth.adminLogin) {
-      put(root, h("div", { class: "login-wrap" }, h("div", { class: "login" },
+      loginPage(root, h("div", { class: "login" },
         h("h1", { text: "Sign in" }),
         h("p", { class: "muted", text: "Sign in to see MCP servers, tools, and traffic." }),
-        sso || h("p", { class: "error-text", text: "Sign-in is not available. Ask the platform team." }))));
+        sso || h("p", { class: "error-text", text: "Sign-in is not available. Ask the platform team." })));
       return;
     }
     const user = h("input", { type: "text", id: "login-user", name: "username", value: "admin", autocomplete: "username", required: true });
@@ -294,7 +302,7 @@
       h("p", { text: "Helm generates it into a Secret when it installs Kavrynt. Read it with:" }),
       codeBlock("kubectl -n kavrynt-system get secret kavrynt-gateway-console-admin \\\n  -o jsonpath='{.data.password}' | base64 -d"),
       h("p", { class: "muted small", text: "Use your release namespace and name if they differ, or the Secret set in gateway.console.auth.existingSecret." })));
-    put(root, h("div", { class: "login-wrap" }, form));
+    loginPage(root, form);
     setTimeout(() => password.focus(), 0);
   }
 
@@ -323,12 +331,18 @@
   };
 
   function render() {
+    // Signed out, the page is the sign-in card alone: no navigation, no
+    // Gateway status (SPEC-0005-R14).
+    document.body.classList.toggle("signed-out", needsLogin());
     if (needsLogin()) {
       document.querySelectorAll("[data-nav]").forEach((a) => { a.classList.remove("active"); a.removeAttribute("aria-current"); });
       const root = clear(main());
       current = { page: "login", update: null };
       if (state.auth.checked) renderLogin(root);
       else put(root, emptyState("Loading…"));
+      // Logging out hides the control that had focus; the admin form then
+      // moves it on to the password field.
+      root.focus({ preventScroll: true });
       return;
     }
     const { page: requested, rest, params } = parseHash(location.hash);

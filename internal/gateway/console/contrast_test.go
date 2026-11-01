@@ -45,7 +45,7 @@ func themes(t *testing.T) map[string]map[string]string {
 		dark[k] = v
 	}
 	// Colours the stylesheet sets outside the tokens.
-	light["primary-text"], dark["primary-text"] = "#ffffff", "#042f2e"
+	light["primary-text"], dark["primary-text"] = "#ffffff", "#190804"
 	light["white"], dark["white"] = "#ffffff", "#ffffff"
 	return map[string]map[string]string{"light": light, "dark": dark}
 }
@@ -102,9 +102,9 @@ func TestThemeContrastMeetsWCAGAA(t *testing.T) {
 		{"--text", "--bad-soft", 4.5, "failing-server text"},
 		{"--text", "--accent-soft", 4.5, "selected playground tool"},
 		{"--code-text", "--code-bg", 4.5, "code blocks"},
-		{"--sidebar-text", "--sidebar", 4.5, "navigation"},
+		{"--sidebar-text", "--sidebar", 4.5, "navigation, loading text while signed out"},
 		{"white", "--sidebar-active", 4.5, "active navigation item"},
-		{"--sidebar-muted", "--sidebar", 4.5, "Gateway version in the sidebar"},
+		{"--sidebar-muted", "--sidebar", 4.5, "Gateway version and sign-in method in the sidebar"},
 		{"--accent", "--bg", 3, "focus outline"},
 		{"--warn", "--surface", 3, "attention borders"},
 		{"--bad", "--surface", 3, "failing borders"},

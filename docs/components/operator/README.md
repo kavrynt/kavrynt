@@ -111,7 +111,11 @@ version in the `REPORTED` column.
   session, 1 MiB per response, 5 `tools/list` pages, 200 tools; names up to
   128 characters of `[A-Za-z0-9_./-]` (others are skipped); descriptions cut to
   1024 characters; input schemas kept only when they are JSON objects of at
-  most 16 KiB; at most 256 KiB of tool data per server.
+  most 16 KiB; at most 256 KiB of tool data per server. Control characters
+  other than newline and tab are dropped from descriptions, and a schema
+  with one in any string is not kept (rewriting it would change what it
+  allows), so `kubectl describe` never prints a server's terminal escape
+  sequences.
 - The Operator needs network access to each server's endpoint. Where it must
   not reach MCP servers, disable discovery (`config.toolDiscovery.enabled:
   false` in the operator subchart, `operator.config.toolDiscovery.enabled` in

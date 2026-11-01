@@ -162,3 +162,4 @@ against the assistant's summary of them.
 | [0035](0035-audit-verify-newer-events/spec.md) | Verifying audit events from newer Gateways | Implemented |
 | [0036](0036-readable-policy-denials/spec.md) | Policy denials that MCP clients can read | Implemented |
 | [0037](0037-kavryctl-list-hint/spec.md) | kavryctl list points to other namespaces | Implemented |
+| [0038](0038-gateway-request-size-limit/spec.md) | Request size limit for MCP routes | Implemented |
