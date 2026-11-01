@@ -241,6 +241,10 @@ kubectl -n kavrynt-try wait mcpserver/sample --for=condition=ToolsDiscovered --t
 kubectl get mcpservers -A
 ```
 
+On OpenShift, if the restricted security context constraint refuses the
+sample pod, delete the `runAsUser: 65532` line from the manifest and apply it
+again ([docs/TESTING.md](docs/TESTING.md#3-register-an-mcp-server)).
+
 The Operator sets `Ready` once the spec is valid and routable, and
 `ToolsDiscovered` once it has listed the server's tools. The Gateway route is
 namespace-qualified: the server becomes `kavrynt-try.sample`, so equal server
