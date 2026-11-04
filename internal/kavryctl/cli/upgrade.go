@@ -275,7 +275,7 @@ func runUpgrade(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: kavryctl upgrade --version <version> [flags]")
+		fmt.Fprintln(stderr, "usage: kavryctl upgrade [flags]")
 		return 2
 	}
 	info, statErr := os.Stat(*chart)
