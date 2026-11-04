@@ -14,9 +14,12 @@ connection, and the outcome is `token_expired`, not `incomplete`.
 in `alerts/window.go` and the regular expressions in `_alerts.tpl`.
 
 **Sessions (R03 to R08, R10, R11).** `internal/mcpsession` gets `Bind` and `Open`,
-which take the key, and hold the format: version, a truncated HMAC-SHA-256, and the
-ID. The HMAC's inputs are length-prefixed so that no two different callers encode the
-same way. In the proxy:
+which take the key, and hold the format: `s1.`, the first 16 bytes of an HMAC-SHA-256
+as 32 lowercase hex characters, `.`, and the ID as received. `Open` reads the version
+and the MAC by position and keeps the rest as the ID, which may itself contain `.`, so
+the result stays in the visible ASCII that MCP requires of session IDs. The HMAC's
+inputs are length-prefixed so that no two different callers encode the same way. In
+the proxy:
 
 - On a request, after authorization and before token exchange, a session ID that fails
   `Open` answers `404` with outcome `session_not_found`. The opened ID goes on to
@@ -60,11 +63,11 @@ console login is off.
 | SPEC-0042-R03 | `internal/mcpsession/mcpsession_test.go` `TestBindCoversCallerRouteAndSession` |
 | SPEC-0042-R04 | `internal/gateway/api/session_test.go` `TestAnotherCallersSessionIsNotFound`, `scripts/e2e-kind.sh` |
 | SPEC-0042-R05 | `internal/gateway/api/affinity_test.go` `TestBoundSessionKeepsItsPod` |
-| SPEC-0042-R06 | `charts/kavrynt/tests/`, `cmd/gateway` start-up test |
+| SPEC-0042-R06 | `charts/kavrynt/tests/`, `cmd/gateway` start-up test, `scripts/e2e-kind.sh` (with client authentication on, a session keeps working through another Gateway replica and a rolling restart) |
 | SPEC-0042-R07 | `internal/gateway/api/session_test.go` `TestSessionKeyInputsAreNotExposed` |
 | SPEC-0042-R08 | `internal/gateway/api/affinity_test.go` `TestChangedPodTagIsNotFound` |
 | SPEC-0042-R09 | `internal/gateway/alerts/window_test.go`, `charts/kavrynt/tests/alerts_test.yaml` |
-| SPEC-0042-R10 | `internal/mcpsession/mcpsession_test.go` `TestUnknownVersionDoesNotOpen` |
+| SPEC-0042-R10 | `internal/mcpsession/mcpsession_test.go` `TestUnknownVersionDoesNotOpen`, `TestBoundIDFormat` (a fixed key and inputs give a fixed string) |
 | SPEC-0042-R11 | `internal/gateway/clientauth/clientauth_test.go` `TestTokenWithoutCallerIsRefused` |
 
 ## Rollout
