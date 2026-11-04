@@ -258,7 +258,7 @@ func (s *session) adoptCRD(ctx context.Context, crd *apiextensionsv1.CustomResou
 func runUpgrade(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("upgrade",
 		`Upgrades the Kavrynt release with Helm`,
-		`kavryctl upgrade --version <version> [flags]`,
+		`kavryctl upgrade [flags]`,
 		stdout,
 		stderr)
 
