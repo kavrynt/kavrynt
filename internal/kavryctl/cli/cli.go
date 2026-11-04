@@ -135,6 +135,16 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+type errorTracker struct {
+	io.Writer
+	hasError bool
+}
+
+func (t *errorTracker) Write(p []byte) (int, error) {
+	t.hasError = true
+	return t.Writer.Write(p)
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("validate",
 		`Validates the MCPServer manifest`,
@@ -175,7 +185,9 @@ func warnNotRouted(stderr io.Writer, server *kavryntv1alpha1.MCPServer) {
 // collected Gateway logs can be passed as they are.
 func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
-		argUsage := "Verifies Gateway audit event chains from a log file or standard input.\n\nUsage:\n kavryctl audit verify [log-file]\n"
+		argUsage := "Audit commands for Gateway event verification\n\n" +
+			"Usage:\n   kavryctl audit <command> [arguments]\n\n" +
+			"Commands:\n  verify  Verifies Gateway audit event chains read from a file or standard input\n"
 		fmt.Fprint(stdout, argUsage)
 		return 0
 	}
@@ -184,6 +196,11 @@ func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 		return 2
 	}
 	input := stdin
+	if len(args) >= 2 && (args[0] == "verify" && (args[1] == "-h" || args[1] == "--help")) {
+		argUsage := "Verifies Gateway audit event chains from a log file or standard input.\n\nUsage:\n kavryctl audit verify [log-file]\n"
+		fmt.Fprint(stdout, argUsage)
+		return 0
+	}
 	if len(args) == 2 && args[1] != "-" {
 		// #nosec G304 -- reading the file the user names is the command's purpose.
 		file, err := os.Open(args[1])
@@ -471,8 +488,16 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 
 func newFlagSet(name string, argUsage string, cmdUsage string, stdout, stderr io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.Usage = func() { printHelp(argUsage, cmdUsage, fs, stdout) }
-	fs.SetOutput(stderr)
+	tracker := &errorTracker{Writer: stderr}
+	fs.SetOutput(tracker)
+	fs.Usage = func() {
+		out := stdout
+		if tracker.hasError {
+			// If an error message was written to stderr, send usage to stderr too
+			out = stderr
+		}
+		printHelp(argUsage, cmdUsage, fs, out)
+	}
 	return fs
 }
 
