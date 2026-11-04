@@ -2,6 +2,8 @@ package cli
 
 import (
 	"context"
+	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"maps"
@@ -68,7 +70,12 @@ func exportedMeta(server *kavryntv1alpha1.MCPServer) (labels, annotations map[st
 }
 
 func runExport(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("export", stderr)
+	fs := newFlagSet("export",
+		`Exports MCPServers as YAML manifests to restore elsewhere`,
+		`kavryctl export [flags]`,
+		stdout,
+		stderr)
+
 	var opts kubeOptions
 	opts.bind(fs)
 	allNamespaces := fs.Bool("all-namespaces", false, "Export MCPServers in all namespaces")
@@ -78,10 +85,13 @@ func runExport(args []string, stdout, stderr io.Writer) int {
 	includeArgs := fs.Bool("include-args", false, "Keep spec.args values (the file may then hold credentials)")
 	releaseNamespace := fs.String("release-namespace", "kavrynt-system", "Namespace of the Kavrynt release, for the Operator version")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: kavryctl export [-n NAMESPACE | -A] [-o FILE] [--include-environment]")
+		fmt.Fprintln(stderr, "usage: kavryctl export [flags]")
 		return 2
 	}
 	c, namespace, err := newKubeClient(opts)
@@ -248,17 +258,25 @@ type importPlan struct {
 func (p importPlan) key() string { return p.server.Namespace + "/" + p.server.Name }
 
 func runImport(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("import", stderr)
+	fs := newFlagSet("import",
+		`Imports MCPServers from an export file`,
+		`kavryctl import [flags] <file>`,
+		stdout,
+		stderr)
+
 	var opts kubeOptions
 	opts.bind(fs)
 	overwrite := fs.Bool("overwrite", false, "Replace MCPServers whose spec, labels, or annotations differ")
 	dryRun := fs.Bool("dry-run", false, "Report what import would do, with server-side dry run, and change nothing")
 	wait := fs.Duration("wait", 60*time.Second, "How long to wait for imported MCPServers to become Ready (0 skips)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl import [--overwrite] [--dry-run] [--wait 60s] <file>")
+		fmt.Fprintln(stderr, "usage: kavryctl import [flags] <file>")
 		return 2
 	}
 	data, err := readImportFile(fs.Arg(0))
