@@ -7,8 +7,9 @@ described under Problem in the spec before anything changes.
 
 **Streams (R01, R02, R09).** `clientauth.Identity` gets the token's expiry, which
 `Authenticate` already checks. For a `GET` whose answer is an event stream, the proxy
-runs the copy under a deadline of the expiry plus `clockSkew`, and on that deadline
-returns normally, so the client sees the stream end and not a broken connection.
+runs the copy under a deadline of the expiry plus `clockSkew`. On that deadline the
+copy stops without an error, so the client sees the stream end and not a broken
+connection, and the outcome is `token_expired`, not `incomplete`.
 `token_expired` joins the outcomes in `traffic.go`, and stays out of the failure sets
 in `alerts/window.go` and the regular expressions in `_alerts.tpl`.
 
@@ -29,9 +30,10 @@ to start with client authentication on when it is missing or under 32 bytes, and
 `cmd/gateway/main.go` passes it to the handler. Changing the key takes a restart, which
 keeps every replica on one key.
 
-The chart follows `console-auth-secret.yaml`: `lookup`, `randAlphaNum`, and
+The chart follows `console-auth-secret.yaml`: `lookup`, `randAlphaNum 64`, and
 `helm.sh/resource-policy: keep`, with `gateway.auth.sessionKeySecret` for an existing
-Secret. It gets a Secret of its own, because the console's does not exist when the
+Secret. The Gateway uses the mounted file's bytes as the key with no decoding, so the
+generated value is 64 bytes. It gets a Secret of its own, because the console's does not exist when the
 console login is off.
 
 ## Affected files
@@ -45,7 +47,7 @@ console login is off.
 | `internal/mcpsession/mcpsession.go` | `Bind`, `Open` |
 | `cmd/gateway/main.go` | `--session-key-file`; refuse to start without the key |
 | `charts/kavrynt/charts/gateway/templates/` (`session-key-secret.yaml`, `deployment.yaml`), `values.yaml`, `values.schema.json`, umbrella values and schema | Secret, mount, flag, value |
-| `charts/kavrynt/tests/` | Secret kept across upgrades, existing Secret, mount |
+| `charts/kavrynt/tests/` | Secret kept across upgrades, existing Secret, mount, generated key length |
 | `scripts/e2e-kind.sh`, `docs/E2E.md`, `CLAUDE.md` | Contract: another caller's session ID gets `404`, and a stream ends at expiry |
 | `docs/components/gateway/README.md`, `charts/kavrynt/README.md`, `SECURITY.md` | Docs, and remove the two known limitations |
 
@@ -54,7 +56,7 @@ console login is off.
 | Requirement | Test |
 | --- | --- |
 | SPEC-0042-R01 | `internal/gateway/api/session_test.go` `TestStreamEndsWhenItsTokenExpires`, `scripts/e2e-kind.sh` |
-| SPEC-0042-R02 | `internal/gateway/api/session_test.go` `TestExpiredStreamOutcome` |
+| SPEC-0042-R02 | `internal/gateway/api/session_test.go` `TestExpiredStreamOutcome`, which also shows an upstream disconnect stays `incomplete` |
 | SPEC-0042-R03 | `internal/mcpsession/mcpsession_test.go` `TestBindCoversCallerRouteAndSession` |
 | SPEC-0042-R04 | `internal/gateway/api/session_test.go` `TestAnotherCallersSessionIsNotFound`, `scripts/e2e-kind.sh` |
 | SPEC-0042-R05 | `internal/gateway/api/affinity_test.go` `TestBoundSessionKeepsItsPod` |
@@ -77,6 +79,6 @@ installs must set `gateway.auth.sessionKeySecret` before upgrading.
   do not support resuming. `token_expired` in the metrics shows how often.
 - The rolling restart check of the end-to-end contract must keep passing with sessions
   in use, since it is the case that proves replicas share the key.
-- A client that changes its client ID, or an issuer that omits `sub`, is affected in
-  a way the spec describes but no test against a real issuer covers. The first shows as
-  `session_not_found`, the second as `401`.
+- A client that changes its client ID, or an issuer that omits both `sub` and the
+  client ID, is affected in a way the spec describes but no test against a real issuer
+  covers. The first shows as `session_not_found`, the second as `401`.
