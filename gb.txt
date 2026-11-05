@@ -1,0 +1,26 @@
+
+Exports MCPServers as YAML manifests to restore elsewhere
+
+Usage:
+ kavryctl export [flags]
+
+Flags:
+  -A	Shorthand for --all-namespaces
+  -all-namespaces
+    	Export MCPServers in all namespaces
+  -context string
+    	Kubeconfig context to use
+  -include-args
+    	Keep spec.args values (the file may then hold credentials)
+  -include-environment
+    	Keep spec.environment values (the file may then hold credentials)
+  -kubeconfig string
+    	Path to the kubeconfig file (defaults to KUBECONFIG or ~/.kube/config)
+  -n string
+    	Shorthand for --namespace
+  -namespace string
+    	Namespace (defaults to the context namespace)
+  -o string
+    	Write to this file (mode 0600) instead of standard output
+  -release-namespace string
+    	Namespace of the Kavrynt release, for the Operator version (default "kavrynt-system")
