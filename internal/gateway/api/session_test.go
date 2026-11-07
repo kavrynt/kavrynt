@@ -3,6 +3,7 @@ package api
 import (
 	"fmt"
 	"io"
+	"log/slog"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -358,10 +359,15 @@ func TestSessionIDIsBoundToItsRoute(t *testing.T) {
 	}
 }
 
-// Verifies SPEC-0042-R07: the key, and what the tag covers beyond what the
-// audit event already records, appear in no response, metric, or audit event
-// other than the tag itself.
+// Verifies SPEC-0042-R07: the key appears in no response, log, metric, or audit
+// event, and no session ID, bound or the server's own, appears in a log, a
+// metric, or an audit event.
 func TestSessionKeyInputsAreNotExposed(t *testing.T) {
+	var logs strings.Builder
+	previous := slog.Default()
+	slog.SetDefault(slog.New(slog.NewTextHandler(&logs, &slog.HandlerOptions{Level: slog.LevelDebug})))
+	t.Cleanup(func() { slog.SetDefault(previous) })
+
 	g := newBoundGateway(t)
 	log, out := enableAudit(t, g.Handler)
 	token := g.token("team-a.demo", "user-42", "agent-a")
@@ -370,12 +376,14 @@ func TestSessionKeyInputsAreNotExposed(t *testing.T) {
 
 	rr := g.do("team-a.demo", token, session, callBody)
 	events(t, log, out)
-	everything := rr.Body.String() + fmt.Sprint(rr.Header()) + scrape(t, g.Handler) + out.String()
-	if strings.Contains(everything, string(sessionKey)) {
-		t.Fatal("the session key appears in a response, metric, or audit event")
+	metrics := scrape(t, g.Handler)
+	if all := rr.Body.String() + fmt.Sprint(rr.Header()) + metrics + out.String() + logs.String(); strings.Contains(all, string(sessionKey)) {
+		t.Fatal("the session key appears in a response, log, metric, or audit event")
 	}
-	if strings.Contains(out.String(), session) {
-		t.Fatal("an audit event holds a session ID")
+	for _, id := range []string{session, "server-session"} {
+		if recorded := metrics + out.String() + logs.String(); strings.Contains(recorded, id) {
+			t.Fatalf("session ID %q appears in a log, metric, or audit event", id)
+		}
 	}
 }
 

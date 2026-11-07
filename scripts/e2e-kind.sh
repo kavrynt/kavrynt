@@ -1071,9 +1071,8 @@ for _ in $(seq 1 15); do
   sleep 2
 done
 [ "${AUDITED}" = true ] || fail "lost sessions were not recorded as session_not_found"
-kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
-  mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
-  --wait=false >/dev/null
+# The stateful server stays until the session binding check of the client
+# authentication section (SPEC-0042) has used it.
 
 # Verifies SPEC-0029-R01, SPEC-0029-R02, SPEC-0029-R04, and SPEC-0029-R08:
 # only MCP methods and the route's own path reach a server, an endpoint in
@@ -1316,7 +1315,7 @@ bound_call() {
   curl --silent --output "${TEMP_DIR}/bound-body" --dump-header "${TEMP_DIR}/bound-headers" --write-out '%{http_code}' \
     --request POST "${GATEWAY_URL}/mcp/${BOUND_ROUTE}" --header 'Content-Type: application/json' \
     --header 'Accept: application/json, text/event-stream' --header "Authorization: Bearer ${token}" \
-    "${session_header[@]}" --data "${body}"
+    ${session_header[@]+"${session_header[@]}"} --data "${body}"
 }
 BOUND_INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}'
 BOUND_LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
@@ -1344,6 +1343,9 @@ STATUS="$(bound_call "${OWNER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
 [ "${STATUS}" = "200" ] || fail "the session did not survive a Gateway rolling restart: HTTP ${STATUS}: $(cat "${TEMP_DIR}/bound-body")"
 STATUS="$(bound_call "${OTHER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
 [ "${STATUS}" = "404" ] || fail "another caller's session answered HTTP ${STATUS} after the restart, want 404"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-affinity pod/sessions-plain \
+  mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
+  --wait=false >/dev/null
 
 # Verifies SPEC-0006-R04, SPEC-0006-R06, and SPEC-0006-R09.
 log "verifying wrong audiences, missing scopes, and query tokens are refused"

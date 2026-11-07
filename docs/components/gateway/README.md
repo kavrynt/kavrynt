@@ -456,7 +456,10 @@ A token with neither a subject nor a client ID is refused with `401`.
 leaves it on uninstall, and mounts it read-only into every replica
 (`--session-key-file`); the Gateway has no RBAC on Secrets. It does not start
 with client authentication on and a key missing or under 32 bytes. Changing the
-key ends every session, which clients handle as `session_not_found`. A render
+key ends every session, which clients handle as `session_not_found`. The
+Gateway reads the key once at start, so after you change the Secret restart
+every Gateway replica at once (`kubectl rollout restart`); replicas that disagree
+on the key answer `404` to each other's sessions. A render
 without cluster access (`helm template`, GitOps) cannot look the Secret up and
 would make a new key each time: set `gateway.auth.sessionKeySecret` to a Secret
 with the key under `sessionKey` there. Upgrading to the first version with this
