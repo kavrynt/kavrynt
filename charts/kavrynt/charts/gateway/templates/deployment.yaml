@@ -108,6 +108,7 @@ spec:
             {{- if $exchange }}
             - --token-exchange-secret-dir=/etc/kavrynt/token-exchange
             {{- end }}
+            - --session-key-file=/etc/kavrynt/session-key/sessionKey
             {{- end }}
             {{- if $credentials }}
             - --upstream-credentials-dir=/etc/kavrynt/upstream-credentials
@@ -207,6 +208,11 @@ spec:
               mountPath: /etc/kavrynt/token-exchange
               readOnly: true
             {{- end }}
+            {{- if include "gateway.clientAuthEnabled" . }}
+            - name: session-key
+              mountPath: /etc/kavrynt/session-key
+              readOnly: true
+            {{- end }}
             {{- if $auditCloud.enabled }}
             - name: audit-cloud-token
               mountPath: /etc/kavrynt/audit-cloud
@@ -224,6 +230,12 @@ spec:
         - name: console-auth
           secret:
             secretName: {{ include "gateway.consoleAuthSecret" . }}
+            defaultMode: 0444
+        {{- end }}
+        {{- if include "gateway.clientAuthEnabled" . }}
+        - name: session-key
+          secret:
+            secretName: {{ include "gateway.sessionKeySecret" . }}
             defaultMode: 0444
         {{- end }}
         {{- if include "gateway.consoleOIDCEnabled" . }}

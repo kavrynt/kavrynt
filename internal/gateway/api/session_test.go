@@ -1,6 +1,7 @@
 package api
 
 import (
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -11,6 +12,7 @@ import (
 	"time"
 
 	"github.com/kavrynt/kavrynt/internal/gateway/auth"
+	"github.com/kavrynt/kavrynt/internal/gateway/model"
 )
 
 func consoleAuthHandler(t *testing.T, upstream *[]*http.Request) *Handler {
@@ -229,5 +231,163 @@ func TestUpstreamDisconnectStaysIncomplete(t *testing.T) {
 	requireSeries(t, metrics, `outcome="incomplete"`)
 	if strings.Contains(metrics, "token_expired") {
 		t.Fatalf("a dropped stream was counted as token_expired:\n%s", metrics)
+	}
+}
+
+var sessionKey = []byte(strings.Repeat("k", 32))
+
+// boundGateway is a Gateway with client authentication and session binding
+// on, routing team-a.demo and team-a.other to one fake MCP server that starts
+// a session as "server-session" on initialize and records every request it
+// receives.
+type boundGateway struct {
+	*Handler
+	mint func(map[string]any) string
+	seen *[]*http.Request
+}
+
+func newBoundGateway(t *testing.T) *boundGateway {
+	t.Helper()
+	h, _, mint := authHandler(t, true)
+	var seen []*http.Request
+	h.client = &http.Client{Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+		seen = append(seen, req)
+		header := http.Header{"Content-Type": []string{"application/json"}}
+		if body, _ := io.ReadAll(req.Body); strings.Contains(string(body), `"method":"initialize"`) {
+			header.Set("Mcp-Session-Id", "server-session")
+		}
+		return &http.Response{StatusCode: http.StatusOK, Header: header, Body: io.NopCloser(strings.NewReader(`{"jsonrpc":"2.0","id":1,"result":{}}`))}, nil
+	})}
+	h.table.Replace([]model.Route{
+		{Name: "team-a.demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp"},
+		{Name: "team-a.other", Version: "0.1.0", Transport: "http", Endpoint: "http://other.test/mcp"},
+	}, time.Now())
+	h.EnableSessionBinding(sessionKey)
+	return &boundGateway{Handler: h, mint: mint, seen: &seen}
+}
+
+// token is a token for route whose caller is user and client.
+func (g *boundGateway) token(route, user, client string) string {
+	return g.mint(map[string]any{"aud": authResource + "/mcp/" + route, "sub": user, "client_id": client})
+}
+
+func (g *boundGateway) do(route, token, session, body string) *httptest.ResponseRecorder {
+	return callRoute(g.Handler, "/mcp/"+route, token, func(r *http.Request) {
+		r.Body = io.NopCloser(strings.NewReader(body))
+		r.ContentLength = int64(len(body))
+		if session != "" {
+			r.Header.Set("Mcp-Session-Id", session)
+		}
+	})
+}
+
+// start opens a session on route for the caller and returns the session ID
+// the client gets.
+func (g *boundGateway) start(t *testing.T, route, token string) string {
+	t.Helper()
+	rr := g.do(route, token, "", initializeBody)
+	session := rr.Header().Get("Mcp-Session-Id")
+	if rr.Code != http.StatusOK || session == "" {
+		t.Fatalf("initialize: %d, session %q, %s", rr.Code, session, rr.Body)
+	}
+	return session
+}
+
+// Verifies SPEC-0042-R03: the session ID a client gets is bound, and does not
+// show the server's ID as it is.
+func TestSessionIDIsBound(t *testing.T) {
+	g := newBoundGateway(t)
+	session := g.start(t, "team-a.demo", g.token("team-a.demo", "user-42", "agent-a"))
+	if !strings.HasPrefix(session, "s1.") || !strings.HasSuffix(session, ".server-session") || session == "server-session" {
+		t.Fatalf("session ID = %q, want s1.<tag>.server-session", session)
+	}
+}
+
+// Verifies SPEC-0042-R04 and SPEC-0042-R05: another caller's session ID, with a
+// valid token for the route, gets 404 and nothing reaches the server; the
+// caller's own works, also on a new token, and the server gets its own ID
+// without the tag.
+func TestAnotherCallersSessionIsNotFound(t *testing.T) {
+	g := newBoundGateway(t)
+	owner := g.token("team-a.demo", "user-42", "agent-a")
+	session := g.start(t, "team-a.demo", owner)
+	forwarded := len(*g.seen)
+
+	for name, token := range map[string]string{
+		"another user":                 g.token("team-a.demo", "user-43", "agent-a"),
+		"the same user's other client": g.token("team-a.demo", "user-42", "agent-b"),
+	} {
+		rr := g.do("team-a.demo", token, session, callBody)
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", name, rr.Code)
+		}
+	}
+	// Neither an unbound ID nor the server's own ID is a session of anyone.
+	for _, id := range []string{"server-session", "s1." + strings.Repeat("0", 32) + ".server-session", "s2.x.server-session"} {
+		if rr := g.do("team-a.demo", owner, id, callBody); rr.Code != http.StatusNotFound {
+			t.Errorf("session ID %q: status %d, want 404", id, rr.Code)
+		}
+	}
+	if len(*g.seen) != forwarded {
+		t.Fatalf("%d requests reached the server for sessions that are not the caller's", len(*g.seen)-forwarded)
+	}
+	requireSeries(t, scrape(t, g.Handler), `outcome="session_not_found"`)
+
+	// The owner's token may change; the caller does not.
+	renewed := g.token("team-a.demo", "user-42", "agent-a")
+	if rr := g.do("team-a.demo", renewed, session, callBody); rr.Code != http.StatusOK {
+		t.Fatalf("the caller's session on a new token: status %d", rr.Code)
+	}
+	last := (*g.seen)[len(*g.seen)-1]
+	if got := last.Header.Get("Mcp-Session-Id"); got != "server-session" {
+		t.Fatalf("the server got session ID %q, want its own without the tag", got)
+	}
+}
+
+// Verifies SPEC-0042-R03 and SPEC-0042-R04: a session of one route is no session
+// of another, though the same token audience rules let the caller reach both.
+func TestSessionIDIsBoundToItsRoute(t *testing.T) {
+	g := newBoundGateway(t)
+	session := g.start(t, "team-a.demo", g.token("team-a.demo", "user-42", "agent-a"))
+	forwarded := len(*g.seen)
+	if rr := g.do("team-a.other", g.token("team-a.other", "user-42", "agent-a"), session, callBody); rr.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404", rr.Code)
+	}
+	if len(*g.seen) != forwarded {
+		t.Fatal("a request with another route's session reached the server")
+	}
+}
+
+// Verifies SPEC-0042-R07: the key, and what the tag covers beyond what the
+// audit event already records, appear in no response, metric, or audit event
+// other than the tag itself.
+func TestSessionKeyInputsAreNotExposed(t *testing.T) {
+	g := newBoundGateway(t)
+	log, out := enableAudit(t, g.Handler)
+	token := g.token("team-a.demo", "user-42", "agent-a")
+	session := g.start(t, "team-a.demo", token)
+	g.do("team-a.demo", g.token("team-a.demo", "user-43", "agent-a"), session, callBody)
+
+	rr := g.do("team-a.demo", token, session, callBody)
+	events(t, log, out)
+	everything := rr.Body.String() + fmt.Sprint(rr.Header()) + scrape(t, g.Handler) + out.String()
+	if strings.Contains(everything, string(sessionKey)) {
+		t.Fatal("the session key appears in a response, metric, or audit event")
+	}
+	if strings.Contains(out.String(), session) {
+		t.Fatal("an audit event holds a session ID")
+	}
+}
+
+// Verifies SPEC-0042-R11 at the route: a token without a caller never reaches
+// a session or the server.
+func TestTokenWithoutCallerGetsNoSession(t *testing.T) {
+	g := newBoundGateway(t)
+	token := g.mint(map[string]any{"aud": authResource + "/mcp/team-a.demo", "sub": "", "client_id": ""})
+	if rr := g.do("team-a.demo", token, "", initializeBody); rr.Code != http.StatusUnauthorized {
+		t.Fatalf("status %d, want 401", rr.Code)
+	}
+	if len(*g.seen) != 0 {
+		t.Fatal("a request without a caller reached the server")
 	}
 }

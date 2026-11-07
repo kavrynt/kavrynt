@@ -59,6 +59,7 @@ func main() {
 	authIssuers := flag.String("auth-issuers", getenv("KAVRYNT_AUTH_ISSUERS", ""), `Trusted authorization servers as JSON: [{"issuer":"https://...","jwksURI":"(optional)","allowHTTP":false}]`)
 	tokenExchangeDir := flag.String("token-exchange-secret-dir", getenv("KAVRYNT_TOKEN_EXCHANGE_SECRET_DIR", ""), "Directory of the mounted Secret with the client secrets named by the issuers' tokenExchange.clientSecretKey (token exchange)")
 	authGatewayAudience := flag.String("auth-gateway-audience-routes", getenv("KAVRYNT_AUTH_GATEWAY_AUDIENCE_ROUTES", ""), "Comma-separated routes (<namespace>.<name> or <namespace>.*) that also accept a token whose audience is --auth-resource-url; empty accepts only each route's own URI")
+	sessionKeyFile := flag.String("session-key-file", getenv("KAVRYNT_SESSION_KEY_FILE", ""), "File with the key that binds MCP session IDs to their caller, from a mounted Secret, at least 32 bytes and the same on every replica; needed with --auth (SPEC-0042)")
 	authScopes := flag.String("auth-required-scopes", getenv("KAVRYNT_AUTH_REQUIRED_SCOPES", ""), "Comma-separated scopes every token must carry")
 	auditEnabled := flag.Bool("audit", false, "Write one audit event per MCP request as a JSON line on standard output")
 	auditQueue := flag.Int("audit-queue-size", audit.DefaultQueueSize, "Audit events that may wait to be written")
@@ -101,6 +102,11 @@ func main() {
 	clientAuth, err := newClientAuth(*authEnabled, *authResourceURL, *authIssuers, *authScopes, *tokenExchangeDir, *authGatewayAudience)
 	if err != nil {
 		slog.Error("configure MCP client authentication", "error", err)
+		os.Exit(1)
+	}
+	sessionKey, err := loadSessionKey(clientAuth != nil, *sessionKeyFile)
+	if err != nil {
+		slog.Error("configure MCP session binding", "error", err)
 		os.Exit(1)
 	}
 	warnUnauthenticated(slog.Default(), clientAuth != nil)
@@ -192,6 +198,7 @@ func main() {
 	}
 	if clientAuth != nil {
 		handler.EnableClientAuth(clientAuth)
+		handler.EnableSessionBinding(sessionKey)
 		if consoleAuth != nil {
 			consoleAuth.ReportMCPAuth(true)
 			consoleAuth.ReportGatewayAudience(clientAuth.GatewayAudienceRoutes())
@@ -452,6 +459,30 @@ func newClientAuth(enabled bool, resourceURL, issuersJSON, scopes, tokenExchange
 		TokenExchangeSecretDir: tokenExchangeDir,
 		GatewayAudienceRoutes:  splitList(gatewayAudienceRoutes),
 	}, egress.Transport(false), slog.Default())
+}
+
+// loadSessionKey returns the key that binds MCP session IDs to their caller,
+// read once from a file the kubelet mounts, or nil when client authentication
+// is off. With it on, a missing or short key stops the Gateway: without one a
+// caller with a stolen session ID could compute its own tag (SPEC-0042-R06).
+// A key change takes a restart, which keeps every replica on one key. Errors
+// never hold the key.
+func loadSessionKey(authEnabled bool, path string) ([]byte, error) {
+	if !authEnabled {
+		return nil, nil
+	}
+	if path == "" {
+		return nil, errors.New("--auth needs --session-key-file: the key that binds MCP session IDs to their caller")
+	}
+	// #nosec G304 -- the operator names the mounted Secret file.
+	key, err := os.ReadFile(path)
+	if err != nil {
+		return nil, fmt.Errorf("read the session key file: %w", err)
+	}
+	if len(key) < mcpsession.MinKeyLength {
+		return nil, fmt.Errorf("the session key file holds %d bytes, want at least %d", len(key), mcpsession.MinKeyLength)
+	}
+	return key, nil
 }
 
 func splitList(value string) []string {

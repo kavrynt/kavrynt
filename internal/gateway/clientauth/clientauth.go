@@ -415,6 +415,11 @@ func (a *Authenticator) Authenticate(r *http.Request, route string) (Identity, *
 	if clientID == "" {
 		clientID = verified.AZP
 	}
+	// Without either, the Gateway could not tell callers apart, and a session
+	// could not be bound to one (SPEC-0042-R11).
+	if verified.Subject == "" && clientID == "" {
+		return a.invalid(route, "no sub or client id")
+	}
 	return Identity{Subject: verified.Subject, ClientID: clientID, Issuer: verified.Issuer, Scopes: scopes, Audience: audience, Expiry: verified.Expiry.Time()}, nil
 }
 

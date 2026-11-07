@@ -503,3 +503,32 @@ func TestLogsNeverContainTokens(t *testing.T) {
 		t.Fatalf("log contains token claims: %s", env.logs.String())
 	}
 }
+
+// Verifies SPEC-0042-R11: a token with neither a subject nor a client ID is
+// refused, because the Gateway could not tell such callers apart; either one
+// alone is enough, and the authorized party counts as the client ID.
+func TestTokenWithoutCallerIsRefused(t *testing.T) {
+	env := newEnv(t)
+	for name, c := range map[string]struct {
+		overrides map[string]any
+		ok        bool
+	}{
+		"neither":            {map[string]any{"sub": nil, "client_id": nil}, false},
+		"empty subject":      {map[string]any{"sub": "", "client_id": nil}, false},
+		"subject only":       {map[string]any{"client_id": nil}, true},
+		"client ID only":     {map[string]any{"sub": nil}, true},
+		"authorized party":   {map[string]any{"sub": nil, "client_id": nil, "azp": "support-agent"}, true},
+		"subject and client": {nil, true},
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, refusal := env.auth.Authenticate(request(env.key.sign(t, env.claims(c.overrides))), testRoute)
+			if c.ok {
+				if refusal != nil {
+					t.Fatalf("refused: %+v", refusal)
+				}
+				return
+			}
+			wantRefusal(t, refusal, http.StatusUnauthorized, "invalid_token")
+		})
+	}
+}

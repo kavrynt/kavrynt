@@ -244,3 +244,75 @@ func TestLostSessionsAreNamed(t *testing.T) {
 	requireSeries(t, metrics, `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="session_not_found",route="team-a.demo",tool="echo"} 1`)
 	requireSeries(t, metrics, `outcome="client_error"`)
 }
+
+// boundAffinityGateway is a Gateway replica with client authentication,
+// session binding, and MCPSession for team-a.demo, a Service of stateful pods.
+func boundAffinityGateway(t *testing.T, pods *statefulPods) (*Handler, func(map[string]any) string) {
+	t.Helper()
+	h, _, mint := authHandler(t, true)
+	h.client = &http.Client{Transport: pods}
+	h.table.Replace([]model.Route{{Name: "team-a.demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.team-a.svc:8080/mcp", SessionAffinity: true}}, time.Now())
+	h.EnableSessionAffinity(pods)
+	h.EnableSessionBinding(sessionKey)
+	return h, mint
+}
+
+func boundSend(h *Handler, token, body, session string) *httptest.ResponseRecorder {
+	return callRoute(h, "/mcp/team-a.demo", token, func(r *http.Request) {
+		r.Body = io.NopCloser(strings.NewReader(body))
+		r.ContentLength = int64(len(body))
+		if session != "" {
+			r.Header.Set("Mcp-Session-Id", session)
+		}
+	})
+}
+
+// Verifies SPEC-0042-R05: with binding and session affinity together, a
+// session keeps its pod through every replica, and the pod gets its own
+// session ID, with neither tag.
+func TestBoundSessionKeepsItsPod(t *testing.T) {
+	pods := newStatefulPods(3)
+	h, mintFor := boundAffinityGateway(t, pods)
+	token := mintFor(nil)
+	rr := boundSend(h, token, initializeBody, "")
+	session := rr.Header().Get("Mcp-Session-Id")
+	if rr.Code != http.StatusOK || !strings.HasPrefix(session, "s1.") {
+		t.Fatalf("initialize: %d %q", rr.Code, session)
+	}
+	for range 5 {
+		if rr := boundSend(h, token, callBody, session); rr.Code != http.StatusOK {
+			t.Fatalf("a call on the bound session: %d %s", rr.Code, rr.Body)
+		}
+	}
+	for _, req := range pods.seen[1:] {
+		if got := req.Header.Get("Mcp-Session-Id"); !strings.HasPrefix(got, "session-") {
+			t.Fatalf("the pod got session ID %q, want its own", got)
+		}
+	}
+}
+
+// Verifies SPEC-0042-R08: the tag covers the pod tag, so a session ID whose
+// pod tag was changed is not found and no pod gets the request.
+func TestChangedPodTagIsNotFound(t *testing.T) {
+	pods := newStatefulPods(3)
+	h, mint := boundAffinityGateway(t, pods)
+	token := mint(nil)
+	session := boundSend(h, token, initializeBody, "").Header().Get("Mcp-Session-Id")
+	// session is s1.<tag>.<pod tag>.<server ID>; swap in another pod's tag.
+	parts := strings.SplitN(session, ".", 4)
+	if len(parts) != 4 {
+		t.Fatalf("session ID %q has no pod tag", session)
+	}
+	other := mcpsession.TagOf(types.UID("uid-1"))
+	if parts[2] == other {
+		other = mcpsession.TagOf(types.UID("uid-2"))
+	}
+	forged := strings.Join([]string{parts[0], parts[1], other, parts[3]}, ".")
+	before := len(pods.seen)
+	if rr := boundSend(h, token, callBody, forged); rr.Code != http.StatusNotFound {
+		t.Fatalf("status %d, want 404", rr.Code)
+	}
+	if len(pods.seen) != before {
+		t.Fatal("a pod got a request whose pod tag was changed")
+	}
+}

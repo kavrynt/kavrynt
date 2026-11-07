@@ -84,6 +84,9 @@ type Handler struct {
 	// allowedOrigins holds browser origins accepted besides loopback ones.
 	allowedOrigins map[string]struct{}
 	requestTimeout time.Duration
+	// sessionKey keys the tags that bind an MCP session ID to its caller; nil
+	// leaves session IDs as they are (SPEC-0042).
+	sessionKey []byte
 	// tokenSkew is how long past its token's expiry an event stream may stay
 	// open (SPEC-0042-R01): the clock skew the token was accepted with.
 	tokenSkew time.Duration
@@ -710,6 +713,24 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		// reads the answer uncompressed.
 		req.Header.Del("Accept-Encoding")
 	}
+	if caller, bound := h.sessionCaller(r); bound {
+		// Only the caller that started a session can use it, on this route.
+		// Anything else answers as a session that does not exist, so a caller
+		// cannot tell another's session from none (SPEC-0042-R04).
+		if id := req.Header.Get(sessionHeader); id != "" {
+			opened, ok := mcpsession.Open(h.sessionKey, caller, route.Name, id)
+			if !ok {
+				if rec := auditRecordFrom(r); rec != nil {
+					rec.decision, rec.reason = auditv1.DecisionInvalid, "session not found"
+				}
+				writeError(w, http.StatusNotFound, errors.New("session not found"))
+				h.finish(r, route.Name, call, outcomeSessionNotFound, http.StatusNotFound, time.Since(start), upstreamBody.sent(), 0)
+				return
+			}
+			// The server, and the pod tag, get the ID without the tag.
+			req.Header.Set(sessionHeader, opened)
+		}
+	}
 	if route.Credential != nil {
 		// The stored credential replaces any header of that name the client
 		// sent; without it the request is not forwarded (SPEC-0011-R05, R06).
@@ -794,9 +815,16 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	copyHeaders(w.Header(), resp.Header, responseStrip)
-	if id := w.Header().Get(sessionHeader); podTag != "" && id != "" {
-		// The client keeps the pod's tag with the session (SPEC-0026-R04).
-		w.Header().Set(sessionHeader, mcpsession.Wrap(podTag, id))
+	if id := w.Header().Get(sessionHeader); id != "" {
+		if podTag != "" {
+			// The client keeps the pod's tag with the session (SPEC-0026-R04).
+			id = mcpsession.Wrap(podTag, id)
+		}
+		if caller, bound := h.sessionCaller(r); bound {
+			// The tag covers the pod tag too (SPEC-0042-R03, R08).
+			id = mcpsession.Bind(h.sessionKey, caller, route.Name, id)
+		}
+		w.Header().Set(sessionHeader, id)
 	}
 	// Every route shares the Gateway origin, which also serves the console.
 	// Responses render in a sandbox (an opaque origin, no scripts) so an
@@ -875,6 +903,27 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	if copyErr == nil {
 		h.proxied.Add(1)
 	}
+}
+
+// sessionCaller returns the caller a session ID is bound to, and whether
+// session IDs are bound at all: with client authentication on and a key
+// (SPEC-0042-R03).
+func (h *Handler) sessionCaller(r *http.Request) (mcpsession.Caller, bool) {
+	if h.clientAuth == nil || h.sessionKey == nil {
+		return mcpsession.Caller{}, false
+	}
+	identity, ok := clientauth.IdentityFrom(r.Context())
+	if !ok {
+		return mcpsession.Caller{}, false
+	}
+	return mcpsession.Caller{Issuer: identity.Issuer, Subject: identity.Subject, ClientID: identity.ClientID}, true
+}
+
+// EnableSessionBinding binds the MCP session IDs of routes with client
+// authentication to the caller that started them, with a tag only a holder of
+// key can compute (SPEC-0042). Every replica must have the same key.
+func (h *Handler) EnableSessionBinding(key []byte) {
+	h.sessionKey = append([]byte(nil), key...)
 }
 
 // authorize asks the policy whether the request may reach the MCP server,

@@ -1299,6 +1299,52 @@ curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
   grep --quiet "outcome=\"token_expired\",route=\"${SERVER_ID}\"" ||
   fail "the Gateway did not record the ended stream as token_expired"
 
+# Verifies SPEC-0042-R03, SPEC-0042-R04, and SPEC-0042-R06. The stateful
+# server with session affinity starts sessions; with client authentication on,
+# the session ID the client holds is bound to its caller. Another caller's
+# token with it gets 404, and the session keeps working through a rolling
+# restart, whose new Gateway pods share the key only through its Secret.
+log "verifying an MCP session is bound to its caller and survives a rolling restart"
+BOUND_ROUTE="${E2E_NAMESPACE}.stateful-affinity"
+BOUND_RESOURCE="${RESOURCE_URL}/mcp/${BOUND_ROUTE}"
+OWNER_TOKEN="$(mint "${BOUND_RESOURCE}" "mcp:tools" e2e-agent 15m)"
+OTHER_TOKEN="$(mint "${BOUND_RESOURCE}" "mcp:tools" other-agent 15m)"
+bound_call() {
+  local token="$1" session="$2" body="$3"
+  local -a session_header=()
+  [ -z "${session}" ] || session_header=(--header "Mcp-Session-Id: ${session}")
+  curl --silent --output "${TEMP_DIR}/bound-body" --dump-header "${TEMP_DIR}/bound-headers" --write-out '%{http_code}' \
+    --request POST "${GATEWAY_URL}/mcp/${BOUND_ROUTE}" --header 'Content-Type: application/json' \
+    --header 'Accept: application/json, text/event-stream' --header "Authorization: Bearer ${token}" \
+    "${session_header[@]}" --data "${body}"
+}
+BOUND_INIT='{"jsonrpc":"2.0","id":1,"method":"initialize","params":{"protocolVersion":"2025-06-18","capabilities":{},"clientInfo":{"name":"e2e","version":"1"}}}'
+BOUND_LIST='{"jsonrpc":"2.0","id":2,"method":"tools/list","params":{}}'
+STATUS="$(bound_call "${OWNER_TOKEN}" "" "${BOUND_INIT}")"
+[ "${STATUS}" = "200" ] || fail "initialize on the stateful route answered HTTP ${STATUS}: $(cat "${TEMP_DIR}/bound-body")"
+BOUND_SESSION="$(grep -i '^mcp-session-id:' "${TEMP_DIR}/bound-headers" | head -n 1 | cut -d: -f2- | tr -d ' \r\n')"
+[[ "${BOUND_SESSION}" == s1.* ]] || fail "the session ID the client got is not a bound one: ${BOUND_SESSION}"
+for _ in 1 2 3 4 5; do
+  STATUS="$(bound_call "${OWNER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
+  [ "${STATUS}" = "200" ] || fail "the caller's own session answered HTTP ${STATUS}: $(cat "${TEMP_DIR}/bound-body")"
+done
+STATUS="$(bound_call "${OTHER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
+[ "${STATUS}" = "404" ] || fail "another caller's session answered HTTP ${STATUS}, want 404"
+curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
+  grep --quiet "outcome=\"session_not_found\",route=\"${BOUND_ROUTE}\"" ||
+  fail "the Gateway did not record another caller's session as session_not_found"
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout restart deployment/kavrynt-gateway >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status deployment/kavrynt-gateway --timeout=180s
+stop_gateway_port_forwards
+start_gateway_port_forward
+wait_for_url "${GATEWAY_URL}/readyz"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${BOUND_ROUTE}\") != null"
+sleep 5
+STATUS="$(bound_call "${OWNER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
+[ "${STATUS}" = "200" ] || fail "the session did not survive a Gateway rolling restart: HTTP ${STATUS}: $(cat "${TEMP_DIR}/bound-body")"
+STATUS="$(bound_call "${OTHER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
+[ "${STATUS}" = "404" ] || fail "another caller's session answered HTTP ${STATUS} after the restart, want 404"
+
 # Verifies SPEC-0006-R04, SPEC-0006-R06, and SPEC-0006-R09.
 log "verifying wrong audiences, missing scopes, and query tokens are refused"
 STATUS="$(mcp_status --header "Authorization: Bearer $(mint "${RESOURCE_URL}/mcp/${E2E_NAMESPACE}.other" "mcp:tools")")"

@@ -245,3 +245,43 @@ func TestConsoleOIDCConfiguration(t *testing.T) {
 		t.Fatalf("off: %v", err)
 	}
 }
+
+// Verifies SPEC-0042-R06: with client authentication on, the Gateway does not
+// start without the session key, or with one under 32 bytes; with it off, it
+// needs none.
+func TestSessionKeyIsRequiredWithClientAuthentication(t *testing.T) {
+	dir := t.TempDir()
+	write := func(name, value string) string {
+		path := filepath.Join(dir, name)
+		if err := os.WriteFile(path, []byte(value), 0o600); err != nil {
+			t.Fatal(err)
+		}
+		return path
+	}
+	good := strings.Repeat("k", 64)
+
+	if key, err := loadSessionKey(false, ""); key != nil || err != nil {
+		t.Fatalf("client authentication off: %v, %v; want no key and no error", key, err)
+	}
+	for name, path := range map[string]string{
+		"no file configured": "",
+		"missing file":       filepath.Join(dir, "absent"),
+		"empty file":         write("empty", ""),
+		"31 bytes":           write("short", strings.Repeat("k", 31)),
+	} {
+		key, err := loadSessionKey(true, path)
+		if err == nil || key != nil {
+			t.Errorf("%s: loaded %d bytes, want a refusal to start", name, len(key))
+		}
+		if err != nil && strings.Contains(err.Error(), good) {
+			t.Errorf("%s: the error holds the key", name)
+		}
+	}
+	key, err := loadSessionKey(true, write("good", good))
+	if err != nil || string(key) != good {
+		t.Fatalf("a 64-byte key: %v, %v; want its bytes as they are", string(key), err)
+	}
+	if key, err := loadSessionKey(true, write("min", strings.Repeat("k", 32))); err != nil || len(key) != 32 {
+		t.Fatalf("a 32-byte key: %d bytes, %v", len(key), err)
+	}
+}

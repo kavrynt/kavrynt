@@ -1,0 +1,131 @@
+suite: MCP session key
+release:
+  name: kavrynt
+  namespace: kavrynt-system
+set:
+  gateway.auth.enabled: true
+  gateway.auth.resourceURL: https://mcp.example.com
+  gateway.auth.issuers:
+    - issuer: https://login.example.com/realms/agents
+tests:
+  # Verifies SPEC-0042-R06.
+  - it: generates a 64-byte key into a Secret that survives uninstall
+    template: charts/gateway/templates/session-key-secret.yaml
+    asserts:
+      - hasDocuments:
+          count: 1
+      - isKind:
+          of: Secret
+      - equal:
+          path: metadata.name
+          value: kavrynt-gateway-session-key
+      - equal:
+          path: metadata.annotations["helm.sh/resource-policy"]
+          value: keep
+      # base64 of 64 random alphanumeric characters: the Gateway uses the
+      # mounted bytes as the key, with no decoding.
+      - matchRegex:
+          path: data.sessionKey
+          pattern: ^[A-Za-z0-9+/]{86}==$
+
+  # Verifies SPEC-0042-R06.
+  - it: keeps the key across helm upgrade
+    template: charts/gateway/templates/session-key-secret.yaml
+    kubernetesProvider:
+      scheme:
+        "v1/Secret":
+          gvr:
+            version: v1
+            resource: secrets
+          namespaced: true
+      objects:
+        - kind: Secret
+          apiVersion: v1
+          metadata:
+            name: kavrynt-gateway-session-key
+            namespace: kavrynt-system
+          data:
+            sessionKey: ZXhpc3Rpbmcta2V5
+    asserts:
+      - equal:
+          path: data.sessionKey
+          value: ZXhpc3Rpbmcta2V5
+
+  # Verifies SPEC-0042-R06.
+  - it: makes no Secret when an existing one is named
+    template: charts/gateway/templates/session-key-secret.yaml
+    set:
+      gateway.auth.sessionKeySecret: my-session-key
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Verifies SPEC-0042-R06.
+  - it: makes no Secret with client authentication off
+    template: charts/gateway/templates/session-key-secret.yaml
+    set:
+      gateway.auth.enabled: false
+    asserts:
+      - hasDocuments:
+          count: 0
+
+  # Verifies SPEC-0042-R06.
+  - it: mounts the key read-only and tells the Gateway where it is
+    template: charts/gateway/templates/deployment.yaml
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --session-key-file=/etc/kavrynt/session-key/sessionKey
+      - contains:
+          path: spec.template.spec.containers[0].volumeMounts
+          content:
+            name: session-key
+            mountPath: /etc/kavrynt/session-key
+            readOnly: true
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: session-key
+            secret:
+              secretName: kavrynt-gateway-session-key
+              defaultMode: 292
+
+  # Verifies SPEC-0042-R06.
+  - it: mounts an existing Secret by its name
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.sessionKeySecret: my-session-key
+    asserts:
+      - contains:
+          path: spec.template.spec.volumes
+          content:
+            name: session-key
+            secret:
+              secretName: my-session-key
+              defaultMode: 292
+
+  # Verifies SPEC-0042-R06: without client authentication there is nothing to
+  # bind and no key to mount.
+  - it: mounts no key with client authentication off
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.enabled: false
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --session-key-file=/etc/kavrynt/session-key/sessionKey
+      - notContains:
+          path: spec.template.spec.volumes
+          content:
+            name: session-key
+            secret:
+              secretName: kavrynt-gateway-session-key
+              defaultMode: 292
+
+  # Verifies SPEC-0042-R06.
+  - it: rejects an invalid Secret name
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      gateway.auth.sessionKeySecret: Not_A_Name
+    asserts:
+      - failedTemplate: {}

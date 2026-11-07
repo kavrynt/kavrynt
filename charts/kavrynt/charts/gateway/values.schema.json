@@ -302,6 +302,11 @@
           "maxLength": 253,
           "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
         },
+        "sessionKeySecret": {
+          "type": "string",
+          "maxLength": 253,
+          "pattern": "^([a-z0-9]([-a-z0-9.]*[a-z0-9])?)?$"
+        },
         "gatewayAudience": {
           "type": "object",
           "additionalProperties": false,

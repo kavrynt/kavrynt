@@ -115,6 +115,14 @@ true
 {{- default (printf "%s-console-admin" (include "gateway.fullname" .)) $auth.existingSecret -}}
 {{- end -}}
 
+{{/*
+The Secret holding the key that binds MCP session IDs to their caller
+(SPEC-0042-R06): the chart's own, or gateway.auth.sessionKeySecret.
+*/}}
+{{- define "gateway.sessionKeySecret" -}}
+{{- default (printf "%s-session-key" (include "gateway.fullname" .)) .Values.auth.sessionKeySecret -}}
+{{- end -}}
+
 {{/* Pod selector labels. */}}
 {{- define "gateway.selectorLabels" -}}
 app.kubernetes.io/name: {{ include "gateway.name" . }}

@@ -164,4 +164,4 @@ against the assistant's summary of them.
 | [0037](0037-kavryctl-list-hint/spec.md) | kavryctl list points to other namespaces | Implemented |
 | [0038](0038-gateway-request-size-limit/spec.md) | Request size limit for MCP routes | Implemented |
 | [0039](0039-endpoint-scope-through-services/spec.md) | Endpoint scope through Services in the server's namespace | Draft |
-| [0042](0042-caller-bound-sessions/spec.md) | MCP sessions and streams bound to their caller | Accepted |
+| [0042](0042-caller-bound-sessions/spec.md) | MCP sessions and streams bound to their caller | Implemented |

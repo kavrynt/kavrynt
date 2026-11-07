@@ -595,6 +595,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.auth.resourceURL` | string | `""` | The Gateway's external https origin; required when enabled |
 | `gateway.auth.issuers` | list | `[]` | Trusted authorization servers: `issuer` (equals the tokens' `iss`), optional `jwksURI`, `allowHTTP`; at least one when enabled |
 | `gateway.auth.requiredScopes` | list | `[]` | Scopes every token must carry |
+| `gateway.auth.sessionKeySecret` | string | `""` | Secret with the key (key `sessionKey`, at least 32 bytes) that binds MCP session IDs to their caller (SPEC-0042); empty: the chart generates `<release>-gateway-session-key` once and keeps it. Set it for renders without cluster access (`helm template`, GitOps), which would make a new key each time and end every session |
 | `gateway.auth.gatewayAudience.enabled` | bool | `false` | Let the listed routes also accept a token whose audience is `resourceURL` (SPEC-0031); needs `gateway.auth.enabled` |
 | `gateway.auth.gatewayAudience.routes` | list | `[]` | Routes one such token reaches: `<namespace>.<name>` or `<namespace>.*`; required when enabled, `*` refused |
 | `gateway.audit.enabled` | bool | `false` | Write one audit event per MCP request to the Gateway's standard output |

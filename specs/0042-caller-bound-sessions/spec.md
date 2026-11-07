@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-11-02 |
 | Issue | none: tracked privately, see [SECURITY.md](../../SECURITY.md) |
