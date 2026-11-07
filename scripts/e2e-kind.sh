@@ -1337,6 +1337,9 @@ kubectl --context "${KUBE_CONTEXT}" -n "${CONTROL_NAMESPACE}" rollout status dep
 stop_gateway_port_forwards
 start_gateway_port_forward
 wait_for_url "${GATEWAY_URL}/readyz"
+# Stopping the Gateway's port-forwards also stopped the issuer's.
+start_port_forward "${E2E_NAMESPACE}" e2e-issuer 8080 ISSUER_LOCAL
+wait_for_url "${ISSUER_LOCAL}/healthz"
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${BOUND_ROUTE}\") != null"
 sleep 5
 STATUS="$(bound_call "${OWNER_TOKEN}" "${BOUND_SESSION}" "${BOUND_LIST}")"
