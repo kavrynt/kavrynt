@@ -102,6 +102,20 @@ tests:
         alertname: KavryntMCPUpstreamErrorsHigh
         exp_alerts: []
 
+  # Verifies SPEC-0042-R09: event streams the Gateway ends at their token's
+  # expiry are the expected end of a stream, not an upstream failure.
+  - name: token_expired streams raise no upstream error alert
+    interval: 1m
+    input_series:
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-a.search", method="http_get", tool="none", outcome="ok"}'
+        values: '0+10x30'
+      - series: 'kavrynt_gateway_mcp_requests_total{job="kavrynt-gateway", route="team-a.search", method="http_get", tool="none", outcome="token_expired"}'
+        values: '0+90x30'
+    alert_rule_test:
+      - eval_time: 20m
+        alertname: KavryntMCPUpstreamErrorsHigh
+        exp_alerts: []
+
   - name: KavryntMCPLatencyHigh fires when p95 exceeds 5 seconds
     interval: 1m
     input_series:

@@ -41,6 +41,10 @@ const (
 // clockSkew is the leeway for exp, nbf, and iat (SPEC-0006-R08).
 const clockSkew = 60 * time.Second
 
+// ClockSkew is clockSkew for callers that end what a token granted: access
+// lasts no longer than the token's expiry plus this leeway (SPEC-0042-R01).
+const ClockSkew = clockSkew
+
 // allowedAlgorithms are the asymmetric JWS algorithms accepted. HMAC and
 // "none" are absent, so a public key can never be used as a shared secret.
 var allowedAlgorithms = []jose.SignatureAlgorithm{
@@ -215,6 +219,9 @@ type Identity struct {
 	Scopes   []string
 	// Audience is AudienceRoute or AudienceGateway (SPEC-0031-R04).
 	Audience string
+	// Expiry is when the token expires, before the clock skew; a stream it
+	// opened ends no later than Expiry plus ClockSkew (SPEC-0042-R01).
+	Expiry time.Time
 }
 
 // Refusal is the answer to a request that is not authenticated.
@@ -408,7 +415,7 @@ func (a *Authenticator) Authenticate(r *http.Request, route string) (Identity, *
 	if clientID == "" {
 		clientID = verified.AZP
 	}
-	return Identity{Subject: verified.Subject, ClientID: clientID, Issuer: verified.Issuer, Scopes: scopes, Audience: audience}, nil
+	return Identity{Subject: verified.Subject, ClientID: clientID, Issuer: verified.Issuer, Scopes: scopes, Audience: audience, Expiry: verified.Expiry.Time()}, nil
 }
 
 func (c claims) scopes() []string {

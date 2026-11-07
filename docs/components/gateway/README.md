@@ -872,7 +872,10 @@ tool arguments, and results are never recorded.
   token could not be exchanged for the server; and `session_not_found`
   (`404`) when a request with `Mcp-Session-Id` names a session the server
   does not know or, with session affinity, a pod that is no longer ready
-  (it was `client_error` before `session_not_found` existed). JSON responses up
+  (it was `client_error` before `session_not_found` existed); and
+  `token_expired` when the Gateway ends a `GET` event stream because the
+  token that opened it expired (the expected end of a stream, not a failure,
+  and not counted by the alerts). JSON responses up
   to 1 MiB are inspected, and so are event-stream answers to a `POST`, event
   by event (events up to 1 MiB), until the one that answers the request.
   The answers the MCP specification gives for a feature a server does not

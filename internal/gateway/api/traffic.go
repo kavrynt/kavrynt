@@ -74,6 +74,11 @@ const (
 	// An MCP session the server, or with session affinity the Gateway, does
 	// not know (SPEC-0026-R10).
 	outcomeSessionNotFound = "session_not_found"
+
+	// A GET event stream the Gateway ended because the token that opened it
+	// expired (SPEC-0042-R02). It is the expected end of a stream, not a
+	// failure (SPEC-0042-R09).
+	outcomeTokenExpired = "token_expired"
 )
 
 // mcpCall identifies what a client asked an MCP server to do.

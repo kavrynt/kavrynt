@@ -74,7 +74,9 @@ once on the top of a stack of branches rather than on each one.
     MCP client authentication: deploys the e2e image's test authorization
     server, turns `gateway.auth` on, and checks the `401` challenge and the
     route's Protected Resource Metadata, that a valid token is accepted and
-    not forwarded, that tokens for another route, without the required scope,
+    not forwarded, that a `GET` event stream ends cleanly by its token's
+    expiry plus the clock skew and is recorded as `token_expired`, that
+    tokens for another route, without the required scope,
     or in the query string are refused, that refusals are recorded, and that
     no token appears in metrics or logs. Token exchange: a server with its
     own audience is `Ready` with `CallerTokenRequired` discovery, answers

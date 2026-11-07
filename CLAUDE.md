@@ -391,7 +391,8 @@ Versions look like `0.0.2-beta.1`. No mutable tags such as `latest`.
     appears in no response, status, metric, or log.
     With MCP client authentication on (test authorization server in the e2e
     image), calls without a token get `401` pointing at the route's metadata,
-    a valid token works and never reaches the MCP server, and wrong
+    a valid token works and never reaches the MCP server, a `GET` event
+    stream ends at its token's expiry plus the clock skew, and wrong
     audiences, missing scopes, and query tokens are refused. A server that
     declares token exchange receives the caller's exchanged token for its
     own audience, never the caller's. A policy from a

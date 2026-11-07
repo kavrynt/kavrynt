@@ -380,3 +380,15 @@ func TestWithinKeepsResolvedAlertsForADay(t *testing.T) {
 		t.Fatal("a resolved alert is kept longer than 24 hours")
 	}
 }
+
+// Verifies SPEC-0042-R09: streams ended at their token's expiry are the
+// expected end of a stream, so a route whose calls all end that way raises no
+// UpstreamErrors or ToolErrors.
+func TestTokenExpiredIsNotAFailure(t *testing.T) {
+	e, w := newTestEvaluator()
+	minutes(e, w, 0, 30,
+		calls{"GET", "none", "token_expired", 40, 40, time.Millisecond},
+		calls{"tools/call", "lookup", "token_expired", 40, 40, time.Millisecond},
+	)
+	assertAlerts(t, e)
+}

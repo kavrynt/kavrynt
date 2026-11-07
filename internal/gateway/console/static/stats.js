@@ -90,6 +90,10 @@
       cls: "warn",
       definition: "The request named an MCP session the server does not know (404), or, with session affinity, a pod that is no longer ready. The client starts a new session. Often a server with session state and more than one replica: set spec.sessionAffinity: MCPSession or run one replica.",
     },
+    token_expired: {
+      cls: "ok",
+      definition: "A GET event stream the Gateway ended because the access token that opened it expired. This is the expected end of a stream, not a failure: the client reconnects with a new token, and Last-Event-ID when the server supports resuming.",
+    },
     auth_unavailable: {
       cls: "bad",
       definition: "The Gateway could not load the signing keys of the token's authorization server and refused the call (503). Check the issuer's metadata and key URLs.",
@@ -100,8 +104,9 @@
   const FAILING_MIN_REQUESTS = 5;
   const FAILING_MIN_RATE = 0.5;
 
+  // token_expired is the expected end of an event stream (SPEC-0042-R09).
   function isFailure(record) {
-    return record.outcome !== "ok";
+    return record.outcome !== "ok" && record.outcome !== "token_expired";
   }
 
   function outcomeClass(outcome) {

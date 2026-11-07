@@ -1248,7 +1248,8 @@ wait_for_url "${ISSUER_LOCAL}/healthz"
 mint() {
   curl --fail --silent --show-error --get "${ISSUER_LOCAL}/mint" \
     --data-urlencode "aud=$1" --data-urlencode "scope=$2" \
-    --data-urlencode "sub=e2e-user" --data-urlencode "client_id=${3:-e2e-agent}"
+    --data-urlencode "sub=e2e-user" --data-urlencode "client_id=${3:-e2e-agent}" \
+    --data-urlencode "ttl=${4:-1m}"
 }
 mcp_status() {
   curl --silent --output "${TEMP_DIR}/mcp-body" --dump-header "${TEMP_DIR}/mcp-headers" --write-out '%{http_code}' \
@@ -1278,6 +1279,25 @@ STATUS="$(mcp_status --header "Authorization: Bearer ${TOKEN}")"
 jq --exit-status '.result.tools[0].name == "echo"' "${TEMP_DIR}/mcp-body" >/dev/null || fail "tools/list with a valid token returned no tools"
 curl --fail --silent --show-error --header "Authorization: Bearer ${TOKEN}" "${GATEWAY_URL}/mcp/${SERVER_ID}/debug/headers" |
   jq --exit-status 'has("Authorization") | not' >/dev/null || fail "the Gateway forwarded the access token to the MCP server"
+
+# Verifies SPEC-0042-R01 and SPEC-0042-R02. The test MCP server keeps a GET
+# event stream open until the client leaves; the Gateway ends it by the token's
+# expiry plus the clock skew (60 s), with a clean end of the response.
+log "verifying an event stream ends when the token that opened it expires"
+STREAM_TOKEN="$(mint "${ROUTE_RESOURCE}" "mcp:tools" e2e-agent 5s)"
+STREAM_START="$(date +%s)"
+STREAM_EXIT=0
+curl --silent --no-buffer --max-time 150 --output "${TEMP_DIR}/stream-body" \
+  --header "Authorization: Bearer ${STREAM_TOKEN}" --header 'Accept: text/event-stream' \
+  "${GATEWAY_URL}/mcp/${SERVER_ID}" || STREAM_EXIT=$?
+STREAM_SECONDS=$(($(date +%s) - STREAM_START))
+[ "${STREAM_EXIT}" = "0" ] || fail "the event stream did not end cleanly within 150 s (curl exit ${STREAM_EXIT}, ${STREAM_SECONDS} s)"
+grep --fixed-strings --quiet ': open' "${TEMP_DIR}/stream-body" || fail "the event stream never opened: $(cat "${TEMP_DIR}/stream-body")"
+[ "${STREAM_SECONDS}" -ge 5 ] && [ "${STREAM_SECONDS}" -le 120 ] ||
+  fail "the event stream ended after ${STREAM_SECONDS} s, want between its token's expiry (5 s) and 120 s"
+curl --fail --silent --show-error "${GATEWAY_URL}/metrics" |
+  grep --quiet "outcome=\"token_expired\",route=\"${SERVER_ID}\"" ||
+  fail "the Gateway did not record the ended stream as token_expired"
 
 # Verifies SPEC-0006-R04, SPEC-0006-R06, and SPEC-0006-R09.
 log "verifying wrong audiences, missing scopes, and query tokens are refused"

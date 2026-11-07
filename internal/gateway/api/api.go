@@ -61,6 +61,10 @@ const DefaultMaxRequestBytes = 4 << 20
 
 var errRequestTimeout = errors.New("upstream request timed out")
 
+// errTokenExpired is the cause of ending an event stream whose token expired
+// (SPEC-0042-R01).
+var errTokenExpired = errors.New("the token that opened the stream expired")
+
 type Handler struct {
 	table    *routing.Table
 	client   *http.Client
@@ -80,6 +84,9 @@ type Handler struct {
 	// allowedOrigins holds browser origins accepted besides loopback ones.
 	allowedOrigins map[string]struct{}
 	requestTimeout time.Duration
+	// tokenSkew is how long past its token's expiry an event stream may stay
+	// open (SPEC-0042-R01): the clock skew the token was accepted with.
+	tokenSkew time.Duration
 	// maxRequestBytes is the largest request body an MCP route accepts
 	// (SPEC-0038).
 	maxRequestBytes int64
@@ -153,6 +160,7 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		stripRequest:    map[string]struct{}{},
 		allowedOrigins:  map[string]struct{}{},
 		requestTimeout:  DefaultRequestTimeout,
+		tokenSkew:       clientauth.ClockSkew,
 		maxRequestBytes: DefaultMaxRequestBytes,
 		strictProtocol:  true,
 		recent:          newRecentTraffic(recentTrafficSize),
@@ -829,6 +837,20 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			dst = io.MultiWriter(dst, observer)
 		}
 	}
+	// A GET event stream stays open for as long as the client does, so it
+	// ends when the token that opened it expires (SPEC-0042-R01).
+	var tokenExpired atomic.Bool
+	if stream && r.Method == http.MethodGet {
+		if identity, ok := clientauth.IdentityFrom(r.Context()); ok && !identity.Expiry.IsZero() {
+			expiry := time.AfterFunc(time.Until(identity.Expiry.Add(h.tokenSkew)), func() {
+				tokenExpired.Store(true)
+				cancel(errTokenExpired)
+				// Closing the body unblocks the copy below.
+				_ = resp.Body.Close()
+			})
+			defer expiry.Stop()
+		}
+	}
 	written, copyErr := io.Copy(dst, resp.Body)
 	var message []byte
 	switch {
@@ -841,7 +863,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	outcome := classifyResponse(r, call, resp.StatusCode, message)
 	if copyErr != nil {
 		outcome = outcomeIncomplete
-		if errors.Is(context.Cause(ctx), errRequestTimeout) {
+		switch {
+		case tokenExpired.Load():
+			// The client sees the stream end, not a broken connection.
+			outcome, copyErr = outcomeTokenExpired, nil
+		case errors.Is(context.Cause(ctx), errRequestTimeout):
 			outcome = outcomeTimeout
 		}
 	}

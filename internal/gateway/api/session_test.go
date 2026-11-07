@@ -1,6 +1,7 @@
 package api
 
 import (
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -111,5 +112,122 @@ func TestLoginKeepsTheOriginCheck(t *testing.T) {
 	h.ServeHTTP(rr, r)
 	if rr.Code != http.StatusForbidden || len(rr.Result().Cookies()) != 0 {
 		t.Fatalf("cross-origin login = %d, want 403 without a session", rr.Code)
+	}
+}
+
+// expiringStream returns a Gateway with client authentication on whose
+// upstream answers a GET with an event stream that stays open until the test
+// closes writer. The token it returns expires in one to two seconds, and the
+// Gateway gives no skew past that.
+func expiringStream(t *testing.T) (h *Handler, token string, writer *io.PipeWriter) {
+	t.Helper()
+	h, _, mint := authHandler(t, true)
+	reader, writer := io.Pipe()
+	h.client = &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"text/event-stream"}},
+			Body:       reader,
+		}, nil
+	})}
+	h.tokenSkew = 0
+	t.Cleanup(func() { _ = writer.Close() })
+	return h, mint(map[string]any{"exp": time.Now().Add(2 * time.Second).Unix()}), writer
+}
+
+// openStream sends a GET for the route's event stream and reports when the
+// Gateway ends it.
+func openStream(h *Handler, token string) (*flushRecorder, <-chan struct{}) {
+	req := httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil)
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "text/event-stream")
+	rr := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
+	ended := make(chan struct{})
+	go func() {
+		defer close(ended)
+		h.ServeHTTP(rr, req)
+	}()
+	return rr, ended
+}
+
+// Verifies SPEC-0042-R01: a GET event stream ends, by the Gateway closing the
+// response, when the token that opened it expires, though the server and the
+// client keep it open. The client sees a clean end, not a broken connection.
+func TestStreamEndsWhenItsTokenExpires(t *testing.T) {
+	t.Parallel()
+	h, token, writer := expiringStream(t)
+	server := httptest.NewServer(h)
+	defer server.Close()
+	req, err := http.NewRequest(http.MethodGet, server.URL+"/mcp/team-a.demo", nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	req.Header.Set("Authorization", "Bearer "+token)
+	req.Header.Set("Accept", "text/event-stream")
+	// The Gateway sends the headers with the first event.
+	go func() { _, _ = io.WriteString(writer, "data: one\n\n") }()
+	resp, err := server.Client().Do(req)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		t.Fatalf("status = %d, want 200", resp.StatusCode)
+	}
+	first := make([]byte, len("data: one\n\n"))
+	if _, err := io.ReadFull(resp.Body, first); err != nil || string(first) != "data: one\n\n" {
+		t.Fatalf("an event sent before expiry did not arrive: %q, %v", first, err)
+	}
+
+	done := make(chan error, 1)
+	go func() {
+		_, err := io.Copy(io.Discard, resp.Body)
+		done <- err
+	}()
+	select {
+	case err := <-done:
+		if err != nil {
+			t.Fatalf("the stream ended with %v, want a clean end", err)
+		}
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream outlived its token")
+	}
+}
+
+// Verifies SPEC-0042-R02: a stream ended at expiry is counted and audited as
+// token_expired.
+func TestExpiredStreamOutcome(t *testing.T) {
+	t.Parallel()
+	h, token, _ := expiringStream(t)
+	log, out := enableAudit(t, h)
+	_, ended := openStream(h, token)
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream outlived its token")
+	}
+	requireSeries(t, scrape(t, h), `kavrynt_gateway_mcp_requests_total{method="http_get",outcome="token_expired",route="team-a.demo",tool="none"} 1`)
+	list := events(t, log, out)
+	if len(list) != 1 || list[0].Outcome != "token_expired" {
+		t.Fatalf("audit events = %+v, want one with outcome token_expired", list)
+	}
+}
+
+// Verifies SPEC-0042-R02: a server that drops the stream before the token
+// expires is still incomplete, not token_expired.
+func TestUpstreamDisconnectStaysIncomplete(t *testing.T) {
+	t.Parallel()
+	h, token, writer := expiringStream(t)
+	_, ended := openStream(h, token)
+	_ = writer.CloseWithError(io.ErrUnexpectedEOF)
+	select {
+	case <-ended:
+	case <-time.After(5 * time.Second):
+		t.Fatal("the stream did not end with its server")
+	}
+	metrics := scrape(t, h)
+	requireSeries(t, metrics, `outcome="incomplete"`)
+	if strings.Contains(metrics, "token_expired") {
+		t.Fatalf("a dropped stream was counted as token_expired:\n%s", metrics)
 	}
 }

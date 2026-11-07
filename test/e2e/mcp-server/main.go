@@ -3,6 +3,7 @@ package main
 import (
 	"encoding/json"
 	"errors"
+	"io"
 	"log/slog"
 	"net/http"
 	"os"
@@ -53,6 +54,11 @@ func main() {
 		w.Header().Set("Content-Type", "application/json")
 		_ = json.NewEncoder(w).Encode(r.Header)
 	})
+	// Test-only: an event stream that stays open until the client leaves, as
+	// the optional GET stream of MCP Streamable HTTP does, so end-to-end tests
+	// can show the Gateway ending it when the caller's token expires
+	// (SPEC-0042).
+	mux.HandleFunc("GET /{$}", handleStream)
 	// REQUIRE_BEARER makes the server demand "Authorization: Bearer <value>",
 	// like an MCP server with its own API key (SPEC-0011 end-to-end test).
 	if token := os.Getenv("REQUIRE_BEARER"); token != "" {
@@ -80,6 +86,30 @@ func main() {
 	if err := server.ListenAndServe(); !errors.Is(err, http.ErrServerClosed) {
 		logger.Error("server stopped", "error", err)
 		os.Exit(1)
+	}
+}
+
+// handleStream sends a comment every second until the client disconnects. It
+// clears the server's write deadline, which would end the stream.
+func handleStream(w http.ResponseWriter, r *http.Request) {
+	controller := http.NewResponseController(w)
+	_ = controller.SetWriteDeadline(time.Time{})
+	w.Header().Set("Content-Type", "text/event-stream")
+	w.Header().Set("Cache-Control", "no-cache")
+	ticker := time.NewTicker(time.Second)
+	defer ticker.Stop()
+	for {
+		if _, err := io.WriteString(w, ": open\n\n"); err != nil {
+			return
+		}
+		if err := controller.Flush(); err != nil {
+			return
+		}
+		select {
+		case <-r.Context().Done():
+			return
+		case <-ticker.C:
+		}
 	}
 }
 
