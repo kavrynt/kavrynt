@@ -136,5 +136,9 @@ Decided by the owner on 2026-11-04:
   different levels of trust, and a client whose ID changes only starts a new session.
 - R03: the tag includes the route.
 - R01: a stream ends at expiry plus the existing clock skew, with no grace period.
-- This spec ships after `1.0.0-beta.6`, and R01, R02, and R09 are built first because
-  they need no Secret.
+- R01, R02, and R09 are built first because they need no Secret.
+
+Decided by the owner on 2026-11-07:
+
+- This spec ships before the next release, which waits for it (it replaces the
+  earlier decision to ship it after `1.0.0-beta.6`).

@@ -8,7 +8,7 @@ import stats from "../../internal/gateway/console/static/stats.js";
 // The console scripts are classic scripts; under Node they export through
 // module.exports.
 const {
-  SCOPE_NOTE, scopeNote, OUTCOMES, overview, attention, failingTools, toolSummary, filterTraffic, serverHealth,
+  SCOPE_NOTE, scopeNote, OUTCOMES, overview, attention, failingTools, toolSummary, filterTraffic, serverHealth, isFailure,
   filterServers, catalog, searchCatalog, diagnostics, stripQuery,
 } = stats;
 
@@ -152,6 +152,14 @@ test("every outcome has a plain-language definition", () => {
     assert.ok(outcome.definition.length > 20, name + " has no definition");
     assert.ok(["ok", "warn", "bad"].includes(outcome.cls), name);
   }
+});
+
+// Verifies SPEC-0042-R09: the end of a stream at its token's expiry is not
+// a failure, so it does not mark a server failing.
+test("an event stream ended at token expiry is not a failure", () => {
+  assert.equal(isFailure({ outcome: "token_expired" }), false);
+  assert.equal(isFailure({ outcome: "ok" }), false);
+  assert.equal(isFailure({ outcome: "incomplete" }), true);
 });
 
 // The wording of the replica scope note. That every traffic view shows it
