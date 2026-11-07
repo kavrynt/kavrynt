@@ -75,7 +75,9 @@ once on the top of a stack of branches rather than on each one.
     server, turns `gateway.auth` on, and checks the `401` challenge and the
     route's Protected Resource Metadata, that a valid token is accepted and
     not forwarded, that a `GET` event stream ends cleanly by its token's
-    expiry plus the clock skew and is recorded as `token_expired`, that
+    expiry plus the clock skew and is recorded as `token_expired`, that a
+    session ID is bound to its caller (another caller's token gets `404`) and
+    the session keeps working through a Gateway rolling restart, that
     tokens for another route, without the required scope,
     or in the query string are refused, that refusals are recorded, and that
     no token appears in metrics or logs. Token exchange: a server with its

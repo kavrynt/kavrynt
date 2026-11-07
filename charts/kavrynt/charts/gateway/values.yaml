@@ -92,6 +92,14 @@ auth:
   # token exchange (SPEC-0015), one key per issuer's clientSecretKey. The
   # kubelet mounts it; the Gateway gets no RBAC on Secrets.
   tokenExchangeSecret: ""
+  # Secret in the release namespace with the key that binds each MCP session
+  # to the caller that started it (SPEC-0042), key sessionKey, at least 32
+  # bytes, the same for every replica. Empty: the chart generates one on
+  # install, keeps it across upgrades, and leaves it on uninstall. A render
+  # without cluster access (helm template, GitOps) cannot find it and would
+  # make a new key each time, ending every session: set this there. Changing
+  # the key ends every session.
+  sessionKeySecret: ""
   # Gateway audience (SPEC-0031): the listed routes also accept a token
   # whose audience is resourceURL, so an agent that calls many servers needs
   # one audience instead of one per route. A leaked token then reaches every

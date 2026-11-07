@@ -43,7 +43,9 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   body has a `method` but no `Mcp-Method` header. Requests without
   `MCP-Protocol-Version` are treated as `2025-03-26`. `GET` event streams
   and `DELETE` session requests are not checked, and `Last-Event-ID` and
-  `Mcp-Session-Id` are forwarded unchanged. Bodies over 1 MiB or not JSON
+  `Mcp-Session-Id` are forwarded (with client authentication on, the session
+  ID is bound to its caller first, see
+  [Streams and sessions](#streams-and-sessions)). Bodies over 1 MiB or not JSON
   are forwarded unchecked (unless a policy is on). `--strict-protocol=false`
   (chart: `config.strictProtocol`) forwards such requests while clients are
   migrated.
@@ -422,6 +424,47 @@ Playground offers a field for an access token, kept in page memory only and
 sent only in the `Authorization` header of its own calls, and explains `401`,
 `403`, and `503` answers. The console login never authorizes `/mcp/` calls.
 
+### Streams and sessions
+
+With client authentication on, the Gateway ties what a token opens to that
+token's caller (SPEC-0042).
+
+**Streams.** A `GET` event stream ends, with a clean end of the response, no
+later than the token that opened it expires plus the 60 s clock skew the
+token was accepted with, and no further grace period. The client reconnects
+with a new token and `Last-Event-ID`; messages sent before it does are lost
+unless the server supports resuming. The ended stream is counted and audited
+as `token_expired`, which is the expected end of a stream: it is no failure in
+the alerts or the console. A `POST` response stream answers one call the token
+allowed and is not cut. The Gateway does not revoke a token before its `exp`;
+that takes introspection or a revocation feed.
+
+**Sessions.** The `Mcp-Session-Id` a client gets is
+`s1.<32 hex>.<the server's ID>`. The tag is an HMAC-SHA-256 under a key only
+the Gateway has, over the caller's issuer, subject, and client ID, the route,
+and the ID that follows (which, with session affinity, includes the pod tag).
+A request whose session ID has no tag, a tag for another caller or route, an
+altered pod tag, or a version the Gateway does not know gets `404` and
+`session_not_found` without reaching the server, so a caller cannot tell
+another's session from one that does not exist. The server gets its own ID,
+without the tag. One user's agents with different client IDs cannot use each
+other's sessions, and a client that gets a new client ID starts new sessions.
+A token with neither a subject nor a client ID is refused with `401`.
+
+**The key.** The chart generates a 64-character key into the Secret
+`<release>-gateway-session-key` on install, keeps it across `helm upgrade`,
+leaves it on uninstall, and mounts it read-only into every replica
+(`--session-key-file`); the Gateway has no RBAC on Secrets. It does not start
+with client authentication on and a key missing or under 32 bytes. Changing the
+key ends every session, which clients handle as `session_not_found`. The
+Gateway reads the key once at start, so after you change the Secret restart
+every Gateway replica at once (`kubectl rollout restart`); replicas that disagree
+on the key answer `404` to each other's sessions. A render
+without cluster access (`helm template`, GitOps) cannot look the Secret up and
+would make a new key each time: set `gateway.auth.sessionKeySecret` to a Secret
+with the key under `sessionKey` there. Upgrading to the first version with this
+makes each existing session get `404` once and start again.
+
 ### Gateway audience
 
 With `--auth-gateway-audience-routes` (chart:
@@ -582,7 +625,9 @@ spec:
 - A request without `Mcp-Session-Id` goes to the next ready pod of the
   Service, from its EndpointSlices in the namespaces the Gateway watches,
   with the Service host in `Host`. When the answer starts a session, the
-  client gets `<tag>.<session ID>`, where the tag is derived from the pod's
+  client gets `<tag>.<session ID>` (with client authentication on, wrapped in
+  the caller's session tag, see [Streams and sessions](#streams-and-sessions)),
+  where the tag is derived from the pod's
   UID and names neither its address nor its name. Every later request of
   the session (`POST`, the `GET` stream, `DELETE`) goes to that pod with
   the server's own session ID, from any Gateway replica: the replicas share
@@ -948,6 +993,7 @@ grouped by `client_id` or `subject`.
 | `--addr` | `:8080` | Listen address |
 | `--watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
 | `--strip-request-headers` | none | Extra headers never forwarded (`KAVRYNT_STRIP_REQUEST_HEADERS`) |
+| `--session-key-file` | none (chart: the generated or named Secret) | File with the key that binds session IDs to their caller, at least 32 bytes, the same on every replica; required with `--auth` (`KAVRYNT_SESSION_KEY_FILE`) |
 | `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers |
 | `--max-request-bytes` | `4194304` (chart: `config.maxRequestBytes`) | Largest request body an MCP route accepts; larger requests get `413` |
 | `--allowed-origins` | none (chart: `config.allowedOrigins`) | Comma-separated browser origins accepted besides loopback (`KAVRYNT_ALLOWED_ORIGINS`) |

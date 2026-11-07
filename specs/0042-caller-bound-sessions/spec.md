@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Accepted |
+| Status | Implemented |
 | Owners | @Ravi041 |
 | Created | 2026-11-02 |
 | Issue | none: tracked privately, see [SECURITY.md](../../SECURITY.md) |
@@ -76,8 +76,11 @@ Found by reading the code, not yet by a test against a running Gateway:
   mounts, keep it across `helm upgrade`, and accept an existing Secret. The Gateway
   gets no RBAC on Secrets, and MUST NOT start with client authentication on without
   the key.
-- **SPEC-0042-R07** The key and the tag's inputs MUST NOT appear in logs, metrics,
-  audit events, or responses, other than the tag itself.
+- **SPEC-0042-R07** The key MUST NOT appear in logs, metrics, audit events, or
+  responses, and no session ID, raw or bound, MUST appear in logs, metrics, or audit
+  events. A session ID appears in a response only as the bound `Mcp-Session-Id` header.
+  (The caller's issuer, subject, and client ID, which the tag covers, are recorded in
+  audit events by SPEC-0013 and are not secret.)
 
 ## Acceptance criteria
 
