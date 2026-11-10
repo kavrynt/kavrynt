@@ -121,10 +121,12 @@ Expected final line: `==> end-to-end workflow passed`.
 
 ## Cleanup
 
-What a run removes by itself, whether it passes or fails (after printing pods,
-events, and component logs on failure): the Kind cluster it created, with its
-kubeconfig context, the port-forwards, and its temporary directory. A cluster
-it did not create is never deleted.
+What a run removes when it exits, whether it passes or fails (after printing
+pods, events, and component logs on failure): the Kind cluster it created,
+with its kubeconfig context, the port-forwards, and its temporary directory. A
+cluster it did not create is never deleted. The script ignores a failed
+`kind delete cluster`, for example when Docker has stopped, so after any
+failed run check `kind get clusters` and delete a cluster that is still there.
 
 What stays on your machine, and how to remove it:
 
@@ -144,6 +146,11 @@ After testing, remove everything the tests created:
 #    Delete only clusters you created for testing.
 kind get clusters
 kind delete cluster --name <cluster>     # also removes its kubeconfig context
+# If you ran the e2e with a throwaway KUBECONFIG, delete with the same one, or
+# Kind also removes a same-named context from your own kubeconfig:
+KUBECONFIG="$HOME/.kube/kavrynt-e2e.config" kind delete cluster --name <cluster>
+rm -f "$HOME/.kube/kavrynt-e2e.config"
+# The demo cluster has its own kubeconfig: use make, not kind.
 make demo-down                           # if you ran make demo-up
 
 # 2. Local test images (only tags ending in -local or -verification)

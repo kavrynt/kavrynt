@@ -157,6 +157,7 @@ one and use it in the commands below.
 
 ```bash
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080 &
+PF_PIDS="$PF_PIDS $!"   # step 8 stops only these
 GW=http://127.0.0.1:18080/mcp/kavrynt-try.sample
 ```
 
@@ -353,33 +354,45 @@ Collect the diagnostics that [step 9](#9-tell-us-what-happened) asks for
 (`kavryctl doctor --anonymize`) before you clean up: it needs the install and
 `kavryctl` that this step removes.
 
-This step removes the Kavrynt install from step 2. Skip the block below if
-Kavrynt was already installed in this cluster before you started (step 2 then
-upgraded your existing release, and `kavrynt-system` holds more than this
-test).
+This step removes the Kavrynt install from step 2, so it is only safe on a
+cluster that had no Kavrynt and no `kavrynt-system` namespace before you
+started. If either existed, skip the block below: step 2 upgraded your
+existing release and **turned off MCP client authentication in it**
+(`gateway.auth.enabled=false`), so restore your original values with `helm
+upgrade` and your own values file instead.
 
 Remove what the steps above created, in this order:
 
 ```bash
-pkill -f 'port-forward service/kavrynt-gateway'   # every port-forward from step 4 and 6
+kill $PF_PIDS                                      # the port-forwards from steps 4 and 6
 kubectl delete namespace kavrynt-try               # step 3
 helm uninstall kavrynt -n kavrynt-system
-kubectl delete crd mcpservers.kavrynt.io           # Helm keeps it on purpose
 kubectl delete namespace kavrynt-system            # also removes the kavrynt-policy ConfigMap
 ```
 
-If you registered your own server in step 7, delete it before you run the
-block above (the CRD goes with it), by the name and namespace you used there.
-Check that it is yours before you delete it:
+If you registered your own server in step 7, delete it before the block above,
+by the name and namespace you used there. Check that it is yours first:
 
 ```bash
 kubectl get mcpservers -A
 kubectl delete mcpserver <name> -n <namespace>
 ```
 
+Helm keeps the `MCPServer` CRD on purpose. Deleting it deletes **every**
+`MCPServer` in **every** namespace, so keep it unless the list above shows
+only servers you are happy to lose:
+
+```bash
+kubectl get mcpservers -A        # all of these go with the CRD
+kubectl delete crd mcpservers.kavrynt.io
+```
+
 On your machine, also remove the policy file from step 6 (`authz.rego`, in the
 directory where you ran the command) and, if you installed it for the audit
-check, `kavryctl` (`rm -rf ~/.kavrynt/bin`, and the `PATH` line you added).
+check, the `kavryctl` binary at the path the installer printed
+(`Installed kavryctl to ...`; by default `~/.kavrynt/bin/kavryctl`, or
+`$INSTALL_DIR/kavryctl` if you set it), and the `PATH` line you added. Remove
+only that file, not the whole directory.
 
 If you created a local cluster only for this test, delete it instead of the
 steps above:
