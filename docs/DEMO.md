@@ -52,11 +52,13 @@ make demo-down          # delete the cluster
   session, because `make demo-walkthrough` and `make demo-down` check
   ownership under the same name: `export KIND_CLUSTER_NAME=kavrynt-demo2`,
   then run the `make demo-*` commands in that shell. If a demo is already
-  recorded in `.kavrynt/demo/cluster`, run `make demo-down` for it first:
-  creating a second one overwrites the marker, and `make demo-down` could then
-  no longer delete the first. Or, if you are sure the
-  existing cluster is disposable, delete it yourself with
-  `kind delete cluster --name kavrynt-demo`.
+  recorded in `.kavrynt/demo/cluster`, tear it down first, under the name
+  recorded there (`KIND_CLUSTER_NAME="$(cat .kavrynt/demo/cluster)" make
+  demo-down`), before you export the new name: creating a second one
+  overwrites the marker, and `make demo-down` could then no longer delete the
+  first. Whichever you choose below, tear down the recorded demo first.
+  Or, if you are sure the existing `kavrynt-demo` cluster is disposable,
+  delete it yourself with `kind delete cluster --name kavrynt-demo`.
 - `kubectl` shows no demo cluster, or `current-context is not set`, until you
   point it at the demo's kubeconfig (the `export KUBECONFIG=...` line above).
   That is by design: the demo never changes your current context.

@@ -5,7 +5,9 @@ All tests create a disposable Kind cluster, address it with an explicit
 (`KEEP_CLUSTER=1` keeps it for debugging; see [Cleanup](#cleanup)). Kind adds
 the cluster to your kubeconfig and selects it while the test runs, and
 removes it again at the end. If that cluster was your current context, kubectl
-is left with none: see [Cleanup](#cleanup). To keep your own kubeconfig out of
+is left with none: note yours first (`kubectl config current-context`) and
+restore it afterwards with `kubectl config use-context <name>`, see
+[Cleanup](#cleanup). To keep your own kubeconfig out of
 it entirely, point `KUBECONFIG` at a file that does not exist yet:
 `KUBECONFIG="$HOME/.kube/kavrynt-e2e.config" make e2e-kind`. Kind writes the
 test cluster only there, and a cluster kept with `KEEP_CLUSTER=1` is reached
@@ -148,18 +150,27 @@ After testing, remove everything the tests created:
 #    kavrynt-release-<version> (e2e-release), and kavrynt-demo (demo).
 #    Delete only clusters you created for testing.
 kind get clusters
+
+# 1a. Alternative A: you ran the e2e with your normal kubeconfig.
 kind delete cluster --name <cluster>     # also removes its kubeconfig context
-# If you ran the e2e with a throwaway KUBECONFIG, delete with the same one, or
-# Kind also removes a same-named context from your own kubeconfig:
+
+# 1b. Alternative B, instead of A: you ran it with a throwaway KUBECONFIG.
+#     Delete with that same file; plain `kind delete` would also remove a
+#     same-named context from your own kubeconfig.
 KUBECONFIG="$HOME/.kube/kavrynt-e2e.config" kind delete cluster --name <cluster> \
   && rm -f "$HOME/.kube/kavrynt-e2e.config"   # remove the file only if the delete worked
-# The demo cluster has its own kubeconfig: use make, not kind.
-make demo-down                           # if you ran make demo-up
 
-# 2. Local test images (only tags ending in -local or -verification)
-docker image ls --filter 'reference=kavrynt/*:*-local' \
-  --filter 'reference=kavrynt/*:*-verification' --format '{{.Repository}}:{{.Tag}}' \
-  | xargs docker rmi
+# 1c. The demo cluster has its own kubeconfig: use make, not kind. Use the name
+#     recorded when it was created, in case KIND_CLUSTER_NAME is no longer set.
+KIND_CLUSTER_NAME="$(cat .kavrynt/demo/cluster)" make demo-down   # if you ran make demo-up
+
+# 2. Local test images. First list the candidates: only the repositories the
+#    tests build. Check every tag in the output; a developer image of your own,
+#    for example kavrynt/gateway:dev-local, matches too and must not be removed.
+docker image ls --format '{{.Repository}}:{{.Tag}}' \
+  | grep -E '^kavrynt/(gateway|operator|e2e-mcp-server|demo-mcp-server):.*-local$|^kavrynt/e2e-mcp-server:.*-verification$'
+#    Then remove exactly the tags you confirmed:
+docker rmi <repository>:<tag> [<repository>:<tag> ...]
 
 # 3. Verify nothing is left
 kind get clusters
@@ -174,10 +185,16 @@ current-context` prints `error: current-context is not set`, and commands try
 and `kubectl config use-context <name>`.
 
 A Kind cluster that no longer exists can leave its context in your kubeconfig,
-for example after `docker rm` or a Docker reset. `kind delete cluster --name
-<cluster>` still removes those entries (context, cluster, and user), even when
-the cluster is already gone, so run it for each stale `kind-<cluster>` context
-in `kubectl config get-contexts`.
+for example after `docker rm` or a Docker reset. Remove such an entry with
+`kubectl config`, not with `kind delete cluster --name <cluster>`: that
+deletes a live local cluster that happens to have the same name. First confirm
+the cluster is gone (`kind get clusters` does not list it), then:
+
+```bash
+kubectl config delete-context kind-<cluster>
+kubectl config delete-cluster kind-<cluster>
+kubectl config delete-user kind-<cluster>
+```
 
 ## CI
 
