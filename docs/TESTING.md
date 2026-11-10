@@ -349,15 +349,32 @@ endpoints, and multi-port Services get `503`. See
 
 ## 8. Clean up
 
+Collect the diagnostics that [step 9](#9-tell-us-what-happened) asks for
+(`kavryctl doctor --anonymize`) before you clean up: it needs the install and
+`kavryctl` that this step removes.
+
+This step removes the Kavrynt install from step 2. Skip the block below if
+Kavrynt was already installed in this cluster before you started (step 2 then
+upgraded your existing release, and `kavrynt-system` holds more than this
+test).
+
 Remove what the steps above created, in this order:
 
 ```bash
 pkill -f 'port-forward service/kavrynt-gateway'   # every port-forward from step 4 and 6
-kubectl delete mcpserver my-server -n default      # step 7, if you registered your own server
 kubectl delete namespace kavrynt-try               # step 3
 helm uninstall kavrynt -n kavrynt-system
 kubectl delete crd mcpservers.kavrynt.io           # Helm keeps it on purpose
 kubectl delete namespace kavrynt-system            # also removes the kavrynt-policy ConfigMap
+```
+
+If you registered your own server in step 7, delete it before you run the
+block above (the CRD goes with it), by the name and namespace you used there.
+Check that it is yours before you delete it:
+
+```bash
+kubectl get mcpservers -A
+kubectl delete mcpserver <name> -n <namespace>
 ```
 
 On your machine, also remove the policy file from step 6 (`authz.rego`, in the

@@ -5,8 +5,12 @@ All tests create a disposable Kind cluster, address it with an explicit
 (`KEEP_CLUSTER=1` keeps it for debugging; see [Cleanup](#cleanup)). Kind adds
 the cluster to your kubeconfig and selects it while the test runs, and
 removes it again at the end. If that cluster was your current context, kubectl
-is left with none: see [Cleanup](#cleanup). Prerequisites: Docker, Kind,
-`kubectl`, Helm, `jq`, Go.
+is left with none: see [Cleanup](#cleanup). To keep your own kubeconfig out of
+it entirely, point `KUBECONFIG` at a file that does not exist yet:
+`KUBECONFIG="$HOME/.kube/kavrynt-e2e.config" make e2e-kind`. Kind writes the
+test cluster only there, and a cluster kept with `KEEP_CLUSTER=1` is reached
+by exporting the same variable. Delete that file when you are done.
+Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
 `make e2e-kind` creates its cluster from `test/e2e/kind-config.yaml`, whose
 kubelet syncs every 10 seconds, so updated ConfigMap and Secret mounts reach
 pods in seconds.
@@ -127,7 +131,8 @@ What stays on your machine, and how to remove it:
 | Left behind | When | Remove with |
 | --- | --- | --- |
 | The Kind cluster | `KEEP_CLUSTER=1`, or the run was killed (`kill -9`, power loss) before it could clean up | `kind delete cluster --name <cluster>` |
-| Local images `kavrynt/{gateway,operator,e2e-mcp-server,demo-mcp-server}:<version>-local` | Always; the build keeps them for the next run | the `docker rmi` command below |
+| Local images `kavrynt/{gateway,operator,e2e-mcp-server,demo-mcp-server}:<version>-local`, and `kavrynt/e2e-mcp-server:<version>-verification` from `e2e-release` | Always; the build keeps them for the next run | the `docker rmi` command below |
+| A throwaway kubeconfig | If you set `KUBECONFIG` as described above | `rm` the file |
 | Docker build cache | Always | `docker builder prune` (optional; the next build is slower) |
 | `.kavrynt/` in the checkout | After `make demo-up` | `make demo-down` |
 
@@ -141,8 +146,9 @@ kind get clusters
 kind delete cluster --name <cluster>     # also removes its kubeconfig context
 make demo-down                           # if you ran make demo-up
 
-# 2. Local test images (only tags ending in -local)
-docker image ls --filter 'reference=kavrynt/*:*-local' --format '{{.Repository}}:{{.Tag}}' \
+# 2. Local test images (only tags ending in -local or -verification)
+docker image ls --filter 'reference=kavrynt/*:*-local' \
+  --filter 'reference=kavrynt/*:*-verification' --format '{{.Repository}}:{{.Tag}}' \
   | xargs docker rmi
 
 # 3. Verify nothing is left

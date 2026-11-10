@@ -41,9 +41,12 @@ make demo-down          # delete the cluster
 - To rebuild from scratch, run `make demo-down` then `make demo-up`. If a Kind
   cluster named `kavrynt-demo` already exists that the script did not create
   (there is no `.kavrynt/demo/cluster` marker), `make demo-up` stops with
-  `exists but was not created by this script`. Use another name
-  (`KIND_CLUSTER_NAME=kavrynt-demo2 make demo-up`), or, if you are sure it is
-  disposable, delete it yourself with `kind delete cluster --name kavrynt-demo`.
+  `exists but was not created by this script`. Use another name for the whole
+  session, because `make demo-walkthrough` and `make demo-down` check
+  ownership under the same name: `export KIND_CLUSTER_NAME=kavrynt-demo2`,
+  then run the `make demo-*` commands in that shell. Or, if you are sure the
+  existing cluster is disposable, delete it yourself with
+  `kind delete cluster --name kavrynt-demo`.
 - `kubectl` shows no demo cluster, or `current-context is not set`, until you
   point it at the demo's kubeconfig (the `export KUBECONFIG=...` line above).
   That is by design: the demo never changes your current context.
