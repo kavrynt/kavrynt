@@ -38,6 +38,15 @@ make demo-down          # delete the cluster
   changed. To run your own commands against it:
   `export KUBECONFIG=$PWD/.kavrynt/demo/kubeconfig PATH=$PWD/.kavrynt/demo/bin:$PATH`.
 - `make demo-down` deletes only a cluster that `make demo-up` created.
+- To rebuild from scratch, run `make demo-down` then `make demo-up`. If a Kind
+  cluster named `kavrynt-demo` already exists that the script did not create
+  (there is no `.kavrynt/demo/cluster` marker), `make demo-up` stops with
+  `exists but was not created by this script`. Use another name
+  (`KIND_CLUSTER_NAME=kavrynt-demo2 make demo-up`), or, if you are sure it is
+  disposable, delete it yourself with `kind delete cluster --name kavrynt-demo`.
+- `kubectl` shows no demo cluster, or `current-context is not set`, until you
+  point it at the demo's kubeconfig (the `export KUBECONFIG=...` line above).
+  That is by design: the demo never changes your current context.
 - MCP client authentication is on by default, but the demo has no
   authorization server, so `make demo-up` installs with the explicit
   opt-out, `--set gateway.auth.enabled=false`, and the Gateway logs that MCP

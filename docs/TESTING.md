@@ -55,6 +55,14 @@ kubectl config current-context
 kubectl auth can-i create customresourcedefinitions   # expect: yes
 ```
 
+If `current-context` prints `error: current-context is not set`, or kubectl
+says `The connection to the server localhost:8080 was refused`, no cluster is
+selected. List your contexts with `kubectl config get-contexts` and select one
+with `kubectl config use-context <name>`. For a local Kind cluster that is
+running but missing from your kubeconfig, `kind export kubeconfig --name
+kavrynt-try` adds its context and selects it. If the context exists but the
+connection is still refused, the cluster is not running: check `docker ps`.
+
 ## 2. Install Kavrynt
 
 ```bash
@@ -341,16 +349,34 @@ endpoints, and multi-port Services get `503`. See
 
 ## 8. Clean up
 
+Remove what the steps above created, in this order:
+
 ```bash
-kill %1 2>/dev/null                    # the port-forward
-kubectl delete namespace kavrynt-try
+pkill -f 'port-forward service/kavrynt-gateway'   # every port-forward from step 4 and 6
+kubectl delete mcpserver my-server -n default      # step 7, if you registered your own server
+kubectl delete namespace kavrynt-try               # step 3
 helm uninstall kavrynt -n kavrynt-system
-kubectl delete crd mcpservers.kavrynt.io   # Helm keeps it on purpose
-kubectl delete namespace kavrynt-system
+kubectl delete crd mcpservers.kavrynt.io           # Helm keeps it on purpose
+kubectl delete namespace kavrynt-system            # also removes the kavrynt-policy ConfigMap
 ```
 
-Or delete the whole local cluster, for example
-`kind delete cluster --name kavrynt-try`.
+On your machine, also remove the policy file from step 6 (`authz.rego`, in the
+directory where you ran the command) and, if you installed it for the audit
+check, `kavryctl` (`rm -rf ~/.kavrynt/bin`, and the `PATH` line you added).
+
+If you created a local cluster only for this test, delete it instead of the
+steps above:
+
+```bash
+kind delete cluster --name kavrynt-try   # or: k3d cluster delete kavrynt-try
+                                         #     minikube delete -p kavrynt-try
+kubectl config get-contexts              # confirm it is gone
+```
+
+Deleting the cluster that `kubectl` had selected leaves kubectl with no current
+context (`error: current-context is not set`). Select another one with
+`kubectl config use-context <name>`. Only delete a cluster you created for
+this test.
 
 ## 9. Tell us what happened
 

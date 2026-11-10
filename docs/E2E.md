@@ -1,8 +1,12 @@
 # End-to-End Tests
 
-All tests create a disposable Kind cluster, never touch your current
-Kubernetes context, and delete the cluster afterwards (`KEEP_CLUSTER=1` keeps
-it for debugging). Prerequisites: Docker, Kind, `kubectl`, Helm, `jq`, Go.
+All tests create a disposable Kind cluster, address it with an explicit
+`--context kind-<cluster>` on every command, and delete the cluster afterwards
+(`KEEP_CLUSTER=1` keeps it for debugging; see [Cleanup](#cleanup)). Kind adds
+the cluster to your kubeconfig and selects it while the test runs, and
+removes it again at the end. If that cluster was your current context, kubectl
+is left with none: see [Cleanup](#cleanup). Prerequisites: Docker, Kind,
+`kubectl`, Helm, `jq`, Go.
 `make e2e-kind` creates its cluster from `test/e2e/kind-config.yaml`, whose
 kubelet syncs every 10 seconds, so updated ConfigMap and Secret mounts reach
 pods in seconds.
@@ -111,6 +115,54 @@ once on the top of a stack of branches rather than on each one.
 
 Expected final line: `==> end-to-end workflow passed`.
 
+## Cleanup
+
+What a run removes by itself, whether it passes or fails (after printing pods,
+events, and component logs on failure): the Kind cluster it created, with its
+kubeconfig context, the port-forwards, and its temporary directory. A cluster
+it did not create is never deleted.
+
+What stays on your machine, and how to remove it:
+
+| Left behind | When | Remove with |
+| --- | --- | --- |
+| The Kind cluster | `KEEP_CLUSTER=1`, or the run was killed (`kill -9`, power loss) before it could clean up | `kind delete cluster --name <cluster>` |
+| Local images `kavrynt/{gateway,operator,e2e-mcp-server,demo-mcp-server}:<version>-local` | Always; the build keeps them for the next run | the `docker rmi` command below |
+| Docker build cache | Always | `docker builder prune` (optional; the next build is slower) |
+| `.kavrynt/` in the checkout | After `make demo-up` | `make demo-down` |
+
+After testing, remove everything the tests created:
+
+```bash
+# 1. Clusters. The default names are kavrynt-alpha0 (e2e-kind),
+#    kavrynt-release-<version> (e2e-release), and kavrynt-demo (demo).
+#    Delete only clusters you created for testing.
+kind get clusters
+kind delete cluster --name <cluster>     # also removes its kubeconfig context
+make demo-down                           # if you ran make demo-up
+
+# 2. Local test images (only tags ending in -local)
+docker image ls --filter 'reference=kavrynt/*:*-local' --format '{{.Repository}}:{{.Tag}}' \
+  | xargs docker rmi
+
+# 3. Verify nothing is left
+kind get clusters
+docker ps -a --filter 'label=io.x-k8s.kind.cluster'
+docker image ls 'kavrynt/*'
+```
+
+If the cluster you delete is the one `kubectl` has selected, Kind removes its
+context and kubectl is left with no current context: `kubectl config
+current-context` prints `error: current-context is not set`, and commands try
+`localhost:8080`. Select another cluster with `kubectl config get-contexts`
+and `kubectl config use-context <name>`.
+
+A Kind cluster that no longer exists can leave its context in your kubeconfig,
+for example after `docker rm` or a Docker reset. `kind delete cluster --name
+<cluster>` still removes those entries (context, cluster, and user), even when
+the cluster is already gone, so run it for each stale `kind-<cluster>` context
+in `kubectl config get-contexts`.
+
 ## CI
 
 `.github/workflows/qa.yml` runs `e2e-kind` on pull requests
@@ -120,6 +172,14 @@ publishing.
 ## Troubleshooting
 
 - `Kind cluster ... already exists`: delete it or set `KIND_CLUSTER_NAME`.
+  The scripts never delete a cluster they did not create.
+- `kubectl` says `current-context is not set` or `localhost:8080 was refused`
+  when you debug a kept cluster (`KEEP_CLUSTER=1`): the e2e script passes
+  `--context kind-<cluster>` on every call, and a deleted cluster can leave
+  kubectl with no current context. Run `kubectl --context kind-<cluster> ...`,
+  or `kubectl config use-context <name>`; see [Cleanup](#cleanup). The demo
+  (`make demo-up`) is different: it uses its own kubeconfig, see
+  [DEMO.md](DEMO.md).
 - Image pulls time out (`TLS handshake timeout` from Docker Hub): retry; base
   images are pulled during the build.
 - On failure, the scripts print pods, events, and component logs before
