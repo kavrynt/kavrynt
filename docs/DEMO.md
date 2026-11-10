@@ -37,7 +37,29 @@ make demo-down          # delete the cluster
   `.kavrynt/demo/kubeconfig`. Your current Kubernetes context is not used or
   changed. To run your own commands against it:
   `export KUBECONFIG=$PWD/.kavrynt/demo/kubeconfig PATH=$PWD/.kavrynt/demo/bin:$PATH`.
-- `make demo-down` deletes only a cluster that `make demo-up` created.
+- `make demo-down` deletes only a cluster that `make demo-up` created. It
+  trusts the name recorded in `.kavrynt/demo/cluster`. If you delete the
+  cluster yourself and later create another with the same name, remove
+  `.kavrynt/demo` first, or `make demo-up` and `make demo-down` will treat the
+  new cluster as theirs.
+- After `make demo-down`, the `export KUBECONFIG=...` line above points at a
+  file that no longer exists. Restore the value you had before, or run
+  `unset KUBECONFIG` if it was unset.
+- To rebuild from scratch, run `make demo-down` then `make demo-up`. If a Kind
+  cluster named `kavrynt-demo` already exists that the script did not create
+  (there is no `.kavrynt/demo/cluster` marker), `make demo-up` stops with
+  `exists but was not created by this script`. Use another name for the whole
+  session, because `make demo-walkthrough` and `make demo-down` check
+  ownership under the same name: `export KIND_CLUSTER_NAME=kavrynt-demo2`,
+  then run the `make demo-*` commands in that shell. If a demo is already
+  recorded in `.kavrynt/demo/cluster`, run `make demo-down` for it first:
+  creating a second one overwrites the marker, and `make demo-down` could then
+  no longer delete the first. Or, if you are sure the
+  existing cluster is disposable, delete it yourself with
+  `kind delete cluster --name kavrynt-demo`.
+- `kubectl` shows no demo cluster, or `current-context is not set`, until you
+  point it at the demo's kubeconfig (the `export KUBECONFIG=...` line above).
+  That is by design: the demo never changes your current context.
 - MCP client authentication is on by default, but the demo has no
   authorization server, so `make demo-up` installs with the explicit
   opt-out, `--set gateway.auth.enabled=false`, and the Gateway logs that MCP

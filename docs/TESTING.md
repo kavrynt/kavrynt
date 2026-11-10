@@ -55,6 +55,14 @@ kubectl config current-context
 kubectl auth can-i create customresourcedefinitions   # expect: yes
 ```
 
+If `current-context` prints `error: current-context is not set`, or kubectl
+says `The connection to the server localhost:8080 was refused`, no cluster is
+selected. List your contexts with `kubectl config get-contexts` and select one
+with `kubectl config use-context <name>`. For a local Kind cluster that is
+running but missing from your kubeconfig, `kind export kubeconfig --name
+kavrynt-try` adds its context and selects it. If the context exists but the
+connection is still refused, the cluster is not running: check `docker ps`.
+
 ## 2. Install Kavrynt
 
 ```bash
@@ -149,6 +157,7 @@ one and use it in the commands below.
 
 ```bash
 kubectl -n kavrynt-system port-forward service/kavrynt-gateway 18080:8080 &
+PF_PIDS="$PF_PIDS $!"   # step 8 stops only these
 GW=http://127.0.0.1:18080/mcp/kavrynt-try.sample
 ```
 
@@ -341,16 +350,69 @@ endpoints, and multi-port Services get `503`. See
 
 ## 8. Clean up
 
+Collect the diagnostics that [step 9](#9-tell-us-what-happened) asks for
+(`kavryctl doctor --anonymize`) before you clean up: it needs the install and
+`kavryctl` that this step removes.
+
+This step deletes the namespaces and the Kavrynt release that steps 2 and 3
+created, so it is only safe on a cluster that had no Kavrynt release and no
+`kavrynt-system` or `kavrynt-try` namespace before you started. Check before
+step 2 with `helm list -A` and `kubectl get ns`. If any of them existed, skip
+the block below and remove only what you added:
+
+- If a Kavrynt release existed, step 2 upgraded it and **turned off MCP client
+  authentication in it** (`gateway.auth.enabled=false`). Restore your original
+  values with `helm upgrade` and your own values file.
+- If only a namespace existed, there are no values to restore. Delete the
+  resources you created in it (for `kavrynt-try`, the ones in
+  `examples/try/sample-mcp-server.yaml`), not the namespace.
+
+Remove what the steps above created, in this order:
+
 ```bash
-kill %1 2>/dev/null                    # the port-forward
-kubectl delete namespace kavrynt-try
+kill $PF_PIDS                                      # the port-forwards from steps 4 and 6
+kubectl delete namespace kavrynt-try               # step 3
 helm uninstall kavrynt -n kavrynt-system
-kubectl delete crd mcpservers.kavrynt.io   # Helm keeps it on purpose
-kubectl delete namespace kavrynt-system
+kubectl delete namespace kavrynt-system            # also removes the kavrynt-policy ConfigMap
 ```
 
-Or delete the whole local cluster, for example
-`kind delete cluster --name kavrynt-try`.
+If you registered your own server in step 7, delete it before the block above,
+by the name and namespace you used there. Check that it is yours first:
+
+```bash
+kubectl get mcpservers -A
+kubectl delete mcpserver <name> -n <namespace>
+```
+
+Helm keeps the `MCPServer` CRD on purpose. Deleting it deletes **every**
+`MCPServer` in **every** namespace, so keep it unless the list above shows
+only servers you are happy to lose:
+
+```bash
+kubectl get mcpservers -A        # all of these go with the CRD
+kubectl delete crd mcpservers.kavrynt.io
+```
+
+On your machine, also remove the policy file from step 6 (`authz.rego`, in the
+directory where you ran the command) and, if you installed it for the audit
+check, the `kavryctl` binary at the path the installer printed
+(`Installed kavryctl to ...`; by default `~/.kavrynt/bin/kavryctl`, or
+`$INSTALL_DIR/kavryctl` if you set it), and the `PATH` line you added. Remove
+only that file, not the whole directory.
+
+If you created a local cluster only for this test, delete it instead of the
+steps above:
+
+```bash
+kind delete cluster --name kavrynt-try   # or: k3d cluster delete kavrynt-try
+                                         #     minikube delete -p kavrynt-try
+kubectl config get-contexts              # confirm it is gone
+```
+
+Deleting the cluster that `kubectl` had selected leaves kubectl with no current
+context (`error: current-context is not set`). Select another one with
+`kubectl config use-context <name>`. Only delete a cluster you created for
+this test.
 
 ## 9. Tell us what happened
 
