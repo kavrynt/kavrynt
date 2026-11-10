@@ -354,12 +354,18 @@ Collect the diagnostics that [step 9](#9-tell-us-what-happened) asks for
 (`kavryctl doctor --anonymize`) before you clean up: it needs the install and
 `kavryctl` that this step removes.
 
-This step removes the Kavrynt install from step 2, so it is only safe on a
-cluster that had no Kavrynt and no `kavrynt-system` namespace before you
-started. If either existed, skip the block below: step 2 upgraded your
-existing release and **turned off MCP client authentication in it**
-(`gateway.auth.enabled=false`), so restore your original values with `helm
-upgrade` and your own values file instead.
+This step deletes the namespaces and the Kavrynt release that steps 2 and 3
+created, so it is only safe on a cluster that had no Kavrynt release and no
+`kavrynt-system` or `kavrynt-try` namespace before you started. Check before
+step 2 with `helm list -A` and `kubectl get ns`. If any of them existed, skip
+the block below and remove only what you added:
+
+- If a Kavrynt release existed, step 2 upgraded it and **turned off MCP client
+  authentication in it** (`gateway.auth.enabled=false`). Restore your original
+  values with `helm upgrade` and your own values file.
+- If only a namespace existed, there are no values to restore. Delete the
+  resources you created in it (for `kavrynt-try`, the ones in
+  `examples/try/sample-mcp-server.yaml`), not the namespace.
 
 Remove what the steps above created, in this order:
 

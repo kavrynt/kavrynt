@@ -125,8 +125,11 @@ What a run removes when it exits, whether it passes or fails (after printing
 pods, events, and component logs on failure): the Kind cluster it created,
 with its kubeconfig context, the port-forwards, and its temporary directory. A
 cluster it did not create is never deleted. The script ignores a failed
-`kind delete cluster`, for example when Docker has stopped, so after any
-failed run check `kind get clusters` and delete a cluster that is still there.
+`kind delete cluster`, for example when Docker has stopped, so after a failed
+run check `kind get clusters`. Delete a cluster that is still there only if
+this run created it. If the run stopped with `Kind cluster ... already
+exists`, that cluster was there before the run and is not yours to delete:
+pick another name with `KIND_CLUSTER_NAME` instead.
 
 What stays on your machine, and how to remove it:
 
@@ -148,8 +151,8 @@ kind get clusters
 kind delete cluster --name <cluster>     # also removes its kubeconfig context
 # If you ran the e2e with a throwaway KUBECONFIG, delete with the same one, or
 # Kind also removes a same-named context from your own kubeconfig:
-KUBECONFIG="$HOME/.kube/kavrynt-e2e.config" kind delete cluster --name <cluster>
-rm -f "$HOME/.kube/kavrynt-e2e.config"
+KUBECONFIG="$HOME/.kube/kavrynt-e2e.config" kind delete cluster --name <cluster> \
+  && rm -f "$HOME/.kube/kavrynt-e2e.config"   # remove the file only if the delete worked
 # The demo cluster has its own kubeconfig: use make, not kind.
 make demo-down                           # if you ran make demo-up
 
