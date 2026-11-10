@@ -6,6 +6,8 @@ body:
     attributes:
       value: |
         User-visible changes are designed as specs before they are built ([specs/README.md](https://github.com/kavrynt/kavrynt/blob/develop/specs/README.md)). A clear problem statement here becomes the start of that spec.
+
+        Please wait for a maintainer to accept this issue (they will label it `accepted`) before you open a spec or a pull request. Discussion happens here first.
   - type: dropdown
     id: component
     attributes:

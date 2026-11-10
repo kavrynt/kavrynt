@@ -14,6 +14,7 @@
 
 ## Checklist
 
+- [ ] A new feature or behavior change links an issue a maintainer labelled `accepted` (not needed for bug fixes, refactoring, tests, dependency bumps, CI, or docs)
 - [ ] Every commit is signed off (`git commit -s`)
 - [ ] Docs and README describe only what the code actually does
 - [ ] CRD changes are made in both CRD copies and in `api/v1alpha1`

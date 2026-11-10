@@ -98,9 +98,12 @@ curl ... /v1/servers | jq ...
 
 The workflow:
 
-1. Open an issue describing the problem.
-2. Open a pull request that adds `spec.md` with status `Draft`. Review is about
-   behavior only: requirements, acceptance criteria, non-goals, and security.
+1. Open an issue describing the problem and discuss it there. A maintainer
+   accepts it by labelling it `accepted`. Do not write a spec before that: see
+   [Proposing a new feature](../CONTRIBUTING.md#proposing-a-new-feature).
+2. Open a pull request that adds `spec.md` with status `Draft`, linking the
+   accepted issue. Review is about behavior only: requirements, acceptance
+   criteria, non-goals, and security.
 3. When a maintainer approves, set the status to `Accepted` and add `plan.md`
    (and `tasks.md` for work that spans several pull requests).
 4. Implement in one or more pull requests. Each test cites the requirements it

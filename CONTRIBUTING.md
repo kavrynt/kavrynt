@@ -93,15 +93,45 @@ clusters and never touch your current Kubernetes context.
 ### Before you start
 
 - Search [issues](https://github.com/kavrynt/kavrynt/issues) first.
-- For anything larger than a bug fix, open an issue describing the problem
-  and the proposed approach before writing code.
+- **New features start as a GitHub issue, not a pull request.** Open an
+  issue, discuss it, and wait for a maintainer to accept it before you write a
+  spec or code. See [Proposing a new feature](#proposing-a-new-feature).
 - **User-visible changes need a spec.** A change to the `MCPServer` API,
   Gateway endpoints or security behavior, the console, `kavryctl` commands,
   Helm values, or the Cloud connector starts as a reviewed specification in
-  `specs/`. See [Specs](#writing-a-spec) below.
+  `specs/`, after its issue is accepted. See [Specs](#writing-a-spec) below.
 - Changes to the architecture or security model also need an Architecture
   Decision Record in `docs/` (see the existing `ADR-*.md`).
 - Report security vulnerabilities privately; see [SECURITY.md](SECURITY.md).
+
+### Proposing a new feature
+
+New features and changes in behavior are discussed in a GitHub issue before
+anyone writes a spec or code. That spares you from building something the
+project cannot take, and leaves the design on public record.
+
+1. Search [existing issues](https://github.com/kavrynt/kavrynt/issues), then
+   open a **Feature request**: the problem, your proposed solution, and the
+   alternatives you considered.
+2. Discuss it in the issue. Maintainers and other contributors may ask
+   questions, suggest changes, or propose another approach.
+3. A maintainer decides and says so in the issue. If it is accepted, they
+   label it `accepted`. Otherwise they ask for changes, or close it with the
+   reason.
+4. **Only after the issue is `accepted`**, open the spec pull request (see
+   [Writing a spec](#writing-a-spec)) or, for a change that needs no spec, the
+   implementation pull request. Link the issue in it.
+
+Pull requests for a new feature without an accepted issue are closed with a
+pointer to this section. That is about process, not about the quality of the
+code. Work you start before acceptance may be declined.
+
+This does not apply to bug fixes that restore specified or documented
+behavior, refactoring, test-only changes, dependency and toolchain bumps, CI,
+and documentation: open a pull request directly (an issue is still welcome
+for a larger one). When you are unsure whether a change is a feature, ask in
+an issue first. Security vulnerabilities are never reported in a public
+issue; see [SECURITY.md](SECURITY.md).
 
 ### Creating a feature branch
 
@@ -125,8 +155,9 @@ Kavrynt uses spec-driven development ([specs/README.md](specs/README.md)):
 make spec-new NAME=console-tool-catalog   # creates specs/NNNN-console-tool-catalog/spec.md
 ```
 
-1. Open a pull request with `spec.md` in status `Draft`. Review covers
-   behavior only: requirements, acceptance criteria, non-goals, security.
+1. Once the feature's issue is `accepted`, open a pull request with `spec.md`
+   in status `Draft` that links it. Review covers behavior only:
+   requirements, acceptance criteria, non-goals, security.
 2. When a maintainer approves, the status becomes `Accepted` and you add
    `plan.md` (and `tasks.md` for multi-PR work).
 3. Implement. Each test cites the requirements it verifies, for example
@@ -311,7 +342,9 @@ described in section 5 of the license.
 
 2. Open a pull request against `develop` in `kavrynt/kavrynt`.
 3. Explain **what** changed and **why**, link the issue (`Fixes #123`) and the
-   spec (`specs/NNNN-name`) if there is one.
+   spec (`specs/NNNN-name`) if there is one. A new feature must link an
+   issue a maintainer has labelled `accepted`
+   ([Proposing a new feature](#proposing-a-new-feature)).
 4. Complete the checklist in the pull request template.
 
 CI runs Go QA and SAST, a Trivy source scan, the Helm and release contract
