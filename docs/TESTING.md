@@ -225,6 +225,12 @@ Streamable HTTP transport.
 
 ## 5. Open the console
 
+The Gateway Service is `ClusterIP`, so the console has no address outside the
+cluster: you reach it through the port-forward from step 4, and
+`ERR_CONNECTION_REFUSED` on `127.0.0.1:18080` means that forward is not
+running. Keep it running in its own terminal (start it again with the first
+command of step 4 if you closed it, or after the Gateway restarted).
+
 Open <http://127.0.0.1:18080/ui/> and sign in as `admin` with the password
 the chart generated:
 
