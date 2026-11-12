@@ -39,12 +39,28 @@ func checkProtocol(r *http.Request, body bodyInfo) error {
 		version = mcpmeta.DefaultProtocolVersion
 	}
 	switch {
-	case headerMethod != "" && headerMethod != body.method:
+	case headerDisagrees(r, "Mcp-Method", body.method):
 		return errors.New("the Mcp-Method header does not match the request body")
-	case body.method == "tools/call" && r.Header.Get("Mcp-Name") != "" && (!body.toolOK || r.Header.Get("Mcp-Name") != body.tool):
+	case body.method == "tools/call" && (headerDisagrees(r, "Mcp-Name", body.tool) || !body.toolOK && r.Header.Get("Mcp-Name") != ""):
 		return errors.New("the Mcp-Name header does not match the request body")
 	case headerMethod == "" && version >= mcpmeta.HeaderProtocolVersion:
 		return fmt.Errorf("MCP-Protocol-Version %s requires the Mcp-Method header", version)
 	}
 	return nil
+}
+
+// headerDisagrees reports whether a value of the header differs from want. A
+// repeated header is forwarded with all its values, so each must agree; an
+// absent header, or a single empty one, names nothing.
+func headerDisagrees(r *http.Request, name, want string) bool {
+	values := r.Header.Values(name)
+	if len(values) == 1 && values[0] == "" {
+		return false
+	}
+	for _, value := range values {
+		if value != want {
+			return true
+		}
+	}
+	return false
 }

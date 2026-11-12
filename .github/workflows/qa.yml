@@ -102,6 +102,9 @@ jobs:
       - name: Govulncheck
         run: make vulncheck GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION}"
 
+      - name: Govulncheck with the build image's Go
+        run: make vulncheck-image GOVULNCHECK_VERSION="${GOVULNCHECK_VERSION}"
+
       - name: Build binaries
         run: make build
 

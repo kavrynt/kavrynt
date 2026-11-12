@@ -26,6 +26,7 @@ help:
 	@printf "  make lint           Run staticcheck\n"
 	@printf "  make sast           Run gosec\n"
 	@printf "  make vulncheck      Run govulncheck\n"
+	@printf "  make vulncheck-image  Run govulncheck with the build image's Go (needs Docker)\n"
 	@printf "  make helm-lint      Lint the Helm chart\n"
 	@printf "  make helm-template  Render the Helm chart\n"
 	@printf "  make helm-unittest  Run the chart unit tests (helm-unittest)\n"
@@ -41,7 +42,7 @@ help:
 	@printf "  make demo-down      Delete the Kind demo cluster\n"
 
 .PHONY: qa
-qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck helm-lint helm-template helm-unittest alerts-test
+qa: release-contract spec-check fmt-check test console-test vet lint sast vulncheck vulncheck-image helm-lint helm-template helm-unittest alerts-test
 
 .PHONY: release-contract
 release-contract:
@@ -94,6 +95,15 @@ sast:
 .PHONY: vulncheck
 vulncheck:
 	go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
+
+# The images are compiled with the Go of build/Dockerfile's digest, which
+# stays behind the local and CI toolchains until it is bumped: check the
+# standard library the images actually ship.
+.PHONY: vulncheck-image
+vulncheck-image:
+	docker run --rm --volume "$(CURDIR)":/src:ro --workdir /src --env GOFLAGS=-buildvcs=false \
+		"$$(sed -n 's/^ARG GO_IMAGE=//p' build/Dockerfile)" \
+		go run golang.org/x/vuln/cmd/govulncheck@$(GOVULNCHECK_VERSION) ./...
 
 .PHONY: helm-lint
 helm-lint:

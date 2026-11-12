@@ -717,8 +717,15 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		// Only the caller that started a session can use it, on this route.
 		// Anything else answers as a session that does not exist, so a caller
 		// cannot tell another's session from none (SPEC-0042-R04).
-		if id := req.Header.Get(sessionHeader); id != "" {
+		// A session ID is one header. With several, checking the first would
+		// forward the others unchecked, so an empty value in front of another
+		// caller's server ID would pass.
+		ids := req.Header.Values(sessionHeader)
+		if id := req.Header.Get(sessionHeader); id != "" || len(ids) > 1 {
 			opened, ok := mcpsession.Open(h.sessionKey, caller, route.Name, id)
+			if len(ids) > 1 {
+				ok = false
+			}
 			if !ok {
 				if rec := auditRecordFrom(r); rec != nil {
 					rec.decision, rec.reason = auditv1.DecisionInvalid, "session not found"
@@ -953,9 +960,9 @@ func (h *Handler) authorize(w http.ResponseWriter, r *http.Request, route model.
 			return refuse(errors.New("the request is not a single JSON-RPC message the Gateway can read (at most 1 MiB); the policy cannot decide on it"))
 		case b.method == "tools/call" && !b.toolOK:
 			return refuse(errors.New("tools/call needs a string params.name"))
-		case r.Header.Get("Mcp-Method") != "" && r.Header.Get("Mcp-Method") != b.method:
+		case headerDisagrees(r, "Mcp-Method", b.method):
 			return refuse(errors.New("the Mcp-Method header does not match the request body"))
-		case r.Header.Get("Mcp-Name") != "" && b.method == "tools/call" && r.Header.Get("Mcp-Name") != b.tool:
+		case b.method == "tools/call" && headerDisagrees(r, "Mcp-Name", b.tool):
 			return refuse(errors.New("the Mcp-Name header does not match the request body"))
 		}
 		input.MCPMethod = b.method

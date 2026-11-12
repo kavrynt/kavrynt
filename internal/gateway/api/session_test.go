@@ -345,6 +345,37 @@ func TestAnotherCallersSessionIsNotFound(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0042-R04: a request with more than one Mcp-Session-Id header
+// gets 404 and nothing reaches the server. Checking only the first value
+// would forward the others unchecked: an empty first value in front of
+// another caller's server ID, or the caller's own bound ID in front of it.
+func TestRepeatedSessionHeaderIsNotFound(t *testing.T) {
+	g := newBoundGateway(t)
+	other := g.token("team-a.demo", "user-43", "agent-a")
+	own := g.start(t, "team-a.demo", other)
+	g.start(t, "team-a.demo", g.token("team-a.demo", "user-42", "agent-a"))
+	forwarded := len(*g.seen)
+
+	for name, values := range map[string][]string{
+		"an empty value first":     {"", "server-session"},
+		"the caller's own first":   {own, "server-session"},
+		"the caller's own, twice":  {own, own},
+		"another's server ID last": {"s1." + strings.Repeat("0", 32) + ".x", "server-session"},
+	} {
+		rr := callRoute(g.Handler, "/mcp/team-a.demo", other, func(r *http.Request) {
+			r.Body = io.NopCloser(strings.NewReader(callBody))
+			r.ContentLength = int64(len(callBody))
+			r.Header["Mcp-Session-Id"] = values
+		})
+		if rr.Code != http.StatusNotFound {
+			t.Errorf("%s: status %d, want 404", name, rr.Code)
+		}
+	}
+	if len(*g.seen) != forwarded {
+		t.Fatalf("%d requests with a repeated session header reached the server", len(*g.seen)-forwarded)
+	}
+}
+
 // Verifies SPEC-0042-R03 and SPEC-0042-R04: a session of one route is no session
 // of another, though the same token audience rules let the caller reach both.
 func TestSessionIDIsBoundToItsRoute(t *testing.T) {
