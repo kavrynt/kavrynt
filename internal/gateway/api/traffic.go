@@ -12,6 +12,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"os"
 	"strings"
 	"sync"
 	"time"
@@ -476,11 +477,17 @@ type countingReader struct {
 	// err is the first read error other than io.EOF, such as the request
 	// size limit's (SPEC-0038-R02).
 	err error
+	// reading is set while a Read waits for the client.
+	reading bool
 }
 
 func (c *countingReader) Read(p []byte) (int, error) {
+	c.mu.Lock()
+	c.reading = true
+	c.mu.Unlock()
 	n, err := c.r.Read(p)
 	c.mu.Lock()
+	c.reading = false
 	c.n += int64(n)
 	if err != nil && err != io.EOF && c.err == nil {
 		c.err = err
@@ -494,6 +501,14 @@ func (c *countingReader) sent() int64 {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	return c.n
+}
+
+// starved reports that the body is being read and the client is not
+// sending: a Read is waiting, or one ended at the read deadline.
+func (c *countingReader) starved() bool {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+	return c.reading || errors.Is(c.err, os.ErrDeadlineExceeded)
 }
 
 // failure reports the first read error so far.

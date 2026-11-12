@@ -12,6 +12,7 @@ import (
 	"net"
 	"net/http"
 	"net/url"
+	"os"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -594,6 +595,43 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 
 	start := time.Now()
+	// The Gateway reads the body itself before it forwards (a form's token,
+	// the JSON-RPC message). A client that stops sending would hold the
+	// connection and what it sent for good, before authentication too, so
+	// the whole body has to arrive within the request timeout. The deadline
+	// is cleared once the body has ended: it would otherwise end long
+	// answers and event streams.
+	bodyDeadline := http.NewResponseController(w)
+	var arrived atomic.Bool
+	var bodyDue time.Time
+	// The transport can still read the body after the handler returned,
+	// when the connection's deadlines are the server's again: the lock
+	// keeps a late end of the body from clearing them.
+	var deadlineMu sync.Mutex
+	returned := false
+	defer func() {
+		deadlineMu.Lock()
+		returned = true
+		deadlineMu.Unlock()
+	}()
+	bodyArrived := sync.OnceFunc(func() {
+		arrived.Store(true)
+		deadlineMu.Lock()
+		defer deadlineMu.Unlock()
+		if !returned {
+			_ = bodyDeadline.SetReadDeadline(time.Time{})
+		}
+	})
+	if h.requestTimeout > 0 && r.Body != nil && r.Body != http.NoBody {
+		bodyDue = start.Add(h.requestTimeout)
+		_ = bodyDeadline.SetReadDeadline(bodyDue)
+	}
+	// bodyLate answers a request whose body did not arrive in time.
+	bodyLate := func(route string, call mcpCall, sent int64) {
+		w.Header().Set("Connection", "close")
+		writeError(w, http.StatusRequestTimeout, errors.New("the request body did not arrive within the request timeout"))
+		h.finish(r, route, call, outcomeClientError, http.StatusRequestTimeout, time.Since(start), sent, 0)
+	}
 	route, exists := h.table.Get(name)
 	if h.clientAuth != nil {
 		// Authentication runs before the route is looked up, so callers
@@ -637,12 +675,23 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		h.refuseTooLarge(w, r, route.Name, call, start, 0)
 		return
 	}
+	if errors.Is(err, os.ErrDeadlineExceeded) {
+		bodyLate(route.Name, call, 0)
+		return
+	}
 	if err != nil {
 		writeError(w, http.StatusBadRequest, errors.New("read request body"))
 		h.finish(r, route.Name, call, outcomeClientError, http.StatusBadRequest, time.Since(start), 0, 0)
 		return
 	}
-	upstreamBody := &countingReader{r: body}
+	if r.Method == http.MethodPost && r.ContentLength >= 0 && r.ContentLength <= maxInspectBytes {
+		// inspectRequest read all of it.
+		bodyArrived()
+	}
+	// Clearing the deadline before the rest has arrived would let a client
+	// that stalls there hold the connection: the server waits for unread
+	// body before it answers.
+	upstreamBody := &countingReader{r: &endReader{r: body, end: bodyArrived}}
 	gatewayError := func(status int, err error) {
 		writeError(w, status, err)
 		h.finish(r, route.Name, call, outcomeGatewayError, status, time.Since(start), upstreamBody.sent(), 0)
@@ -795,6 +844,12 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 			_ = resp.Body.Close()
 		}
 		h.refuseTooLarge(w, r, route.Name, call, start, upstreamBody.sent())
+		return
+	}
+	if err != nil && !bodyDue.IsZero() && !arrived.Load() && !time.Now().Before(bodyDue) && upstreamBody.starved() {
+		// The client stopped sending while the rest of the body was being
+		// forwarded. A server that never read it is an upstream timeout.
+		bodyLate(route.Name, call, upstreamBody.sent())
 		return
 	}
 	if err != nil {
@@ -1321,4 +1376,18 @@ func writeJSON(w http.ResponseWriter, status int, value any) {
 
 func writeError(w http.ResponseWriter, status int, err error) {
 	writeJSON(w, status, errorResponse{Error: err.Error()})
+}
+
+// endReader calls end when the reader it wraps reports its end.
+type endReader struct {
+	r   io.Reader
+	end func()
+}
+
+func (e *endReader) Read(p []byte) (int, error) {
+	n, err := e.r.Read(p)
+	if err == io.EOF {
+		e.end()
+	}
+	return n, err
 }
