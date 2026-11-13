@@ -994,7 +994,7 @@ grouped by `client_id` or `subject`.
 | `--watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
 | `--strip-request-headers` | none | Extra headers never forwarded (`KAVRYNT_STRIP_REQUEST_HEADERS`) |
 | `--session-key-file` | none (chart: the generated or named Secret) | File with the key that binds session IDs to their caller, at least 32 bytes, the same on every replica; required with `--auth` (`KAVRYNT_SESSION_KEY_FILE`) |
-| `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers |
+| `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers. Also how long a request body may take to arrive: a client that stalls is answered (`408`, or the authentication refusal) and disconnected |
 | `--max-request-bytes` | `4194304` (chart: `config.maxRequestBytes`) | Largest request body an MCP route accepts; larger requests get `413` |
 | `--allowed-origins` | none (chart: `config.allowedOrigins`) | Comma-separated browser origins accepted besides loopback (`KAVRYNT_ALLOWED_ORIGINS`) |
 | `--console` | `true` (chart: `console.enabled`) | Serve the web console at `/ui/` |
