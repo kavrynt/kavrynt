@@ -39,6 +39,38 @@ func TestProtocolRefusesHeadersThatDisagreeWithTheBody(t *testing.T) {
 	}
 }
 
+// Verifies SPEC-0018-R01: every value of a repeated header must agree with
+// the body, since all of them are forwarded.
+func TestProtocolRefusesRepeatedHeadersThatDisagreeWithTheBody(t *testing.T) {
+	handler, calls := demoHandler(t, okResponse)
+	for name, headers := range map[string]http.Header{
+		"second Mcp-Method differs": {"Mcp-Method": {"tools/call", "tools/list"}, "Mcp-Name": {"echo"}},
+		"second Mcp-Name differs":   {"Mcp-Method": {"tools/call"}, "Mcp-Name": {"echo", "delete_all"}},
+		"empty Mcp-Method first":    {"Mcp-Method": {"", "tools/list"}},
+		"empty Mcp-Name first":      {"Mcp-Method": {"tools/call"}, "Mcp-Name": {"", "delete_all"}},
+	} {
+		for _, withPolicy := range []bool{false, true} {
+			h := handler
+			if withPolicy {
+				h, _ = demoHandler(t, okResponse)
+				enablePolicy(t, h, testPolicy)
+			}
+			req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(callEcho))
+			for key, values := range headers {
+				req.Header[key] = values
+			}
+			rr := httptest.NewRecorder()
+			h.ServeHTTP(rr, req)
+			if rr.Code != http.StatusBadRequest || !strings.Contains(rr.Body.String(), "does not match the request body") {
+				t.Errorf("%s (policy %t): %d %s, want 400", name, withPolicy, rr.Code, rr.Body.String())
+			}
+		}
+	}
+	if *calls != 0 {
+		t.Fatalf("%d requests with a disagreeing header reached the MCP server", *calls)
+	}
+}
+
 // Verifies SPEC-0018-R02.
 func TestProtocolRequiresMcpMethodFromItsRevision(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
