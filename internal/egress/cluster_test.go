@@ -52,6 +52,7 @@ func TestOutsideNamesNeverReachClusterAddresses(t *testing.T) {
 		"rebind.example.com":               "10.100.3.4",
 		"v6.example.com":                   "fd00:10:96::a",
 		"mapped.example.com":               "::ffff:10.96.0.10",
+		"nat64.example.com":                "64:ff9b::a60:a",
 		"search.team-b.svc.example.com":    "10.96.0.10",
 		"search.team-a.svc.example.com":    "10.96.0.10",
 		"a.b.c.pod.example.com":            "10.96.0.10",

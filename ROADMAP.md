@@ -40,10 +40,11 @@ done only once it is implemented and covered by the Kind end-to-end tests.
 - MCP session affinity: each session goes to the server pod that started it,
   across Gateway replicas, without shared state.
 - Endpoint scope: an `MCPServer` reaches only its own namespace unless the
-  platform team allows a pair, also through `ExternalName` Services,
-  EndpointSlices, and (with the cluster's address ranges configured) host
-  names from outside the cluster, and only exchanges tokens for listed
-  audiences.
+  platform team allows a pair, also through `ExternalName` Services and
+  EndpointSlices. With the cluster's address ranges configured, a host name
+  from outside the cluster that resolves to a cluster address is refused;
+  outside names that resolve elsewhere stay reachable. Token exchange is
+  limited to listed audiences.
 - Alert notifications (Slack, email, Teams, webhook), Grafana dashboards,
   and chart NetworkPolicies that make MCP servers reachable only through the
   Gateway.

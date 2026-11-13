@@ -26,8 +26,10 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   or fragments.
 - Egress guard: the Gateway never connects to unspecified, link-local
   (including `169.254.169.254`), multicast, or known cloud metadata addresses
-  (`fd00:ec2::254`, `100.100.100.200`), nor to loopback unless
-  `--allow-loopback-endpoints` is set. The check runs on the resolved address
+  (`fd00:ec2::254`, `100.100.100.200`, Azure's `168.63.129.16`, Oracle's
+  `192.0.0.192`), nor to loopback unless `--allow-loopback-endpoints` is
+  set. A NAT64 address (`64:ff9b::/96`) is judged by the IPv4 address it
+  translates to. The check runs on the resolved address
   at connect time, so DNS names and rebinding cannot bypass it. Refused
   requests return `502`.
 - With `--cluster-cidrs` (SPEC-0039), a route whose endpoint host comes from

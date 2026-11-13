@@ -837,6 +837,15 @@ STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --request 
 OPERATOR_SA="system:serviceaccount:${CONTROL_NAMESPACE}:kavrynt-operator"
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${OPERATOR_SA}" -A)" = "no" ] ||
   fail "the Operator must not read Secrets"
+# The Operator writes only MCPServer status, never the servers themselves.
+# -A asks about every namespace at once, so a grant in the servers' own
+# namespace is checked as well.
+for verb in update patch delete; do
+  for scope in -A "--namespace=${E2E_NAMESPACE}"; do
+    [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i "${verb}" mcpservers.kavrynt.io --as="${OPERATOR_SA}" "${scope}")" = "no" ] ||
+      fail "the Operator must not ${verb} MCPServers (${scope})"
+  done
+done
 [ "$(kubectl --context "${KUBE_CONTEXT}" auth can-i get secrets --as="${GATEWAY_SA}" -A)" = "no" ] ||
   fail "the Gateway must not read Secrets"
 # Verifies SPEC-0011-R09.

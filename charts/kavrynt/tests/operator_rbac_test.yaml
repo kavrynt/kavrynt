@@ -61,3 +61,29 @@ tests:
       - equal:
           path: subjects[0].namespace
           value: kavrynt-system
+
+  # The Operator writes only MCPServer status. Write access to the objects
+  # themselves would let it, or anyone holding its token, change every
+  # team's endpoints and credentials.
+  - it: grants no write access to MCPServers outside their status
+    documentSelector:
+      path: kind
+      value: ClusterRole
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [kavrynt.io]
+            resources: [mcpservers]
+            verbs: [get, list, watch]
+      - contains:
+          path: rules
+          content:
+            apiGroups: [kavrynt.io]
+            resources: [mcpservers/status]
+            verbs: [get, update]
+      - notContains:
+          path: rules
+          any: true
+          content:
+            resources: [mcpservers/finalizers]
