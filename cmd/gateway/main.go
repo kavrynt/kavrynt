@@ -71,6 +71,8 @@ func main() {
 	policyFilterToolsList := flag.Bool("policy-filter-tools-list", false, "With --policy-dir, list in each tools/list answer only the tools the policy lets the caller call")
 	upstreamCredentialsDir := flag.String("upstream-credentials-dir", getenv("KAVRYNT_UPSTREAM_CREDENTIALS_DIR", ""), "Directory of the mounted upstream credentials Secret (<namespace>.<name> and <namespace>.<name>.origin keys) for MCP servers that declare spec.credential")
 	allowLoopback := flag.Bool("allow-loopback-endpoints", false, "Allow MCP endpoints that resolve to loopback addresses (local development only)")
+	clusterCIDRs := flag.String("cluster-cidrs", getenv("KAVRYNT_CLUSTER_CIDRS", ""), "Comma-separated Service and Pod CIDRs; an endpoint host name from outside the cluster is never connected to an address inside them (the chart sets it from global.endpoints.clusterCIDRs)")
+	crossNamespace := flag.String("endpoint-cross-namespace", getenv("KAVRYNT_ENDPOINT_CROSS_NAMESPACE", ""), "Comma-separated from:to namespace pairs whose <service>.<namespace> endpoints are Service names, as the Operator allows them (with --cluster-cidrs)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
 	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
@@ -139,14 +141,21 @@ func main() {
 		os.Exit(1)
 	}
 
+	cluster, err := clusterEgress(*clusterCIDRs, *crossNamespace, egress.ClusterDomainFrom(egress.ResolvConfPath))
+	if err != nil {
+		slog.Error("configure the cluster's address ranges", "error", err)
+		os.Exit(1)
+	}
+
 	table := routing.NewTable()
 	// The request timeout is applied per request by the handler, so event
 	// streams can outlive it.
-	handler := api.NewHandler(table, &http.Client{Transport: egress.Transport(*allowLoopback)}, api.Metadata{
+	handler := api.NewHandler(table, &http.Client{Transport: egress.ClusterTransport(*allowLoopback, cluster)}, api.Metadata{
 		Version:   build.Version,
 		Commit:    build.Commit,
 		BuildDate: build.BuildDate,
 	})
+	handler.SetCluster(cluster)
 	handler.StripRequestHeaders(splitList(*stripHeaders)...)
 	handler.SetRequestTimeout(*requestTimeout)
 	if *maxRequestBytes <= 0 {
@@ -297,6 +306,25 @@ func shutdown(handler *api.Handler, server *http.Server, delay, timeout time.Dur
 // newAuditShipper returns the audit delivery to Kavrynt Cloud (SPEC-0017),
 // or nil without a Cloud URL. Its requests follow the egress guard
 // (SPEC-0017-R06).
+// clusterEgress reads --cluster-cidrs and --endpoint-cross-namespace
+// (SPEC-0039-R09). A malformed range is an error, as it is for the Operator.
+func clusterEgress(cidrs, crossNamespace, domain string) (*egress.Cluster, error) {
+	cluster := &egress.Cluster{Domain: domain}
+	for _, cidr := range splitList(cidrs) {
+		prefix, err := scope.ParsePrefix(cidr)
+		if err != nil {
+			return nil, fmt.Errorf("--cluster-cidrs: %w", err)
+		}
+		cluster.CIDRs = append(cluster.CIDRs, prefix)
+	}
+	pairs, err := scope.ParseNamespacePairs(crossNamespace)
+	if err != nil {
+		return nil, fmt.Errorf("--endpoint-cross-namespace: %w", err)
+	}
+	cluster.CrossNamespace = scope.Policy{CrossNamespace: pairs}.Allows
+	return cluster, nil
+}
+
 func newAuditShipper(auditEnabled bool, url, tokenFile string, buffer int, allowLoopback bool) (*audit.Shipper, error) {
 	if strings.TrimSpace(url) == "" {
 		return nil, nil

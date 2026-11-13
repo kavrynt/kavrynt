@@ -20,7 +20,9 @@ global:
     crossNamespace: []
     # The cluster's Service and Pod CIDRs. IP endpoints (and pod DNS names)
     # inside them are not Ready, since the Operator cannot tell which
-    # namespace they belong to. Empty: not checked.
+    # namespace they belong to, and the Gateway and tool discovery never
+    # connect to them through a host name from outside the cluster
+    # (SPEC-0039). Empty: not checked.
     clusterCIDRs: []
   # Token exchange audiences (spec.tokenExchange.audience) the MCPServers of
   # each namespace may request; "*" applies to all namespaces. Servers that

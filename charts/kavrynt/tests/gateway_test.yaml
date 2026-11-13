@@ -4,7 +4,8 @@ release:
 values:
   - values/open-routes.yaml
 tests:
-  # Verifies SPEC-0003-R06 and SPEC-0026-R12.
+  # Verifies SPEC-0003-R06, SPEC-0026-R12, and SPEC-0039-R05 (the Gateway's
+  # rules are these two and no more).
   - it: grants cluster-wide read-only access to MCPServers by default
     template: charts/gateway/templates/rbac.yaml
     asserts:

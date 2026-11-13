@@ -28,6 +28,32 @@ tests:
           path: spec.template.spec.containers[0].args
           content: --gateway-namespace=kavrynt-system
 
+  # Verifies SPEC-0039-R09: the Gateway gets the Operator's ranges and pairs.
+  - it: passes the cluster ranges and namespace pairs to the Gateway
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      global.endpoints.crossNamespace:
+        - {from: team-a, to: shared-tools}
+      global.endpoints.clusterCIDRs: [10.96.0.0/12, 10.244.0.0/16]
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --cluster-cidrs=10.96.0.0/12,10.244.0.0/16
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --endpoint-cross-namespace=team-a:shared-tools
+
+  # Verifies SPEC-0039-R09: without ranges the Gateway checks nothing.
+  - it: passes no cluster ranges to the Gateway by default
+    template: charts/gateway/templates/deployment.yaml
+    set:
+      global.endpoints.crossNamespace:
+        - {from: team-a, to: shared-tools}
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --endpoint-cross-namespace=team-a:shared-tools
+
   # Verifies SPEC-0029-R07: both components get the same audiences, and none
   # are allowed by default.
   - it: passes the token exchange audiences to the Operator and the Gateway

@@ -57,21 +57,41 @@ global:
     clusterCIDRs: [10.96.0.0/12, 10.244.0.0/16]
 ```
 
-External names that resolve to cluster addresses are not detected here,
-and neither the egress guard nor the chart's NetworkPolicies (which limit
-who reaches MCP server pods, not where the Gateway connects) stop them.
-Restrict the Gateway's destinations separately, for example with an egress
-NetworkPolicy for the Gateway, if namespace owners must not reach other
-namespaces that way.
+With `clusterCIDRs`, a host name from outside the cluster never connects
+the Gateway or tool discovery to an address inside those ranges
+(SPEC-0039): the address is checked at every connection, calls get `502`,
+and discovery fails with a message that names the host. Service names are
+then resolved only in the cluster's own DNS zone, so a short name that is
+also a public DNS name (`app.dev` in a namespace `dev`) reaches the Service
+or, when there is none, counts as an outside name. Without `clusterCIDRs`
+none of this is checked, and neither the egress guard nor the chart's
+NetworkPolicies (which limit who reaches MCP server pods, not where the
+Gateway connects) stop an outside name that resolves into the cluster:
+set the ranges, or restrict the Gateway's egress with a NetworkPolicy.
 
-The same holds for a Service in the server's own namespace that forwards
-elsewhere: an `ExternalName` Service whose name points at another
-namespace, or a Service without a selector whose EndpointSlices list
-another namespace's pods. The Operator judges the endpoint by its host name
-only, so such a server is `Ready` and its route reaches the other
-namespace. Until SPEC-0039 is implemented, keep namespace owners from
-creating `ExternalName` Services and EndpointSlices (RBAC or an admission
-policy), or restrict the Gateway's egress.
+The Operator also follows the Service an endpoint names (SPEC-0039), since
+a Service in the server's own namespace can lead elsewhere. The server is
+not `Ready` (`EndpointNotAllowed`) when:
+
+| The Service | is refused when |
+| --- | --- |
+| is of type `ExternalName` | its target is in a namespace the server may not use, followed through at most 5 such Services; with `clusterCIDRs`, also when the target is anything but a Service's full name `<service>.<namespace>.svc.<cluster domain>`, because DNS resolves every other target outside the cluster |
+| has an EndpointSlice whose `targetRef` names another namespace | the namespace pair is not allowed |
+| has an EndpointSlice with an address in `clusterCIDRs` that Kubernetes does not manage | always: a `targetRef` is written by the slice's author, so only slices of the EndpointSlice controller for a Service with a selector count as the Service's own pods. Give the Service a selector |
+| cannot be read | until it can; checked again after 30 s |
+
+A change to the Service or its EndpointSlices checks the server again, and
+every server behind a Service is checked again every 5 minutes. For this
+the Operator may `get`, `list`, and `watch` Services and `list` and `watch`
+EndpointSlices, and keeps them in its cache. Without `clusterCIDRs` an
+EndpointSlice address cannot be told from an outside one, so only its
+`targetRef` is checked.
+
+One gap remains: someone who may write EndpointSlices can forge or edit one
+that carries Kubernetes' management label on a Service with a selector, and
+it counts until Kubernetes undoes it, which they can repeat. Kubernetes
+gives namespace `edit` and `admin` roles no write access to EndpointSlices
+since 1.22; do not grant it to namespace owners.
 
 ## Tool discovery
 
@@ -229,7 +249,7 @@ The Gateway's metrics are in the
 | `--gateway-watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces the Gateway watches; servers elsewhere get `Ready=False` (`NamespaceNotWatched`) |
 | `--gateway-namespace` | `$POD_NAMESPACE` (chart: the release namespace) | Where single-label endpoint hosts resolve, for the [endpoint scope](#endpoint-scope) |
 | `--endpoint-cross-namespace` | none (chart: `global.endpoints.crossNamespace`) | Comma-separated `from:to` namespace pairs allowed across namespaces |
-| `--cluster-cidrs` | none (chart: `global.endpoints.clusterCIDRs`) | Comma-separated Service and Pod CIDRs; IP endpoints inside them are not `Ready` |
+| `--cluster-cidrs` | none (chart: `global.endpoints.clusterCIDRs`) | Comma-separated Service and Pod CIDRs; IP endpoints inside them are not `Ready`, Services that lead to them through hand-written EndpointSlices or outside names are not either, and discovery never connects to them through a host name from outside the cluster |
 | `--token-exchange-audiences` | none allowed (chart: `global.tokenExchangeAudiences`) | JSON object from namespace (or `"*"`) to the token exchange audiences its servers may request |
 | `--tool-discovery` | `true` (chart: `config.toolDiscovery.enabled`) | List the tools of `Ready` servers into `status.tools` |
 | `--tool-refresh-interval` | `5m` (chart: `config.toolDiscovery.refreshInterval`) | How often tools are listed again |

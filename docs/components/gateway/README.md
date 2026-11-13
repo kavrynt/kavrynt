@@ -30,6 +30,12 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   `--allow-loopback-endpoints` is set. The check runs on the resolved address
   at connect time, so DNS names and rebinding cannot bypass it. Refused
   requests return `502`.
+- With `--cluster-cidrs` (SPEC-0039), a route whose endpoint host comes from
+  outside the cluster is never connected to an address in the cluster's
+  Service or Pod ranges, checked the same way at every connection, and
+  Service names (`<service>.<namespace>[.svc[.<cluster domain>]]`, for the
+  route's own namespace and the pairs of `--endpoint-cross-namespace`) are
+  resolved only in the cluster's DNS zone. Refused requests return `502`.
 - Upstream redirects are passed to the client, never followed.
 - MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
   `400` and outcome `protocol_error` before anything is forwarded (for a
@@ -1004,6 +1010,8 @@ grouped by `client_id` or `subject`.
 | `--token-exchange-audiences` | none allowed (chart: `global.tokenExchangeAudiences`) | JSON object from namespace (or `"*"`) to the audiences tokens may be exchanged for (`KAVRYNT_TOKEN_EXCHANGE_AUDIENCES`) |
 | `--console-trusted-proxies` | empty (chart: `console.auth.trustedProxies`) | Comma-separated CIDRs of proxies whose `X-Forwarded-For` names the client for the console login limit |
 | `--allow-loopback-endpoints` | `false` | Allow endpoints that resolve to loopback; for running the Gateway on a workstation only |
+| `--cluster-cidrs` | none (chart: `global.endpoints.clusterCIDRs`) | Comma-separated Service and Pod CIDRs; endpoint host names from outside the cluster are never connected to an address inside them. A malformed range stops the Gateway at start |
+| `--endpoint-cross-namespace` | none (chart: `global.endpoints.crossNamespace`, set only with the ranges) | Comma-separated `from:to` namespace pairs whose `<service>.<namespace>` endpoints are Service names, as the Operator allows them |
 | `--auth` | `false` (chart: `auth.enabled`, default `true`) | Require a bearer access token for the route on every `/mcp/` request |
 | `--auth-resource-url` | none (chart: `auth.resourceURL`) | The Gateway's external https origin; a route's token audience is `<url>/mcp/<route>` (`KAVRYNT_AUTH_RESOURCE_URL`) |
 | `--auth-issuers` | none (chart: `auth.issuers`) | Trusted authorization servers as JSON: `[{"issuer":"...","jwksURI":"...","allowHTTP":false}]` (`KAVRYNT_AUTH_ISSUERS`) |

@@ -132,6 +132,13 @@ spec:
             - --audit-cloud-buffer-size={{ $auditCloud.bufferSize | default 100000 | int }}
             {{- end }}
             - {{ printf "--token-exchange-audiences=%s" ((.Values.global | default dict).tokenExchangeAudiences | default dict | toJson) | quote }}
+            {{- $endpoints := (.Values.global | default dict).endpoints | default dict }}
+            {{- with $endpoints.clusterCIDRs }}
+            - --cluster-cidrs={{ join "," . }}
+            {{- with $endpoints.crossNamespace }}
+            - --endpoint-cross-namespace={{ range $i, $pair := . }}{{ if $i }},{{ end }}{{ $pair.from }}:{{ $pair.to }}{{ end }}
+            {{- end }}
+            {{- end }}
             - --console={{ (.Values.console | default dict).enabled | default false }}
             {{- if include "gateway.consoleAuthEnabled" . }}
             - --console-auth=true

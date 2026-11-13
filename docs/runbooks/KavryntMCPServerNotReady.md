@@ -31,8 +31,19 @@ The `Ready` condition's reason says why:
   - The endpoint is an address, or a pod name, in
     `global.endpoints.clusterCIDRs`: use the Service's name instead. No
     namespace pair allows an address.
-  - A namespace could not be read: check the Operator's logs and its RBAC
-    (`get` on namespaces); the Operator checks again after 30 seconds.
+  - The endpoint leads through an `ExternalName` Service to another
+    namespace, or (with `global.endpoints.clusterCIDRs`) to anything but a
+    Service's full name: register the Service it stands for, or the
+    outside name itself, as `spec.endpoint`.
+  - The endpoint's Service has an EndpointSlice that names another
+    namespace, or one that Kubernetes does not manage and that lists an
+    address in `global.endpoints.clusterCIDRs`: give the Service a
+    selector, so Kubernetes writes its EndpointSlices, and delete the
+    hand-written one (`kubectl get endpointslices -l kubernetes.io/service-name=<service>`).
+  - A namespace or a Service could not be read: check the Operator's logs
+    and its RBAC (`get` on namespaces; `get`, `list`, `watch` on Services;
+    `list`, `watch` on EndpointSlices); the Operator checks again after 30
+    seconds.
 - `AudienceNotAllowed`: `spec.tokenExchange.audience` is not listed for the
   namespace in `global.tokenExchangeAudiences`.
 

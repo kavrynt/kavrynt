@@ -166,6 +166,6 @@ against the assistant's summary of them.
 | [0036](0036-readable-policy-denials/spec.md) | Policy denials that MCP clients can read | Implemented |
 | [0037](0037-kavryctl-list-hint/spec.md) | kavryctl list points to other namespaces | Implemented |
 | [0038](0038-gateway-request-size-limit/spec.md) | Request size limit for MCP routes | Implemented |
-| [0039](0039-endpoint-scope-through-services/spec.md) | Endpoint scope through Services in the server's namespace | Draft |
+| [0039](0039-endpoint-scope-through-services/spec.md) | Endpoint scope through Services in the server's namespace | Implemented |
 | [0042](0042-caller-bound-sessions/spec.md) | MCP sessions and streams bound to their caller | Implemented |
 | [0043](0043-console-time-ranges/spec.md) | Console dashboard time ranges | Draft |

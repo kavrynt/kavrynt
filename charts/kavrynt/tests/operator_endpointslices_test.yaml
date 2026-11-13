@@ -4,10 +4,11 @@ templates:
 release:
   namespace: kavrynt-system
 tests:
-  # Verifies SPEC-0026-R09: the Operator may list EndpointSlices, to discover
-  # the tools of a server with session affinity from one pod, and nothing more
-  # on them.
-  - it: lets the Operator list EndpointSlices
+  # Verifies SPEC-0026-R09 and SPEC-0039-R05: the Operator may list and watch
+  # EndpointSlices, to discover the tools of a server with session affinity
+  # from one pod and to see where a Service's endpoints lead, and nothing
+  # more on them.
+  - it: lets the Operator list and watch EndpointSlices
     documentIndex: 0
     asserts:
       - isKind:
@@ -17,4 +18,15 @@ tests:
           content:
             apiGroups: [discovery.k8s.io]
             resources: [endpointslices]
-            verbs: [list]
+            verbs: [list, watch]
+
+  # Verifies SPEC-0039-R05: read access to Services, and no write access.
+  - it: lets the Operator read Services
+    documentIndex: 0
+    asserts:
+      - contains:
+          path: rules
+          content:
+            apiGroups: [""]
+            resources: [services]
+            verbs: [get, list, watch]
