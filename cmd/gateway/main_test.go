@@ -285,3 +285,25 @@ func TestSessionKeyIsRequiredWithClientAuthentication(t *testing.T) {
 		t.Fatalf("a 32-byte key: %d bytes, %v", len(key), err)
 	}
 }
+
+// Verifies SPEC-0039-R09: the Gateway reads the Operator's ranges and
+// namespace pairs, and does not start with a malformed one.
+func TestClusterEgressFlags(t *testing.T) {
+	for _, c := range []struct{ cidrs, pairs, want string }{
+		{"10.96.0.1/33", "", "--cluster-cidrs"},
+		{"10.96.0.0/12,cluster", "", "--cluster-cidrs"},
+		{"10.96.0.0/12", "team-a", "--endpoint-cross-namespace"},
+	} {
+		if _, err := clusterEgress(c.cidrs, c.pairs, "cluster.local"); err == nil || !strings.Contains(err.Error(), c.want) {
+			t.Errorf("%q, %q: err = %v, want a refusal naming %s", c.cidrs, c.pairs, err, c.want)
+		}
+	}
+	cluster, err := clusterEgress("10.96.0.0/12, fd00:10:96::/112", "team-a:shared", "k8s.example")
+	if err != nil || len(cluster.CIDRs) != 2 || cluster.Domain != "k8s.example" ||
+		!cluster.CrossNamespace("team-a", "shared") || !cluster.CrossNamespace("team-a", "team-a") || cluster.CrossNamespace("shared", "team-a") {
+		t.Fatalf("clusterEgress = %+v, %v", cluster, err)
+	}
+	if cluster, err := clusterEgress("", "", ""); err != nil || len(cluster.CIDRs) != 0 {
+		t.Fatalf("no ranges: %+v, %v", cluster, err)
+	}
+}

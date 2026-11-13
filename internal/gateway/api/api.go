@@ -23,6 +23,7 @@ import (
 
 	auditv1 "github.com/kavrynt/kavrynt/api/audit/v1"
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/gateway/alerts"
 	"github.com/kavrynt/kavrynt/internal/gateway/audit"
 	"github.com/kavrynt/kavrynt/internal/gateway/clientauth"
@@ -70,6 +71,10 @@ type Handler struct {
 	table    *routing.Table
 	client   *http.Client
 	metadata Metadata
+
+	// cluster, when set, classifies each route's endpoint host for the
+	// egress transport (SPEC-0039-R06).
+	cluster *egress.Cluster
 
 	// exchangeAudiences, when set, are the only audiences tokens are
 	// exchanged for, per route namespace (SPEC-0029-R08).
@@ -187,6 +192,13 @@ func (h *Handler) StripRequestHeaders(names ...string) {
 			h.stripRequest[http.CanonicalHeaderKey(name)] = struct{}{}
 		}
 	}
+}
+
+// SetCluster makes proxied requests name their route's namespace and
+// endpoint host to the egress transport, which then refuses a cluster
+// address behind a host name from outside the cluster (SPEC-0039-R06).
+func (h *Handler) SetCluster(cluster *egress.Cluster) {
+	h.cluster = cluster
 }
 
 // SetRequestTimeout bounds proxied requests; zero or less disables the bound.
@@ -751,6 +763,8 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		gatewayError(http.StatusBadGateway, err)
 		return
 	}
+	namespace, _, _ := strings.Cut(route.Name, ".")
+	req = req.WithContext(h.cluster.Context(ctx, namespace, req.URL.Hostname()))
 	if forward != http.NoBody {
 		req.ContentLength = r.ContentLength
 	}

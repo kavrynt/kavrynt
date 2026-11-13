@@ -6,15 +6,19 @@ import (
 	"fmt"
 	"net/http"
 	"net/netip"
+	"net/url"
 	"slices"
 	"sync"
 	"time"
 
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
+	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
 	"github.com/kavrynt/kavrynt/internal/operator/discovery"
 	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
+	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	"k8s.io/apimachinery/pkg/api/equality"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	apimeta "k8s.io/apimachinery/pkg/api/meta"
@@ -24,6 +28,7 @@ import (
 	ctrl "sigs.k8s.io/controller-runtime"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/controller"
+	"sigs.k8s.io/controller-runtime/pkg/handler"
 )
 
 const (
@@ -82,6 +87,11 @@ type MCPServerReconciler struct {
 	// may use (SPEC-0029). Nil checks neither.
 	Scope *scope.Policy
 
+	// Cluster makes discovery connect like the Gateway: never to a cluster
+	// address through a name from outside (SPEC-0039-R07). Nil checks
+	// nothing.
+	Cluster *egress.Cluster
+
 	// now is the clock; tests replace it.
 	now func() time.Time
 
@@ -89,6 +99,10 @@ type MCPServerReconciler struct {
 	// attempts holds the last discovery per server, so a status write that
 	// fails or triggers another reconcile does not repeat discovery.
 	attempts map[types.NamespacedName]*discoveryAttempt
+	// services holds the Services each server's endpoint led through at
+	// its last check, so a change to one checks the server again
+	// (SPEC-0039-R03).
+	services map[types.NamespacedName][]scope.ServiceKey
 }
 
 // discoveryAttempt is the outcome of the last discovery for one server.
@@ -254,6 +268,9 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 		pod, err = r.sessionPod(ctx, server)
 	}
 	if err == nil {
+		if parsed, parseErr := url.Parse(server.Spec.Endpoint); parseErr == nil {
+			ctx = r.Cluster.Context(ctx, server.Namespace, parsed.Hostname())
+		}
 		result, err = r.Discoverer.ListTools(ctx, server.Spec.Endpoint, pod, header)
 	}
 	if err == nil {
@@ -294,6 +311,7 @@ func (r *MCPServerReconciler) discover(ctx context.Context, server *kavryntv1alp
 // forget drops everything kept for a deleted MCPServer, including its metrics.
 func (r *MCPServerReconciler) forget(key types.NamespacedName) {
 	r.forgetAttempt(key)
+	r.setServices(key, nil)
 	forgetReady(key)
 	forgetToolsDiscovered(key)
 }
@@ -355,6 +373,8 @@ func (r *MCPServerReconciler) desiredStatus(ctx context.Context, server *kavrynt
 	var retry time.Duration
 	if ready.Status == metav1.ConditionTrue && r.Scope != nil {
 		retry = r.checkScope(ctx, server, &ready)
+	} else {
+		r.setServices(client.ObjectKeyFromObject(server), nil)
 	}
 
 	apimeta.SetStatusCondition(&status.Conditions, accepted)
@@ -375,26 +395,107 @@ const (
 // returns when to check again when a namespace could not be read; the
 // server stays not Ready until then.
 func (r *MCPServerReconciler) checkScope(ctx context.Context, server *kavryntv1alpha1.MCPServer, ready *metav1.Condition) time.Duration {
-	if err := r.Scope.Endpoint(ctx, server.Namespace, server.Spec.Endpoint); err != nil {
+	services, err := r.Scope.EndpointServices(ctx, server.Namespace, server.Spec.Endpoint)
+	r.setServices(client.ObjectKeyFromObject(server), services)
+	// A Service's change is watched; the interval covers a missed event.
+	var recheck time.Duration
+	if len(services) > 0 || scope.DependsOnNamespace(server.Spec.Endpoint) {
+		recheck = scopeRecheckInterval
+	}
+	if err != nil {
 		ready.Status, ready.Reason, ready.Message = metav1.ConditionFalse, kavryntv1alpha1.ReasonEndpointNotAllowed, err.Error()
-		if errors.Is(err, scope.ErrNamespaceUnknown) {
+		if errors.Is(err, scope.ErrNamespaceUnknown) || errors.Is(err, scope.ErrServiceUnknown) {
 			return scopeRetryDelay
 		}
-		return 0
+		return recheck
 	}
 	if exchange := server.Spec.TokenExchange; exchange != nil && !r.Scope.Audiences.Allowed(server.Namespace, exchange.Audience) {
 		ready.Status, ready.Reason = metav1.ConditionFalse, kavryntv1alpha1.ReasonAudienceNotAllowed
 		ready.Message = fmt.Sprintf("spec.tokenExchange.audience %q is not allowed for namespace %q; add it to global.tokenExchangeAudiences", exchange.Audience, server.Namespace)
 	}
-	if scope.DependsOnNamespace(server.Spec.Endpoint) {
-		return scopeRecheckInterval
+	return recheck
+}
+
+// setServices records the Services a server's endpoint leads through.
+func (r *MCPServerReconciler) setServices(key types.NamespacedName, services []scope.ServiceKey) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if len(services) == 0 {
+		delete(r.services, key)
+		return
 	}
-	return 0
+	if r.services == nil {
+		r.services = map[types.NamespacedName][]scope.ServiceKey{}
+	}
+	r.services[key] = services
+}
+
+// serversThrough returns the servers whose endpoint led through service at
+// their last check.
+func (r *MCPServerReconciler) serversThrough(service scope.ServiceKey) []ctrl.Request {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	var requests []ctrl.Request
+	for server, services := range r.services {
+		if slices.Contains(services, service) {
+			requests = append(requests, ctrl.Request{NamespacedName: server})
+		}
+	}
+	return requests
+}
+
+// ServiceReader reads Services and their EndpointSlices for endpoint scope
+// (SPEC-0039-R01, R02), from the manager's cache.
+type ServiceReader struct {
+	client.Reader
+}
+
+// Service is scope.Policy.Services.
+func (s ServiceReader) Service(ctx context.Context, key scope.ServiceKey) (scope.Service, bool, error) {
+	var service corev1.Service
+	if err := s.Get(ctx, client.ObjectKey{Namespace: key.Namespace, Name: key.Name}, &service); err != nil {
+		if apierrors.IsNotFound(err) {
+			return scope.Service{}, false, nil
+		}
+		return scope.Service{}, false, err
+	}
+	if service.Spec.Type == corev1.ServiceTypeExternalName {
+		return scope.Service{ExternalName: service.Spec.ExternalName}, true, nil
+	}
+	found := scope.Service{Selector: len(service.Spec.Selector) > 0}
+	var list discoveryv1.EndpointSliceList
+	if err := s.List(ctx, &list, client.InNamespace(key.Namespace), client.MatchingLabels{discoveryv1.LabelServiceName: key.Name}); err != nil {
+		return scope.Service{}, false, err
+	}
+	for _, slice := range list.Items {
+		managed := slice.Labels[discoveryv1.LabelManagedBy] == scope.EndpointSliceController
+		for _, endpoint := range slice.Endpoints {
+			item := scope.ServiceEndpoint{Addresses: endpoint.Addresses, Managed: managed}
+			if endpoint.TargetRef != nil {
+				// A targetRef without a namespace is in the slice's.
+				item.TargetNamespace = endpoint.TargetRef.Namespace
+				if item.TargetNamespace == "" {
+					item.TargetNamespace = slice.Namespace
+				}
+			}
+			found.Endpoints = append(found.Endpoints, item)
+		}
+	}
+	return found, true, nil
 }
 
 func (r *MCPServerReconciler) SetupWithManager(mgr ctrl.Manager) error {
-	return ctrl.NewControllerManagedBy(mgr).
-		For(&kavryntv1alpha1.MCPServer{}).
+	builder := ctrl.NewControllerManagedBy(mgr).For(&kavryntv1alpha1.MCPServer{})
+	if r.Scope != nil && r.Scope.Services != nil {
+		builder = builder.
+			Watches(&corev1.Service{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []ctrl.Request {
+				return r.serversThrough(scope.ServiceKey{Namespace: object.GetNamespace(), Name: object.GetName()})
+			})).
+			Watches(&discoveryv1.EndpointSlice{}, handler.EnqueueRequestsFromMapFunc(func(_ context.Context, object client.Object) []ctrl.Request {
+				return r.serversThrough(scope.ServiceKey{Namespace: object.GetNamespace(), Name: object.GetLabels()[discoveryv1.LabelServiceName]})
+			}))
+	}
+	return builder.
 		WithOptions(controller.Options{MaxConcurrentReconciles: maxConcurrentReconciles}).
 		Complete(r)
 }

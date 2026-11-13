@@ -17,6 +17,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/kavrynt/kavrynt/internal/egress"
+	"github.com/kavrynt/kavrynt/internal/egress/egresstest"
 )
 
 type roundTripFunc func(*http.Request) (*http.Response, error)
@@ -123,6 +124,20 @@ func TestEgressRefusalNamesTheKind(t *testing.T) {
 		if want := fmt.Sprintf("initialize: the egress policy refuses %s addresses for MCP endpoints, and the endpoint resolves to one", kind); got != want {
 			t.Errorf("%s: got %q, want %q", endpoint, got, want)
 		}
+	}
+}
+
+// Verifies SPEC-0039-R07: discovery refuses an outside name that resolves
+// to a cluster address, and the message names the host, never the address.
+func TestOutsideNameAtAClusterAddressIsRefused(t *testing.T) {
+	cluster := &egress.Cluster{CIDRs: []netip.Prefix{netip.MustParsePrefix("10.96.0.0/12")}}
+	network := &egresstest.Network{Hosts: map[string]string{"rebind.example.com": "10.96.0.10"}}
+	transport := cluster.RoundTripper(false, network.Dial)
+	ctx := cluster.Context(context.Background(), "team-a", "rebind.example.com")
+	_, err := New("test", transport).ListTools(ctx, "http://rebind.example.com:8080/mcp", netip.AddrPort{}, nil)
+	const want = "initialize: host rebind.example.com is a name from outside the cluster that resolves to an address in the cluster's Service or Pod ranges (global.endpoints.clusterCIDRs), which is refused; use the Service's name"
+	if err == nil || err.Error() != want {
+		t.Fatalf("got %v, want %q", err, want)
 	}
 }
 

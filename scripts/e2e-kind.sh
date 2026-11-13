@@ -318,6 +318,7 @@ helm upgrade --install kavrynt "${ROOT_DIR}/charts/kavrynt" \
   --set gateway.auth.enabled=false \
   --set metrics.prometheusRule.discoveryFailingFor=30s \
   --set global.upstreamCredentials.secretName=kavrynt-upstream-credentials \
+  --set "global.endpoints.clusterCIDRs={10.96.0.0/16,10.244.0.0/16}" \
   --set networkPolicy.mcpServers.enabled=true \
   --set "networkPolicy.mcpServers.namespaces={${E2E_NAMESPACE}}" \
   --set networkPolicy.gateway.enabled=true \
@@ -1108,6 +1109,85 @@ spec:
   endpoint: http://example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local:8080
   tokenExchange:
     audience: https://unlisted.e2e.test
+---
+# A Service of the server's namespace that leads into another one, three
+# ways, and one that leads to a name from outside the cluster (SPEC-0039).
+apiVersion: v1
+kind: Service
+metadata:
+  name: scope-alias
+spec:
+  type: ExternalName
+  externalName: kavrynt-gateway.${CONTROL_NAMESPACE}.svc.cluster.local
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scope-outside
+spec:
+  type: ExternalName
+  externalName: mcp.outside.e2e.test
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: scope-manual
+spec:
+  ports:
+    - port: 8080
+---
+apiVersion: discovery.k8s.io/v1
+kind: EndpointSlice
+metadata:
+  name: scope-manual-1
+  labels:
+    kubernetes.io/service-name: scope-manual
+addressType: IPv4
+ports:
+  - port: 8080
+endpoints:
+  - addresses: ["10.244.0.250"]
+    targetRef:
+      kind: Pod
+      namespace: ${E2E_NAMESPACE}
+      name: not-this-namespaces-pod
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-alias
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://scope-alias.${E2E_NAMESPACE}.svc.cluster.local:8080/mcp
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-outside
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://scope-outside.${E2E_NAMESPACE}.svc:8080/mcp
+---
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-manual
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://scope-manual.${E2E_NAMESPACE}:8080/mcp
+---
+# A short Service name, which the Gateway resolves in the cluster's zone.
+apiVersion: kavrynt.io/v1alpha1
+kind: MCPServer
+metadata:
+  name: scope-short
+spec:
+  version: 0.0.1
+  transport: http
+  endpoint: http://example-mcp-server.${E2E_NAMESPACE}:8080
 MANIFEST
 SCOPE_ID="${E2E_NAMESPACE}.scope-plain"
 wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SCOPE_ID}\") != null"
@@ -1122,11 +1202,31 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-c
 kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-audience \
   --for=jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'=AudienceNotAllowed --timeout=60s ||
   fail "an unlisted token exchange audience was not refused with AudienceNotAllowed"
+# Verifies SPEC-0039-R01, SPEC-0039-R08, and SPEC-0039-R02.
+for server in scope-alias scope-outside scope-manual; do
+  kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait "mcpserver/${server}" \
+    --for=jsonpath='{.status.conditions[?(@.type=="Ready")].reason}'=EndpointNotAllowed --timeout=60s ||
+    fail "${server}: a Service that leads out of its namespace was not refused with EndpointNotAllowed"
+done
 curl --fail --silent --show-error "${GATEWAY_URL}/v1/routes" |
-  jq --exit-status --arg cross "${E2E_NAMESPACE}.scope-cross" --arg audience "${E2E_NAMESPACE}.scope-audience" \
-    '.routes | map(.name) | (index($cross) == null and index($audience) == null)' >/dev/null ||
+  jq --exit-status --arg namespace "${E2E_NAMESPACE}" \
+    '[.routes[].name] as $names | ["scope-cross", "scope-audience", "scope-alias", "scope-outside", "scope-manual"] | all(. as $server | $names | index($namespace + "." + $server) == null)' >/dev/null ||
   fail "the Gateway routes a server whose endpoint or audience is not allowed"
-kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/scope-plain mcpserver/scope-cross mcpserver/scope-audience --wait=false >/dev/null
+# Verifies SPEC-0039-R10: with the cluster's ranges configured, a short
+# Service name still reaches the Service.
+SHORT_ID="${E2E_NAMESPACE}.scope-short"
+wait_for_json "${GATEWAY_URL}/v1/routes" ".routes | map(.name) | index(\"${SHORT_ID}\") != null"
+curl --fail --silent --show-error --header 'Content-Type: application/json' --header 'Accept: application/json, text/event-stream' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' "${GATEWAY_URL}/mcp/${SHORT_ID}" | grep --quiet '"tools"' ||
+  fail "a short Service name was not reached with the cluster's ranges configured"
+# Verifies SPEC-0039-R03: the server follows its Service.
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" patch service scope-alias --type merge \
+  --patch "{\"spec\":{\"externalName\":\"example-mcp-server.${E2E_NAMESPACE}.svc.cluster.local\"}}" >/dev/null
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" wait mcpserver/scope-alias --for=condition=Ready --timeout=60s ||
+  fail "a server was not checked again when its Service changed"
+kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete mcpserver/scope-plain mcpserver/scope-cross mcpserver/scope-audience \
+  mcpserver/scope-alias mcpserver/scope-outside mcpserver/scope-manual mcpserver/scope-short \
+  service/scope-alias service/scope-outside service/scope-manual endpointslice/scope-manual-1 --wait=false >/dev/null
 
 # Verifies SPEC-0008-R08 and SPEC-0008-R11: deleting the Operator leader lets
 # the standby replica reconcile new servers.

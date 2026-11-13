@@ -54,6 +54,10 @@ func (e *Error) Error() string {
 	var message string
 	switch e.cause {
 	case causeEgress:
+		if e.egressKind == egress.KindClusterAddress {
+			message = fmt.Sprintf("%s: host %s is a name from outside the cluster that resolves to an address in the cluster's Service or Pod ranges (global.endpoints.clusterCIDRs), which is refused; use the Service's name", e.method, e.target.host)
+			break
+		}
 		message = fmt.Sprintf("%s: the egress policy refuses %s addresses for MCP endpoints, and the endpoint resolves to one", e.method, e.egressKind)
 	case causeTimeout:
 		message = fmt.Sprintf("%s: no answer from %s within %s", e.method, e.target.hostPort(), e.waited)

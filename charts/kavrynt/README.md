@@ -330,7 +330,9 @@ Operator; it does not need to be restored.
   set `gateway.console.auth.existingSecret`, because a render without cluster
   access generates a new password each time.
 - The Gateway has read-only access to `MCPServer` resources and, for
-  session affinity, EndpointSlices, and no Secret access. Containers run as non-root with a read-only root filesystem.
+  session affinity, EndpointSlices, and no Secret access. The Operator reads
+  Services and EndpointSlices cluster-wide, to see where the Service an
+  endpoint names leads, and writes neither. Containers run as non-root with a read-only root filesystem.
 
 See [SECURITY.md](../../SECURITY.md) for known limitations.
 
@@ -517,7 +519,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | --- | --- | --- | --- |
 | `global.watchNamespaces` | list | `[]` | Namespaces whose `MCPServer` resources the Gateway routes; empty means all. A list switches Gateway RBAC to per-namespace Roles, and the Operator reports servers elsewhere as not `Ready` (`NamespaceNotWatched`). |
 | `global.endpoints.crossNamespace` | list | `[]` | `from`/`to` namespace pairs whose MCPServers in `from` may use endpoints in `to`; otherwise an endpoint in another namespace is not `Ready` (`EndpointNotAllowed`) |
-| `global.endpoints.clusterCIDRs` | list | `[]` | The cluster's Service and Pod CIDRs; IP endpoints inside them are not `Ready` |
+| `global.endpoints.clusterCIDRs` | list | `[]` | The cluster's Service and Pod CIDRs; IP endpoints inside them are not `Ready`, and the Gateway and tool discovery never connect to them through a host name from outside the cluster (`502`). Set it in every multi-tenant cluster |
 | `global.tokenExchangeAudiences` | object | `{}` | Namespace (or `"*"`) to the `spec.tokenExchange.audience` values its MCPServers may use; others are not `Ready` (`AudienceNotAllowed`) and get no token exchange. Empty allows none |
 | `global.upstreamCredentials.secretName` | string | `""` | Secret in the release namespace with the credentials of MCP servers that declare `spec.credential`; mounted (optional) into the Gateway and the Operator, which get no Secret RBAC |
 

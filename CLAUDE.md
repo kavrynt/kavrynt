@@ -100,6 +100,17 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   `global.endpoints.crossNamespace` allows the pair; a token exchange
   audience not in `global.tokenExchangeAudiences` for the namespace is not
   `Ready` (`AudienceNotAllowed`) and the Gateway exchanges nothing for it.
+- Endpoint scope through Services (SPEC-0039): the Operator follows the
+  Service an endpoint names (cached Services and EndpointSlices, watched):
+  an `ExternalName` chain (at most 5) or an EndpointSlice `targetRef` that
+  reaches a namespace the server may not use is not `Ready`. With
+  `global.endpoints.clusterCIDRs`: an EndpointSlice address in the ranges
+  counts only in a slice Kubernetes manages for a Service with a selector;
+  an `ExternalName` target must be a Service's full name; the Gateway
+  (`--cluster-cidrs`) and tool discovery refuse, at every connection, a
+  cluster address behind a host name from outside the cluster (`502`), and
+  resolve Service names only in the cluster's DNS zone. Without the ranges
+  none of the address checks apply.
 - `MCPServer.spec.sessionAffinity: MCPSession` (SPEC-0026): for an `http`
   Service endpoint, the Gateway sends each MCP session to the pod that
   started it (a pod tag in front of `Mcp-Session-Id`, from read-only

@@ -19,12 +19,14 @@ import (
 	"github.com/kavrynt/kavrynt/internal/scope"
 	"github.com/kavrynt/kavrynt/internal/upstreamcred"
 	corev1 "k8s.io/api/core/v1"
+	discoveryv1 "k8s.io/api/discovery/v1"
 	apierrors "k8s.io/apimachinery/pkg/api/errors"
 	"k8s.io/apimachinery/pkg/runtime"
 	utilruntime "k8s.io/apimachinery/pkg/util/runtime"
 	"k8s.io/apimachinery/pkg/util/validation"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
+	"sigs.k8s.io/controller-runtime/pkg/cache"
 	"sigs.k8s.io/controller-runtime/pkg/client"
 	"sigs.k8s.io/controller-runtime/pkg/healthz"
 	"sigs.k8s.io/controller-runtime/pkg/log/zap"
@@ -87,6 +89,13 @@ func main() {
 		// takes over without waiting for it to expire (SPEC-0008-R08). Safe:
 		// the process exits as soon as the manager stops.
 		LeaderElectionReleaseOnCancel: true,
+		// Endpoint scope reads every Service and EndpointSlice from the
+		// cache (SPEC-0039-R03); their managed fields are never read and
+		// are most of what they hold.
+		Cache: cache.Options{ByObject: map[client.Object]cache.ByObject{
+			&corev1.Service{}:            {Transform: cache.TransformStripManagedFields()},
+			&discoveryv1.EndpointSlice{}: {Transform: cache.TransformStripManagedFields()},
+		}},
 	})
 	if err != nil {
 		slog.Error("unable to create manager", "error", err)
@@ -98,6 +107,11 @@ func main() {
 		slog.Error("invalid endpoint scope", "error", err)
 		os.Exit(1)
 	}
+	policy.ClusterDomain = egress.ClusterDomainFrom(egress.ResolvConfPath)
+	// Services and EndpointSlices come from the cache, which the
+	// controller's watches keep current (SPEC-0039-R03).
+	policy.Services = controller.ServiceReader{Reader: mgr.GetClient()}.Service
+	cluster := &egress.Cluster{CIDRs: policy.ClusterCIDRs, Domain: policy.ClusterDomain, CrossNamespace: policy.Allows}
 	reconciler := &controller.MCPServerReconciler{
 		Client:              mgr.GetClient(),
 		Scheme:              mgr.GetScheme(),
@@ -105,9 +119,10 @@ func main() {
 		ToolRefreshInterval: toolRefresh,
 		Credentials:         upstreamcred.Store{Dir: credentialsDir},
 		Scope:               policy,
+		Cluster:             cluster,
 	}
 	if toolDiscovery {
-		reconciler.Discoverer = discovery.New(build.Version, egress.Transport(allowLoopback))
+		reconciler.Discoverer = discovery.New(build.Version, egress.ClusterTransport(allowLoopback, cluster))
 		reconciler.SessionEndpoints = mcpsession.Endpoints{Reader: mgr.GetAPIReader(), AllowLoopback: allowLoopback}
 	}
 	if err := reconciler.SetupWithManager(mgr); err != nil {

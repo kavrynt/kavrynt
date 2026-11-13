@@ -43,10 +43,20 @@ rules:
     verbs:
       - get
   # The pods of servers with session affinity, for tool discovery
-  # (SPEC-0026-R09).
+  # (SPEC-0026-R09), and where a Service's endpoints lead (SPEC-0039-R02).
   - apiGroups:
       - discovery.k8s.io
     resources:
       - endpointslices
     verbs:
       - list
+      - watch
+  # Where the Service an endpoint names leads (SPEC-0039-R01).
+  - apiGroups:
+      - ""
+    resources:
+      - services
+    verbs:
+      - get
+      - list
+      - watch
