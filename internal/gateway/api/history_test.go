@@ -68,8 +68,12 @@ func TestHistoryEndpoint(t *testing.T) {
 		post(h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"lookup","arguments":{"q":"secret-argument"}}}`,
 			map[string]string{"Content-Type": "application/json", "Authorization": "Bearer secret-token"})
 	}
+	// Only without the protocol checks is a name the Gateway would refuse
+	// forwarded (SPEC-0044-R06); it is recorded as "invalid".
+	h.SetStrictProtocol(false)
 	post(h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"bad name!","arguments":{}}}`,
 		map[string]string{"Content-Type": "application/json"})
+	h.SetStrictProtocol(true)
 	evaluator := h.EnableAlerts(alertConfig)
 	evaluator.Evaluate(time.Now(), []model.Server{{Namespace: "team-a", Name: "demo", Route: "team-a.demo",
 		Conditions: []model.Condition{{Type: "Ready", Status: "False", Reason: "EndpointRejected", LastTransitionTime: time.Now().Add(-time.Hour)}}}})

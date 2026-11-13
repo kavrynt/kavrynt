@@ -69,7 +69,9 @@ verified caller identity. See issue #38.
   `WWW-Authenticate: Bearer resource_metadata="<metadata URL of the route>"`
   and, when scopes are configured, `scope="<required scopes>"`. It MUST NOT
   reach the MCP server.
-- **SPEC-0006-R04** A request carrying a token anywhere other than the
+- **SPEC-0006-R04** Withdrawn, replaced by R21 and SPEC-0044-R02, which
+  refuses every `POST` that is not JSON, a form included, with `415`
+  before authentication. It read: A request carrying a token anywhere other than the
   `Authorization` header (for example an `access_token` query parameter or
   form field) MUST get `400` with `error="invalid_request"` and MUST NOT
   reach the MCP server.
@@ -151,6 +153,12 @@ verified caller identity. See issue #38.
   refused at start-up and by the chart, unless that issuer sets
   `allowHTTP: true`; the Gateway MUST log a warning naming the issuer (not
   any key or token) when it is set.
+
+### Tokens outside the header
+
+- **SPEC-0006-R21** A request with an `access_token` query parameter MUST
+  get `400` with `error="invalid_request"` and MUST NOT reach the MCP
+  server. (A token in a form body never gets this far: SPEC-0044-R02.)
 
 ## Acceptance criteria
 

@@ -1,0 +1,62 @@
+suite: gateway response headers
+templates:
+  - charts/gateway/templates/deployment.yaml
+release:
+  namespace: kavrynt-system
+values:
+  - values/open-routes.yaml
+tests:
+  # Verifies SPEC-0044-R09: no extra response headers by default.
+  - it: passes no extra response headers by default
+    asserts:
+      - notContains:
+          path: spec.template.spec.containers[0].args
+          content: --allow-response-headers
+
+  # Verifies SPEC-0044-R09.
+  - it: passes the allowed response headers to the Gateway
+    set:
+      gateway.config.allowResponseHeaders:
+        - X-RateLimit-Remaining
+        - X-Trace
+    asserts:
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: --allow-response-headers
+      - contains:
+          path: spec.template.spec.containers[0].args
+          content: X-RateLimit-Remaining,X-Trace
+
+  # Verifies SPEC-0044-R09: headers that act on the Gateway's origin or the
+  # client's sign-in cannot be allowed, in any case.
+  - it: refuses WWW-Authenticate
+    set:
+      gateway.config.allowResponseHeaders: [www-authenticate]
+    asserts:
+      - failedTemplate:
+          errorPattern: "MCP servers may never send www-authenticate"
+  - it: refuses Set-Cookie
+    set:
+      gateway.config.allowResponseHeaders: [X-Trace, Set-Cookie]
+    asserts:
+      - failedTemplate:
+          errorPattern: "MCP servers may never send Set-Cookie"
+  - it: refuses Access-Control headers
+    set:
+      gateway.config.allowResponseHeaders: [Access-Control-Allow-Origin]
+    asserts:
+      - failedTemplate:
+          errorPattern: "MCP servers may never send Access-Control-Allow-Origin"
+  - it: refuses Location
+    set:
+      gateway.config.allowResponseHeaders: [Location]
+    asserts:
+      - failedTemplate:
+          errorPattern: "MCP servers may never send Location"
+
+  # Verifies SPEC-0044-R09: only header names.
+  - it: refuses a value that is not a header name
+    set:
+      gateway.config.allowResponseHeaders: ["X-A, X-B"]
+    asserts:
+      - failedTemplate: {}

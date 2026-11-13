@@ -47,6 +47,13 @@ config:
   # Extra request headers never forwarded to MCP servers. Authorization,
   # Cookie, and Proxy-Authorization are always removed (no token passthrough).
   stripRequestHeaders: []
+  # Extra MCP server response headers clients get (SPEC-0044). Clients get
+  # only the headers MCP needs: Allow, Cache-Control, Content-Encoding,
+  # Content-Language, Content-Length, Content-Type, Date, MCP-Protocol-Version,
+  # Mcp-Session-Id, Retry-After, and Vary. Headers that act on the Gateway's
+  # origin or the client's sign-in (Set-Cookie, WWW-Authenticate, Location,
+  # Strict-Transport-Security, Access-Control-*, ...) are refused.
+  allowResponseHeaders: []
   # Browser origins (scheme://host[:port]) allowed to call the Gateway, besides
   # loopback origins such as a port-forward. Requests from other origins are
   # rejected (MCP DNS-rebinding protection). Add the URL of any Ingress that

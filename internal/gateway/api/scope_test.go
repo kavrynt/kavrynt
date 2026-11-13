@@ -15,7 +15,7 @@ func TestOnlyMCPMethodsAreForwarded(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
 	for _, method := range []string{http.MethodPut, http.MethodPatch, http.MethodHead, http.MethodOptions, "PROPFIND"} {
 		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, httptest.NewRequest(method, "/mcp/team-a.demo", strings.NewReader("{}")))
+		handler.ServeHTTP(rr, newRequest(method, "/mcp/team-a.demo", strings.NewReader("{}")))
 		if rr.Code != http.StatusMethodNotAllowed || rr.Header().Get("Allow") != "GET, POST, DELETE" {
 			t.Errorf("%s: %d Allow %q, want 405 and GET, POST, DELETE", method, rr.Code, rr.Header().Get("Allow"))
 		}
@@ -25,7 +25,7 @@ func TestOnlyMCPMethodsAreForwarded(t *testing.T) {
 	}
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
 		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, httptest.NewRequest(method, "/mcp/team-a.demo", nil))
+		handler.ServeHTTP(rr, newRequest(method, "/mcp/team-a.demo", nil))
 		if rr.Code != http.StatusOK {
 			t.Errorf("%s: %d, want it forwarded", method, rr.Code)
 		}
@@ -44,7 +44,7 @@ func TestSubpathsAreForwardedOnlyWhenAllowed(t *testing.T) {
 	})
 	for _, path := range []string{"/mcp/team-a.demo/other", "/mcp/team-a.demo/", "/mcp/team-a.demo/admin/x"} {
 		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		handler.ServeHTTP(rr, newRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusNotFound {
 			t.Errorf("GET %s: %d, want 404", path, rr.Code)
 		}
@@ -55,12 +55,12 @@ func TestSubpathsAreForwardedOnlyWhenAllowed(t *testing.T) {
 
 	handler.table.Replace([]model.Route{{Name: "team-a.demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp", ForwardSubpaths: true}}, time.Now())
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo/other", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/mcp/team-a.demo/other", nil))
 	if rr.Code != http.StatusOK || len(targets) != 1 || targets[0] != "/mcp/other" {
 		t.Fatalf("with forwardSubpaths: %d to %v, want the suffix forwarded", rr.Code, targets)
 	}
 	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo/a/../../admin", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/mcp/team-a.demo/a/../../admin", nil))
 	if rr.Code != http.StatusBadRequest || len(targets) != 1 {
 		t.Fatalf("dot segments with forwardSubpaths: %d", rr.Code)
 	}

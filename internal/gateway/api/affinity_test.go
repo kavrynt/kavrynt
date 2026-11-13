@@ -91,7 +91,7 @@ func send(h *Handler, method, body, session string) *httptest.ResponseRecorder {
 	if body != "" {
 		reader = strings.NewReader(body)
 	}
-	req := httptest.NewRequest(method, "/mcp/team-a.demo", reader)
+	req := newRequest(method, "/mcp/team-a.demo", reader)
 	if session != "" {
 		req.Header.Set("Mcp-Session-Id", session)
 	}

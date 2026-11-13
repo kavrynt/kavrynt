@@ -34,6 +34,9 @@ done only once it is implemented and covered by the Kind end-to-end tests.
   token is exchanged for one with the server's audience.
 - MCP Streamable HTTP checks on every route: supported protocol revisions,
   no batches, and `Mcp-Method`/`Mcp-Name` headers that match the body.
+- Only MCP passes the Gateway: no body on `GET` or `DELETE`, JSON-only
+  `POST`s checked before authentication, method and tool names a policy
+  rule can match, no redirects, and only the response headers MCP needs.
 - MCP client authentication, on by default with an explicit opt-out for
   trials: the Gateway is an OAuth 2.1 resource server with per-route token
   audiences and Protected Resource Metadata.

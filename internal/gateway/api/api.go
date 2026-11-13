@@ -1,14 +1,12 @@
 package api
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
 	"log/slog"
-	"mime"
 	"net"
 	"net/http"
 	"net/url"
@@ -102,6 +100,9 @@ type Handler struct {
 	// strictProtocol refuses requests that fail the MCP Streamable HTTP
 	// checks; false only logs them (SPEC-0018).
 	strictProtocol bool
+	// allowResponse names the MCP server response headers clients get
+	// (SPEC-0044-R08, R09).
+	allowResponse map[string]struct{}
 	// console serves the web console under /ui/; nil disables it.
 	console http.Handler
 	// auth is the console admin login; nil leaves /v1/servers and
@@ -172,11 +173,15 @@ func NewHandler(table *routing.Table, client *http.Client, metadata Metadata) *H
 		tokenSkew:       clientauth.ClockSkew,
 		maxRequestBytes: DefaultMaxRequestBytes,
 		strictProtocol:  true,
+		allowResponse:   map[string]struct{}{},
 		recent:          newRecentTraffic(recentTrafficSize),
 		alertWindow:     alerts.NewWindow(durationBuckets),
 		history:         history.New(durationBuckets, history.DefaultMaxTools, time.Now()),
 	}
 	h.StripRequestHeaders(credentialHeaders...)
+	for _, name := range responseHeaders {
+		h.allowResponse[http.CanonicalHeaderKey(name)] = struct{}{}
+	}
 	registry := h.newRegistry()
 	h.registry = registry
 	h.traffic = newTrafficMetrics(registry)
@@ -645,6 +650,21 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		h.finish(r, route, call, outcomeClientError, http.StatusRequestTimeout, time.Since(start), sent, 0)
 	}
 	route, exists := h.table.Get(name)
+	// The Gateway forwards only what it reads as MCP, and reads no body
+	// before authentication. The checks need no body and answer the same
+	// for every route, so they come first (SPEC-0044-R01 to R03).
+	if status, err := checkRequestShape(r, h.maxRequestBytes); err != nil {
+		if rec := auditRecordFrom(r); rec != nil {
+			rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
+		}
+		// The body is never read, so the connection is not kept for it.
+		w.Header().Set("Connection", "close")
+		writeError(w, status, err)
+		if exists {
+			h.finish(r, route.Name, shapeCall(r), outcomeProtocolError, status, time.Since(start), 0, 0)
+		}
+		return
+	}
 	if h.clientAuth != nil {
 		// Authentication runs before the route is looked up, so callers
 		// without a valid token cannot tell registered routes from others.
@@ -723,6 +743,18 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 		}
 		slog.Debug("forwarding a request that fails the MCP protocol checks", "route", route.Name, "error", err)
 	}
+	// A name no rule can be written for is refused, so the policy and the
+	// audit see the name the server runs (SPEC-0044-R05, R06).
+	if h.policy != nil || h.strictProtocol {
+		if err := checkNames(call.body); err != nil {
+			if rec := auditRecordFrom(r); rec != nil {
+				rec.decision, rec.reason = auditv1.DecisionInvalid, err.Error()
+			}
+			writeRPCError(w, http.StatusBadRequest, call.body.id, jsonRPCInvalidRequest, err.Error())
+			h.finish(r, route.Name, call, outcomeProtocolError, http.StatusBadRequest, time.Since(start), 0, 0)
+			return
+		}
+	}
 
 	if r.Header.Get(routeHeader) != "" {
 		gatewayError(http.StatusLoopDetected, fmt.Errorf("request already passed through a Kavrynt Gateway; the endpoint of %q must not point at a Gateway", route.Name))
@@ -770,6 +802,11 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	if copyHeaders(req.Header, r.Header, h.stripRequest) {
 		h.strippedRequests.Add(1)
+	}
+	// A server that honours these would run another method than the one
+	// the policy and the audit saw (SPEC-0044-R04).
+	for _, name := range methodOverrideHeaders {
+		req.Header.Del(name)
 	}
 	if filter != nil {
 		// The transport then asks for gzip and decodes it, so the filter
@@ -885,12 +922,26 @@ func (h *Handler) proxy(w http.ResponseWriter, r *http.Request) {
 	}
 	defer resp.Body.Close()
 
+	// A redirect would send the client, with its token, to wherever the
+	// server names: another route, another host, another authorization
+	// server (SPEC-0044-R07).
+	if resp.StatusCode >= 300 && resp.StatusCode < 400 {
+		if rec := auditRecordFrom(r); rec != nil {
+			rec.reason = "the MCP server answered with a redirect"
+		}
+		writeError(w, http.StatusBadGateway, errors.New("the MCP server answered with a redirect, which the Gateway does not pass on; register the URL it redirects to"))
+		h.finish(r, route.Name, call, outcomeUpstreamError, http.StatusBadGateway, time.Since(start), upstreamBody.sent(), 0)
+		return
+	}
+
 	stream := isEventStream(resp.Header.Get("Content-Type"))
 	if stream && timer != nil {
 		timer.Stop()
 	}
 
-	copyHeaders(w.Header(), resp.Header, responseStrip)
+	// Only the headers MCP needs: every route shares the Gateway's origin
+	// and its place in the client's sign-in (SPEC-0044-R08, R09).
+	copyResponseHeaders(w.Header(), resp.Header, h.allowResponse)
 	if id := w.Header().Get(sessionHeader); id != "" {
 		if podTag != "" {
 			// The client keeps the pod's tag with the session (SPEC-0026-R04).
@@ -1210,29 +1261,11 @@ func (h *Handler) authenticate(r *http.Request, route string) (clientauth.Identi
 	return h.clientAuth.Authenticate(r, route)
 }
 
-// tokenOutsideHeader reports an access_token query parameter or form field.
-// A form body is read (bounded) and put back for the request.
+// tokenOutsideHeader reports an access_token query parameter. A form body,
+// where a token could also be, never gets this far: a POST that is not JSON
+// is refused before authentication, without reading it (SPEC-0044-R02).
 func tokenOutsideHeader(r *http.Request) bool {
-	if r.URL.Query().Has("access_token") {
-		return true
-	}
-	if r.Body == nil || r.Body == http.NoBody {
-		return false
-	}
-	mediaType, _, _ := mime.ParseMediaType(r.Header.Get("Content-Type"))
-	if mediaType != "application/x-www-form-urlencoded" {
-		return false
-	}
-	prefix, err := io.ReadAll(io.LimitReader(r.Body, maxInspectBytes))
-	r.Body = struct {
-		io.Reader
-		io.Closer
-	}{io.MultiReader(bytes.NewReader(prefix), r.Body), r.Body}
-	if err != nil {
-		return false
-	}
-	form, err := url.ParseQuery(string(prefix))
-	return err == nil && form.Has("access_token")
+	return r.URL.Query().Has("access_token")
 }
 
 // refusalOutcome keeps metric labels to the known outcomes.
@@ -1346,10 +1379,6 @@ func (f *flushWriter) Write(p []byte) (int, error) {
 	return n, err
 }
 
-// responseStrip keeps upstream cookies from being set on the Gateway origin,
-// which is shared by every route, and hides the upstream's software.
-var responseStrip = map[string]struct{}{"Set-Cookie": {}, "Server": {}, "X-Powered-By": {}}
-
 // copyHeaders copies end-to-end headers from src to dst. It drops hop-by-hop
 // headers, headers named in Connection, and every header in strip. It reports
 // whether any header in strip was present.
@@ -1378,6 +1407,32 @@ func copyHeaders(dst, src http.Header, strip map[string]struct{}) bool {
 		}
 	}
 	return stripped
+}
+
+// copyResponseHeaders copies the headers of src named in allowed to dst,
+// except hop-by-hop headers and those named in Connection, even when
+// configuration allows them: they belong to the connection, not the answer.
+func copyResponseHeaders(dst, src http.Header, allowed map[string]struct{}) {
+	connectionScoped := map[string]struct{}{}
+	for _, value := range src.Values("Connection") {
+		for _, token := range strings.Split(value, ",") {
+			if token = strings.TrimSpace(token); token != "" {
+				connectionScoped[http.CanonicalHeaderKey(token)] = struct{}{}
+			}
+		}
+	}
+	for key, values := range src {
+		canonical := http.CanonicalHeaderKey(key)
+		if _, ok := allowed[canonical]; !ok {
+			continue
+		}
+		if _, drop := connectionScoped[canonical]; drop || isHopByHopHeader(canonical) {
+			continue
+		}
+		for _, value := range values {
+			dst.Add(canonical, value)
+		}
+	}
 }
 
 func isHopByHopHeader(name string) bool {

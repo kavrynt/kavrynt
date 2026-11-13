@@ -93,7 +93,7 @@ func gatewayAudienceHandler(t *testing.T, keysUp bool, gatewayRoutes []string) (
 }
 
 func callRoute(h *Handler, path, token string, edit ...func(*http.Request)) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"secret-argument"}}}`))
+	req := newRequest(http.MethodPost, path, strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"secret-argument"}}}`))
 	req.Header.Set("Content-Type", "application/json")
 	if token != "" {
 		req.Header.Set("Authorization", "Bearer "+token)
@@ -143,7 +143,8 @@ func TestRefusedCallsNeverReachTheServer(t *testing.T) {
 	}
 }
 
-// Verifies SPEC-0006-R04.
+// Verifies SPEC-0006-R21 and SPEC-0044-R02: a query token is refused as
+// an invalid request; a form, where a token could also be, is never read.
 func TestTokensOutsideTheHeaderAreRejected(t *testing.T) {
 	handler, received, mint := authHandler(t, true)
 	token := mint(nil)
@@ -157,19 +158,16 @@ func TestTokensOutsideTheHeaderAreRejected(t *testing.T) {
 			r.Header.Set("Content-Type", "application/x-www-form-urlencoded")
 		}
 	}
-	if rr := callRoute(handler, "/mcp/team-a.demo", "", form("access_token="+token)); rr.Code != http.StatusBadRequest {
-		t.Fatalf("form token: %d, want 400", rr.Code)
+	for name, c := range map[string]struct{ token, body string }{
+		"form token":                      {"", "access_token=" + token},
+		"form with a token in the header": {token, "a=1&b=2"},
+	} {
+		if rr := callRoute(handler, "/mcp/team-a.demo", c.token, form(c.body)); rr.Code != http.StatusUnsupportedMediaType {
+			t.Fatalf("%s: %d, want 415", name, rr.Code)
+		}
 	}
 	if len(*received) != 0 {
-		t.Fatal("a call with a token outside the header reached the MCP server")
-	}
-	// A form body without a token is still forwarded whole.
-	if rr := callRoute(handler, "/mcp/team-a.demo", token, form("a=1&b=2")); rr.Code != http.StatusOK {
-		t.Fatalf("form without a token: %d", rr.Code)
-	}
-	body, _ := io.ReadAll((*received)[0].Body)
-	if string(body) != "a=1&b=2" {
-		t.Fatalf("forwarded body = %q", body)
+		t.Fatal("a call with a token outside the header, or a form, reached the MCP server")
 	}
 }
 

@@ -36,7 +36,10 @@ func okResponse(*http.Request) (*http.Response, error) {
 	}, nil
 }
 
-func TestProxyPassesRedirectsToClient(t *testing.T) {
+// Verifies SPEC-0044-R07: the Gateway neither follows a redirect, which
+// would bypass endpoint validation, nor passes it on, which would send the
+// client and its token wherever the server names.
+func TestProxyNeitherFollowsNorPassesOnRedirects(t *testing.T) {
 	handler, calls := demoHandler(t, func(*http.Request) (*http.Response, error) {
 		return &http.Response{
 			StatusCode: http.StatusFound,
@@ -46,10 +49,10 @@ func TestProxyPassesRedirectsToClient(t *testing.T) {
 	})
 
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/mcp/team-a.demo", nil))
 
-	if rr.Code != http.StatusFound || *calls != 1 {
-		t.Fatalf("status = %d after %d upstream calls; want the 302 passed through after 1 call", rr.Code, *calls)
+	if rr.Code != http.StatusBadGateway || *calls != 1 || rr.Header().Get("Location") != "" {
+		t.Fatalf("status = %d, Location %q after %d upstream calls; want 502 without Location after 1 call", rr.Code, rr.Header().Get("Location"), *calls)
 	}
 }
 
@@ -63,7 +66,7 @@ func TestProxyRejectsDotSegments(t *testing.T) {
 		"/mcp/team-a.demo/a%5C..%5Cadmin",
 	} {
 		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		handler.ServeHTTP(rr, newRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusBadRequest {
 			t.Errorf("%s: status = %d, want 400", path, rr.Code)
 		}
@@ -91,7 +94,7 @@ func TestOriginValidation(t *testing.T) {
 		{origin: "null", want: http.StatusForbidden},
 	}
 	for _, tt := range tests {
-		req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`))
+		req := newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`))
 		if tt.origin != "" {
 			req.Header.Set("Origin", tt.origin)
 		}
@@ -105,7 +108,7 @@ func TestOriginValidation(t *testing.T) {
 
 func TestProxyDetectsGatewayLoops(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
-	req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`))
+	req := newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`))
 	req.Header.Set("X-Kavrynt-Route", "team-a.demo")
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
@@ -119,7 +122,7 @@ func TestProxyHidesUpstreamErrorDetails(t *testing.T) {
 		return nil, &url.Error{Op: "Post", URL: req.URL.String(), Err: errors.New("dial tcp 10.0.0.7:8080: connection refused")}
 	})
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`)))
+	handler.ServeHTTP(rr, newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`)))
 	if rr.Code != http.StatusBadGateway {
 		t.Fatalf("status = %d, want 502", rr.Code)
 	}
@@ -136,7 +139,7 @@ func TestProxyTimesOutSlowUpstreams(t *testing.T) {
 	handler.SetRequestTimeout(20 * time.Millisecond)
 
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
+	handler.ServeHTTP(rr, newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{"jsonrpc":"2.0","id":1,"method":"tools/list"}`)))
 	if rr.Code != http.StatusGatewayTimeout {
 		t.Fatalf("status = %d, want 504", rr.Code)
 	}
@@ -172,7 +175,7 @@ func TestProxyStreamsEventsPastTheTimeout(t *testing.T) {
 	}()
 
 	rr := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/mcp/team-a.demo", nil))
 
 	if rr.Code != http.StatusOK || rr.Body.String() != "data: one\n\ndata: two\n\n" {
 		t.Fatalf("status = %d, body = %q", rr.Code, rr.Body.String())
@@ -191,7 +194,7 @@ func TestProxiedResponsesAreSandboxed(t *testing.T) {
 		}, nil
 	})
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/mcp/team-a.demo", nil))
 	if got := rr.Header().Values("Content-Security-Policy"); len(got) != 1 || got[0] != "sandbox" {
 		t.Fatalf("Content-Security-Policy = %q, want only sandbox", got)
 	}
@@ -207,14 +210,14 @@ func TestServersAndTrafficEndpoints(t *testing.T) {
 		Tools: []model.Tool{{Name: "echo", InputSchema: json.RawMessage(`{"type":"object"}`)}}}})
 
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/servers", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/v1/servers", nil))
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"tools":[{"name":"echo","inputSchema":{"type":"object"}}]`) {
 		t.Fatalf("GET /v1/servers = %d: %s", rr.Code, rr.Body.String())
 	}
 
 	post(handler, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo","arguments":{"message":"secret-argument"}}}`, nil)
 	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/traffic", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/v1/traffic", nil))
 	var traffic struct {
 		Requests []TrafficRecord `json:"requests"`
 	}
@@ -249,20 +252,20 @@ func TestConsole(t *testing.T) {
 	handler, _ := demoHandler(t, okResponse)
 
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/ui/", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/ui/", nil))
 	if rr.Code != http.StatusNotFound {
 		t.Fatalf("console disabled: GET /ui/ = %d, want 404", rr.Code)
 	}
 
 	handler.EnableConsole(console.Handler())
 	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/", nil))
 	if rr.Code != http.StatusFound || rr.Header().Get("Location") != "/ui/" {
 		t.Fatalf("GET / = %d to %q, want redirect to /ui/", rr.Code, rr.Header().Get("Location"))
 	}
 	for _, path := range []string{"/ui/", "/ui/app.js", "/ui/app.css", "/ui/logo.svg"} {
 		rr = httptest.NewRecorder()
-		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, path, nil))
+		handler.ServeHTTP(rr, newRequest(http.MethodGet, path, nil))
 		if rr.Code != http.StatusOK {
 			t.Fatalf("GET %s = %d", path, rr.Code)
 		}

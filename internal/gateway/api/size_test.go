@@ -22,7 +22,7 @@ func callOfSize(size int) string {
 
 // chunked sends body without a Content-Length, as a chunked request does.
 func chunked(h *Handler, body string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", io.NopCloser(strings.NewReader(body)))
+	req := newRequest(http.MethodPost, "/mcp/team-a.demo", io.NopCloser(strings.NewReader(body)))
 	req.ContentLength = -1
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, req)
@@ -73,7 +73,7 @@ func TestOversizedContentLengthIsRefusedBeforeTheServer(t *testing.T) {
 		t.Errorf("oversized POST keeps the connection open")
 	}
 
-	req := httptest.NewRequest(http.MethodDelete, "/mcp/team-a.demo", strings.NewReader(strings.Repeat("a", DefaultMaxRequestBytes+1)))
+	req := newRequest(http.MethodDelete, "/mcp/team-a.demo", strings.NewReader(strings.Repeat("a", DefaultMaxRequestBytes+1)))
 	rr = httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusRequestEntityTooLarge || !strings.Contains(rr.Body.String(), `"error":"request body is larger than`) || *calls != 0 {

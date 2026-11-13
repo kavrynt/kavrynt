@@ -169,3 +169,4 @@ against the assistant's summary of them.
 | [0039](0039-endpoint-scope-through-services/spec.md) | Endpoint scope through Services in the server's namespace | Implemented |
 | [0042](0042-caller-bound-sessions/spec.md) | MCP sessions and streams bound to their caller | Implemented |
 | [0043](0043-console-time-ranges/spec.md) | Console dashboard time ranges | Draft |
+| [0044](0044-strict-forwarding/spec.md) | Only MCP requests and answers pass the Gateway | Implemented |

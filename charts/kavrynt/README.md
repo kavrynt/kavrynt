@@ -590,6 +590,7 @@ helm template kavrynt oci://ghcr.io/kavrynt/charts/kavrynt \
 | `gateway.config.requestTimeout` | string | `"30s"` | Upstream request timeout; event streams only until response headers |
 | `gateway.config.maxRequestBytes` | int | `4194304` | Largest request body an MCP route accepts, 1024 to 1073741824 bytes; larger requests get `413`. A larger `Content-Length` never reaches the MCP server; a body without one is forwarded up to the limit, then cut |
 | `gateway.config.stripRequestHeaders` | list | `[]` | Extra request headers never forwarded. `Authorization`, `Cookie`, and `Proxy-Authorization` are always removed. |
+| `gateway.config.allowResponseHeaders` | list | `[]` | Extra MCP server response headers clients get, besides those MCP needs (SPEC-0044). `Set-Cookie`, `WWW-Authenticate`, `Location`, `Strict-Transport-Security`, `Access-Control-*`, and other headers that act on the Gateway's origin or the client's sign-in are refused |
 | `gateway.config.allowedOrigins` | list | `[]` | Browser origins accepted besides loopback, for example the Ingress URL that serves the console |
 | `gateway.config.shutdownDelay` | string | `5s` | On shutdown, keep serving this long after `/readyz` fails (whole seconds) |
 | `gateway.config.shutdownTimeout` | string | `10s` | Then wait this long for in-flight requests (whole seconds). The termination grace period is both plus 5 seconds |

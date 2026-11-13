@@ -33,7 +33,7 @@ func consoleAuthHandler(t *testing.T, upstream *[]*http.Request) *Handler {
 }
 
 func get(h *Handler, path string, cookies ...*http.Cookie) *httptest.ResponseRecorder {
-	r := httptest.NewRequest(http.MethodGet, path, nil)
+	r := newRequest(http.MethodGet, path, nil)
 	for _, c := range cookies {
 		r.AddCookie(c)
 	}
@@ -53,7 +53,7 @@ func TestConsoleDataNeedsASession(t *testing.T) {
 		}
 	}
 
-	r := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(`{"username":"admin","password":"s3cret-admin-password"}`))
+	r := newRequest(http.MethodPost, "/v1/session", strings.NewReader(`{"username":"admin","password":"s3cret-admin-password"}`))
 	r.Header.Set("Content-Type", "application/json")
 	rr := httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
@@ -95,7 +95,7 @@ func TestWithoutConsoleLoginEndpointsAreOpen(t *testing.T) {
 	if rr.Code != http.StatusOK || !strings.Contains(rr.Body.String(), `"enabled":false`) {
 		t.Fatalf("GET /v1/session = %d %s, want login reported off", rr.Code, rr.Body)
 	}
-	r := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(`{}`))
+	r := newRequest(http.MethodPost, "/v1/session", strings.NewReader(`{}`))
 	r.Header.Set("Content-Type", "application/json")
 	rr = httptest.NewRecorder()
 	h.ServeHTTP(rr, r)
@@ -108,7 +108,7 @@ func TestWithoutConsoleLoginEndpointsAreOpen(t *testing.T) {
 func TestLoginKeepsTheOriginCheck(t *testing.T) {
 	var upstream []*http.Request
 	h := consoleAuthHandler(t, &upstream)
-	r := httptest.NewRequest(http.MethodPost, "/v1/session", strings.NewReader(`{"username":"admin","password":"s3cret-admin-password"}`))
+	r := newRequest(http.MethodPost, "/v1/session", strings.NewReader(`{"username":"admin","password":"s3cret-admin-password"}`))
 	r.Header.Set("Content-Type", "application/json")
 	r.Header.Set("Origin", "https://attacker.example")
 	rr := httptest.NewRecorder()
@@ -141,7 +141,7 @@ func expiringStream(t *testing.T) (h *Handler, token string, writer *io.PipeWrit
 // openStream sends a GET for the route's event stream and reports when the
 // Gateway ends it.
 func openStream(h *Handler, token string) (*flushRecorder, <-chan struct{}) {
-	req := httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil)
+	req := newRequest(http.MethodGet, "/mcp/team-a.demo", nil)
 	req.Header.Set("Authorization", "Bearer "+token)
 	req.Header.Set("Accept", "text/event-stream")
 	rr := &flushRecorder{ResponseRecorder: httptest.NewRecorder()}

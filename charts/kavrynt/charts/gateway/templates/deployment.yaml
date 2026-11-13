@@ -74,6 +74,10 @@ spec:
             - --strip-request-headers
             - {{ join "," . | quote }}
             {{- end }}
+            {{- with include "gateway.allowResponseHeaders" . }}
+            - --allow-response-headers
+            - {{ . | quote }}
+            {{- end }}
             {{- with include "gateway.watchNamespaces" . }}
             - --watch-namespaces
             - {{ . | quote }}

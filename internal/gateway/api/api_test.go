@@ -24,7 +24,7 @@ func TestListRoutesAndReadiness(t *testing.T) {
 	handler := NewHandler(table, nil, Metadata{})
 
 	rr := httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/readyz", nil))
 	if rr.Code != http.StatusServiceUnavailable {
 		t.Fatalf("readyz before first sync = %d, want 503", rr.Code)
 	}
@@ -32,13 +32,13 @@ func TestListRoutesAndReadiness(t *testing.T) {
 	table.Replace([]model.Route{{Name: "team-a.demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp"}}, time.Now())
 
 	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/readyz", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/readyz", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("readyz after sync = %d, want 200", rr.Code)
 	}
 
 	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/v1/routes", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/v1/routes", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("status = %d, want 200: %s", rr.Code, rr.Body.String())
 	}
@@ -47,7 +47,7 @@ func TestListRoutesAndReadiness(t *testing.T) {
 	}
 
 	rr = httptest.NewRecorder()
-	handler.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	handler.ServeHTTP(rr, newRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(rr.Body.String(), "kavrynt_gateway_route_sync_success_total 1") {
 		t.Fatalf("metrics missing sync count: %s", rr.Body.String())
 	}
@@ -80,7 +80,7 @@ func TestProxyHTTPRoute(t *testing.T) {
 
 	handler := NewHandler(table, proxyClient, Metadata{})
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/demo/tools/list?trace=1", strings.NewReader(`{"jsonrpc":"2.0"}`))
+	req := newRequest(http.MethodPost, "/mcp/demo/tools/list?trace=1", strings.NewReader(`{"jsonrpc":"2.0"}`))
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -101,7 +101,7 @@ func TestProxyRejectsUnsupportedTransport(t *testing.T) {
 
 	handler := NewHandler(table, nil, Metadata{})
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/stdio-demo", nil)
+	req := newRequest(http.MethodPost, "/mcp/stdio-demo", nil)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 
@@ -152,7 +152,7 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 	handler := NewHandler(table, proxyClient, Metadata{})
 	handler.StripRequestHeaders("X-Api-Key")
 
-	req := httptest.NewRequest(http.MethodPost, "/mcp/demo", strings.NewReader(`{}`))
+	req := newRequest(http.MethodPost, "/mcp/demo", strings.NewReader(`{}`))
 	req.Header.Set("Authorization", "Bearer client-token")
 	req.Header.Set("Cookie", "session=client")
 	req.Header.Set("Proxy-Authorization", "Basic abc")
@@ -184,12 +184,13 @@ func TestProxyNeverForwardsCredentials(t *testing.T) {
 			t.Errorf("client received upstream %s: %q", name, value)
 		}
 	}
-	if rr.Header().Get("X-Upstream") != "1" {
-		t.Error("client missing X-Upstream response header")
+	// Other headers are not passed on either (SPEC-0044-R08).
+	if value := rr.Header().Get("X-Upstream"); value != "" {
+		t.Errorf("client received upstream X-Upstream: %q", value)
 	}
 
 	metrics := httptest.NewRecorder()
-	handler.ServeHTTP(metrics, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	handler.ServeHTTP(metrics, newRequest(http.MethodGet, "/metrics", nil))
 	if !strings.Contains(metrics.Body.String(), "kavrynt_gateway_stripped_credential_requests_total 1") {
 		t.Fatalf("metrics missing stripped count:\n%s", metrics.Body.String())
 	}
@@ -209,7 +210,7 @@ func TestProxyExplainsUnroutedServers(t *testing.T) {
 		"team-a.missing": `MCP server "team-a.missing" is not registered`,
 	} {
 		rr := httptest.NewRecorder()
-		handler.ServeHTTP(rr, httptest.NewRequest(http.MethodPost, "/mcp/"+route, strings.NewReader(`{}`)))
+		handler.ServeHTTP(rr, newRequest(http.MethodPost, "/mcp/"+route, strings.NewReader(`{}`)))
 		var body errorResponse
 		if err := json.Unmarshal(rr.Body.Bytes(), &body); err != nil {
 			t.Fatal(err)

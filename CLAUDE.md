@@ -123,10 +123,18 @@ start from a spec in `specs/NNNN-name/` ([process](specs/README.md)).
   limit. The Operator drops control characters other than newline and tab
   from tool descriptions and keeps no schema that has one in any string.
 - Gateway strips `Authorization`, `Cookie`, and `Proxy-Authorization` before
-  forwarding and drops upstream `Set-Cookie`, `Server`, and `X-Powered-By`.
+  forwarding. Only MCP requests pass (SPEC-0044): before authentication and
+  without reading the body, a `GET` or `DELETE` with a body gets `400` and a
+  `POST` that is not `application/json` gets `415`; method override headers
+  are never forwarded; a JSON-RPC method or tool name outside
+  `[A-Za-z0-9_./-]{1,128}` gets `400` (with a policy always, otherwise
+  unless `strictProtocol` is off). Clients get only the response headers MCP
+  needs plus `gateway.config.allowResponseHeaders`, which can never add
+  `Set-Cookie`, `WWW-Authenticate`, `Location`, and the like.
 - Gateway and Operator discovery refuse link-local, cloud metadata, and
-  loopback addresses at dial time (`internal/egress`); the Gateway passes
-  redirects to the client, rejects `..` path segments, cross-origin browser
+  loopback addresses at dial time (`internal/egress`); the Gateway answers
+  an upstream redirect with `502` (never followed or passed on), rejects
+  `..` path segments, cross-origin browser
   requests (`--allowed-origins`), and Gateway loops, and sandboxes proxied
   responses with CSP.
 - Opt-in alerting rules (`metrics.prometheusRule`) for the Gateway, the

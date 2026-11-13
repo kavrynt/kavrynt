@@ -143,3 +143,19 @@ timeout, and 5 seconds of margin (SPEC-0008-R02).
 {{- $timeout := .Values.config.shutdownTimeout | default "10s" | trimSuffix "s" | int -}}
 {{- add $delay $timeout 5 -}}
 {{- end -}}
+
+{{/*
+Comma-separated extra response headers clients get. Fails rendering for a
+header no MCP server may send, as the Gateway would at start-up
+(SPEC-0044-R09).
+*/}}
+{{- define "gateway.allowResponseHeaders" -}}
+{{- $refused := list "set-cookie" "www-authenticate" "proxy-authenticate" "location" "refresh" "strict-transport-security" "clear-site-data" "content-security-policy" "content-security-policy-report-only" "x-content-type-options" "alt-svc" "server" "x-powered-by" "x-request-id" -}}
+{{- range (.Values.config.allowResponseHeaders | default list) -}}
+{{- $name := lower . -}}
+{{- if or (has $name $refused) (hasPrefix "access-control-" $name) -}}
+{{- fail (printf "gateway.config.allowResponseHeaders: MCP servers may never send %s to clients; it acts on the Gateway's origin or the client's sign-in (SPEC-0044)" .) -}}
+{{- end -}}
+{{- end -}}
+{{- join "," (.Values.config.allowResponseHeaders | default list) -}}
+{{- end -}}
