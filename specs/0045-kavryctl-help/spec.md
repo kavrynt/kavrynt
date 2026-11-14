@@ -20,12 +20,14 @@ per-command help that preserves existing operational caveats.
 ## Problem
 
 Running `kavryctl` with no arguments currently prints usage to standard error
-and exits `2`, and running `kavryctl <command> -h` or `--help` writes flag
-help to standard error and exits `2` as well. Furthermore, top-level usage mixes
-every command's flags and notes into one long screen, while command-specific
-help like `kavryctl export --help` or `kavryctl audit verify --help` is hard
-to inspect cleanly in a pager or pipeline, and parse errors on `flag.FlagSet`
-must never contaminate redirected standard output.
+and exits `2`. Running `kavryctl <command> -h` or `--help` behaves inconsistently:
+most subcommands write flag help to standard error and exit `2`, but `version -h`
+ignores the flag and prints the version, and `audit verify --help` treats
+`--help` as a file name and fails with exit `1`. Furthermore, top-level usage
+mixes every command's flags and notes into one long screen, while
+command-specific help like `kavryctl export --help` or `kavryctl audit verify --help`
+is hard to inspect cleanly in a pager or pipeline, and parse errors on
+`flag.FlagSet` must never contaminate redirected standard output.
 
 ## Goals
 
@@ -115,8 +117,10 @@ output streams.
 
 - Invoking `kavryctl` with no arguments changes from exit `2` on standard
   error to exit `0` on standard output, matching standard CLI conventions.
-- Subcommand `-h` / `--help` changes from exit `2` on standard error to exit
-  `0` on standard output.
+- Subcommand `-h` / `--help` changes from inconsistent behavior (most
+  subcommands writing flag help to standard error with exit `2`, `version -h`
+  printing the version on standard output, and `audit verify --help` failing
+  with exit `1`) to consistently writing help to standard output with exit `0`.
 - No changes to the `MCPServer` CRD, API versions, Helm values, or command
   runtime behavior; no CRD or upgrade migration is needed.
 
