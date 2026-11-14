@@ -64,26 +64,32 @@ tests:
 
   # The Operator writes only MCPServer status. Write access to the objects
   # themselves would let it, or anyone holding its token, change every
-  # team's endpoints and credentials.
-  - it: grants no write access to MCPServers outside their status
+  # team's endpoints and credentials. The whole rule list is pinned, so no
+  # other rule, wildcard, or verb can be added unnoticed; a change here is a
+  # change to the Operator's access and belongs in review.
+  - it: grants exactly the cluster-wide access the Operator uses
     documentSelector:
       path: kind
       value: ClusterRole
     asserts:
-      - contains:
+      - equal:
           path: rules
-          content:
-            apiGroups: [kavrynt.io]
-            resources: [mcpservers]
-            verbs: [get, list, watch]
-      - contains:
-          path: rules
-          content:
-            apiGroups: [kavrynt.io]
-            resources: [mcpservers/status]
-            verbs: [get, update]
-      - notContains:
-          path: rules
-          any: true
-          content:
-            resources: [mcpservers/finalizers]
+          value:
+            - apiGroups: [kavrynt.io]
+              resources: [mcpservers]
+              verbs: [get, list, watch]
+            - apiGroups: [kavrynt.io]
+              resources: [mcpservers/status]
+              verbs: [get, update]
+            - apiGroups: [""]
+              resources: [events]
+              verbs: [create, patch]
+            - apiGroups: [""]
+              resources: [namespaces]
+              verbs: [get]
+            - apiGroups: [discovery.k8s.io]
+              resources: [endpointslices]
+              verbs: [list, watch]
+            - apiGroups: [""]
+              resources: [services]
+              verbs: [get, list, watch]

@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
@@ -77,7 +79,11 @@ func main() {
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	logger := zap.New(zap.UseFlagOptions(&opts))
+	ctrl.SetLogger(logger)
+	// The Operator's own messages (slog) go through the same logger, so a
+	// collector that parses JSON reads start-up failures too.
+	slog.SetDefault(slog.New(logr.ToSlogHandler(logger)))
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))
