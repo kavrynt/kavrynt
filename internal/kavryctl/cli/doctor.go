@@ -70,7 +70,8 @@ type doctor struct {
 
 func runDoctor(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("doctor",
-		`Check the installation and its MCPServers`,
+		`Check the installation and its MCPServers
+(read-only; -n defaults to kavrynt-system)`,
 		`kavryctl doctor [flags]`,
 		stdout,
 		stderr)
@@ -87,7 +88,7 @@ func runDoctor(args []string, stdout, stderr io.Writer) int {
 		return 2
 	}
 	if fs.NArg() != 0 || (*output != "table" && *output != "json") {
-		fmt.Fprintln(stderr, "usage: kavryctl doctor [-n kavrynt-system] [--release kavrynt] [--output table|json] [--anonymize]")
+		fmt.Fprintln(stderr, "usage: kavryctl doctor [flags]")
 		return 2
 	}
 	if opts.namespace == "" {

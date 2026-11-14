@@ -71,7 +71,9 @@ func exportedMeta(server *kavryntv1alpha1.MCPServer) (labels, annotations map[st
 
 func runExport(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("export",
-		`Exports MCPServers as YAML manifests to restore elsewhere`,
+		`Write MCPServers as manifests to restore elsewhere;
+environment values and arguments are written empty by default,
+and Secrets are never read`,
 		`kavryctl export [flags]`,
 		stdout,
 		stderr)
@@ -259,7 +261,9 @@ func (p importPlan) key() string { return p.server.Namespace + "/" + p.server.Na
 
 func runImport(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("import",
-		`Imports MCPServers from an export file`,
+		`Imports MCPServers from an export file;
+import changes nothing if preflight refuses any document,
+but later write failures can leave partial changes`,
 		`kavryctl import [flags] <file>`,
 		stdout,
 		stderr)

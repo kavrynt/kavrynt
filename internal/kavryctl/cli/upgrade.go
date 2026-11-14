@@ -257,7 +257,8 @@ func (s *session) adoptCRD(ctx context.Context, crd *apiextensionsv1.CustomResou
 
 func runUpgrade(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("upgrade",
-		`Upgrades the Kavrynt release with Helm`,
+		`Upgrades the Kavrynt release with Helm
+(--version is required unless --chart is a directory)`,
 		`kavryctl upgrade [flags]`,
 		stdout,
 		stderr)
@@ -370,7 +371,7 @@ Nothing was changed. Run again with --adopt-crd, or adopt it yourself:
 
 func runRollback(args []string, stdout, stderr io.Writer) int {
 	fs := newFlagSet("rollback",
-		`Rolls back the Kavrynt with Helm`,
+		`Rolls back the Kavrynt release with Helm`,
 		`kavryctl rollback [flags]`,
 		stdout,
 		stderr)
