@@ -111,7 +111,9 @@ func shapeCall(r *http.Request) mcpCall {
 // "delete_all " or "delete_all\u0000" (SPEC-0044-R05). The error never
 // quotes the name.
 func checkNames(body bodyInfo) error {
-	if !body.classified || body.method == "" {
+	// Only a JSON-RPC response has no method; an empty or null one is a
+	// request no rule can name.
+	if !body.classified || !body.hasMethod {
 		return nil
 	}
 	if !mcpmeta.ValidName(body.method, mcpmeta.MaxToolNameLength) {

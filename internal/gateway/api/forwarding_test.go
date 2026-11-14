@@ -185,6 +185,8 @@ func TestNamesARuleCannotMatchAreRefused(t *testing.T) {
 		"method with a space":  `{"jsonrpc":"2.0","id":1,"method":"tools/call ","params":{"name":"delete_all","arguments":{}}}`,
 		"method with unicode":  `{"jsonrpc":"2.0","id":1,"method":"tools/cаll","params":{"name":"delete_all","arguments":{}}}`,
 		"method with a slash ": `{"jsonrpc":"2.0","id":1,"method":"tools\\/call\t","params":{"name":"delete_all","arguments":{}}}`,
+		"empty method":         `{"jsonrpc":"2.0","id":1,"method":"","params":{}}`,
+		"null method":          `{"jsonrpc":"2.0","id":1,"method":null,"params":{}}`,
 	}
 	for _, withPolicy := range []bool{true, false} {
 		for _, strict := range []bool{true, false} {

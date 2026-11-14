@@ -101,6 +101,9 @@ type bodyInfo struct {
 	classified bool
 	// method is the JSON-RPC method; empty for a JSON-RPC response.
 	method string
+	// hasMethod reports a method member, which a response does not have:
+	// "method": "" is a request with an empty method, not a response.
+	hasMethod bool
 	// tool is params.name of tools/call; toolOK reports it was a string.
 	tool   string
 	toolOK bool
@@ -160,10 +163,11 @@ func inspectBody(prefix []byte) bodyInfo {
 		return info
 	}
 	var method string
-	if raw, present := message["method"]; present && json.Unmarshal(raw, &method) != nil {
+	raw, present := message["method"]
+	if present && json.Unmarshal(raw, &method) != nil {
 		return info
 	}
-	info.classified, info.method, info.id = true, method, message["id"]
+	info.classified, info.method, info.hasMethod, info.id = true, method, present, message["id"]
 	if method == "tools/call" {
 		params, ok := unambiguousObject(message["params"], "name")
 		var name string
