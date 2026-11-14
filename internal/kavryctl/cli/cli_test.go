@@ -349,3 +349,321 @@ func TestEmptyListPointsToOtherNamespaces(t *testing.T) {
 		t.Fatalf("list -A with no servers: code=%d out=%q", code, out)
 	}
 }
+
+// Verifies SPEC-0045-R01, SPEC-0045-R02, and SPEC-0045-R06:
+// Top-level and subcommand help: exit 0 with help on stdout and nothing on stderr
+// for -h, --help, and help <command> on every command without network access.
+func TestCLIHelp(t *testing.T) {
+	origKubeClient := newKubeClient
+	newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
+		t.Fatal("help must not read kubeconfig or create kubernetes client")
+		return nil, "", nil
+	}
+	t.Cleanup(func() { newKubeClient = origKubeClient })
+
+	// Top-level invocations
+	topInvocations := [][]string{
+		{},
+		{"-h"},
+		{"--help"},
+		{"help"},
+	}
+	var topHelp string
+	for _, args := range topInvocations {
+		out, errOut, code := run(t, args...)
+		if code != 0 {
+			t.Fatalf("kavryctl %v: expected exit 0, got %d", args, code)
+		}
+		if errOut != "" {
+			t.Fatalf("kavryctl %v: expected empty stderr, got %q", args, errOut)
+		}
+		if !strings.Contains(out, "kavryctl manages Kavrynt MCPServer resources") {
+			t.Fatalf("kavryctl %v: missing top-level description in %q", args, out)
+		}
+		if topHelp == "" {
+			topHelp = out
+		} else if out != topHelp {
+			t.Fatalf("kavryctl %v: output mismatch with top-level help", args)
+		}
+	}
+
+	// Verify top-level command list alignment (spaces, no tabs, no trailing space on audit)
+	for _, line := range strings.Split(topHelp, "\n") {
+		if strings.HasPrefix(line, "  kavryctl ") {
+			if strings.Contains(line, "\t") {
+				t.Fatalf("top-level usage contains tab in line: %q", line)
+			}
+			if strings.HasPrefix(line, "  kavryctl audit ") && strings.Contains(line, "audit  ") {
+				// check that audit is followed by spaces aligning with other commands and has no trailing space
+				if strings.HasSuffix(strings.TrimRight(line, " \t"), " ") {
+					t.Fatalf("trailing space found in audit line: %q", line)
+				}
+			}
+		}
+	}
+
+	// Subcommands
+	commands := []string{
+		"version",
+		"validate",
+		"register",
+		"unregister",
+		"list",
+		"inspect",
+		"export",
+		"import",
+		"doctor",
+		"audit",
+		"upgrade",
+		"rollback",
+		"help",
+	}
+
+	for _, cmd := range commands {
+		t.Run(cmd, func(t *testing.T) {
+			outH, errH, codeH := run(t, cmd, "-h")
+			if codeH != 0 || errH != "" {
+				t.Fatalf("%s -h: code=%d err=%q out=%q", cmd, codeH, errH, outH)
+			}
+			if !strings.Contains(outH, "Usage:\n") {
+				t.Fatalf("%s -h: expected usage in %q", cmd, outH)
+			}
+
+			outHelp, errHelp, codeHelp := run(t, cmd, "--help")
+			if codeHelp != 0 || errHelp != "" {
+				t.Fatalf("%s --help: code=%d err=%q out=%q", cmd, codeHelp, errHelp, outHelp)
+			}
+			if outH != outHelp {
+				t.Fatalf("%s: -h and --help output differ", cmd)
+			}
+
+			outSub, errSub, codeSub := run(t, "help", cmd)
+			if codeSub != 0 || errSub != "" {
+				t.Fatalf("help %s: code=%d err=%q out=%q", cmd, codeSub, errSub, outSub)
+			}
+			if outSub != outHelp {
+				t.Fatalf("help %s: output differs from %s --help", cmd, cmd)
+			}
+
+			// Verify that multi-character flags use -- and single-character flags use -
+			for _, line := range strings.Split(outHelp, "\n") {
+				if strings.HasPrefix(line, "  -") && len(line) > 3 {
+					rest := line[2:]
+					if strings.HasPrefix(rest, "--") {
+						fields := strings.Fields(rest[2:])
+						if len(fields) > 0 && len(fields[0]) <= 1 {
+							t.Errorf("%s: single-character flag unexpectedly formatted with --: %q", cmd, line)
+						}
+					} else if strings.HasPrefix(rest, "-") {
+						fields := strings.Fields(rest[1:])
+						if len(fields) > 0 && len(fields[0]) > 1 {
+							t.Errorf("%s: multi-character flag unexpectedly formatted with single -: %q", cmd, line)
+						}
+					}
+				}
+			}
+		})
+	}
+}
+
+// Verifies SPEC-0045-R03 and SPEC-0045-R06:
+// audit -h, audit verify -h, and that help never opens a file or reads a kubeconfig.
+func TestAuditHelp(t *testing.T) {
+	origKubeClient := newKubeClient
+	newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
+		t.Fatal("help must not read kubeconfig or create kubernetes client")
+		return nil, "", nil
+	}
+	t.Cleanup(func() { newKubeClient = origKubeClient })
+
+	nonexistentFile := filepath.Join(t.TempDir(), "does-not-exist.log")
+
+	// audit -h and audit --help
+	for _, args := range [][]string{{"audit", "-h"}, {"audit", "--help"}, {"help", "audit"}} {
+		out, errOut, code := run(t, args...)
+		if code != 0 || errOut != "" {
+			t.Fatalf("%v: code=%d err=%q out=%q", args, code, errOut, out)
+		}
+		if !strings.Contains(out, "Commands:\n   verify") {
+			t.Fatalf("%v: missing verify subcommand in %q", args, out)
+		}
+	}
+
+	// audit verify help forms, even if a nonexistent file argument follows or precedes
+	verifyInvocations := [][]string{
+		{"audit", "verify", "-h"},
+		{"audit", "verify", "--help"},
+		{"help", "audit", "verify"},
+		{"audit", "verify", "--help", nonexistentFile},
+		{"audit", "verify", "-h", nonexistentFile},
+		{"audit", "verify", nonexistentFile, "--help"},
+		{"audit", "verify", nonexistentFile, "-h"},
+		{"help", "audit", "verify", nonexistentFile},
+	}
+	var expectedVerifyHelp string
+	for _, args := range verifyInvocations {
+		out, errOut, code := run(t, args...)
+		if code != 0 || errOut != "" {
+			t.Fatalf("%v: code=%d err=%q out=%q", args, code, errOut, out)
+		}
+		if !strings.Contains(out, "kavryctl audit verify [flags] [file]") {
+			t.Fatalf("%v: missing usage in %q", args, out)
+		}
+		if expectedVerifyHelp == "" {
+			expectedVerifyHelp = out
+		} else if out != expectedVerifyHelp {
+			t.Fatalf("%v: output mismatch with audit verify help", args)
+		}
+	}
+
+	// Help on file-taking commands never opens nonexistent file
+	fileHelpInvocations := [][]string{
+		{"validate", "--help", nonexistentFile},
+		{"register", "--help", nonexistentFile},
+		{"import", "--help", nonexistentFile},
+	}
+	for _, args := range fileHelpInvocations {
+		out, errOut, code := run(t, args...)
+		if code != 0 || errOut != "" {
+			t.Fatalf("%v: code=%d err=%q out=%q", args, code, errOut, out)
+		}
+	}
+}
+
+// Verifies SPEC-0045-R04 and SPEC-0045-R06:
+// exit 2 with stderr only, and nothing on stdout, for bad flags, bad values, and wrong argument counts.
+func TestCLIErrorHandling(t *testing.T) {
+	origKubeClient := newKubeClient
+	newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
+		t.Fatal("error handling must not contact kubernetes client")
+		return nil, "", nil
+	}
+	t.Cleanup(func() { newKubeClient = origKubeClient })
+
+	badCases := []struct {
+		name string
+		args []string
+		want string
+	}{
+		// Unknown commands
+		{"unknown command", []string{"foo"}, `unknown command "foo"`},
+		{"unknown help command", []string{"help", "foo"}, `unknown command "foo"`},
+		{"unknown audit subcommand", []string{"audit", "foo"}, "usage: kavryctl audit verify"},
+		{"audit no args", []string{"audit"}, "usage: kavryctl audit verify"},
+
+		// Bad flags
+		{"version bad flag", []string{"version", "--bad"}, "flag provided but not defined"},
+		{"validate bad flag", []string{"validate", "--bad"}, "flag provided but not defined"},
+		{"register bad flag", []string{"register", "--bad"}, "flag provided but not defined"},
+		{"unregister bad flag", []string{"unregister", "--bad"}, "flag provided but not defined"},
+		{"list bad flag", []string{"list", "--bad"}, "flag provided but not defined"},
+		{"inspect bad flag", []string{"inspect", "--bad"}, "flag provided but not defined"},
+		{"export bad flag", []string{"export", "--bad"}, "flag provided but not defined"},
+		{"import bad flag", []string{"import", "--bad"}, "flag provided but not defined"},
+		{"doctor bad flag", []string{"doctor", "--bad"}, "flag provided but not defined"},
+		{"upgrade bad flag", []string{"upgrade", "--bad"}, "flag provided but not defined"},
+		{"rollback bad flag", []string{"rollback", "--bad"}, "flag provided but not defined"},
+
+		// Bad values
+		{"doctor bad output format", []string{"doctor", "--output", "xml"}, "usage: kavryctl doctor [flags]"},
+		{"rollback negative revision", []string{"rollback", "--revision", "-1"}, "usage: kavryctl rollback [flags]"},
+		{"import bad duration", []string{"import", "--wait", "invalid"}, "invalid value"},
+
+		// Wrong argument counts
+		{"version with args", []string{"version", "extra"}, "version does not accept positional arguments"},
+		{"validate no args", []string{"validate"}, "usage: kavryctl validate [flags] <manifest.yaml|json>"},
+		{"validate too many args", []string{"validate", "a", "b"}, "usage: kavryctl validate [flags] <manifest.yaml|json>"},
+		{"register no args", []string{"register"}, "usage: kavryctl register [flags] <manifest.yaml|json>"},
+		{"register too many args", []string{"register", "a", "b"}, "usage: kavryctl register [flags] <manifest.yaml|json>"},
+		{"unregister no args", []string{"unregister"}, "usage: kavryctl unregister [flags] <name>"},
+		{"unregister too many args", []string{"unregister", "a", "b"}, "usage: kavryctl unregister [flags] <name>"},
+		{"list too many args", []string{"list", "extra"}, "list does not accept positional arguments"},
+		{"inspect no args", []string{"inspect"}, "usage: kavryctl inspect [flags] <name>"},
+		{"inspect too many args", []string{"inspect", "a", "b"}, "usage: kavryctl inspect [flags] <name>"},
+		{"export too many args", []string{"export", "extra"}, "usage: kavryctl export [flags]"},
+		{"import no args", []string{"import"}, "usage: kavryctl import [flags] <file>"},
+		{"import too many args", []string{"import", "a", "b"}, "usage: kavryctl import [flags] <file>"},
+		{"doctor too many args", []string{"doctor", "extra"}, "usage: kavryctl doctor [flags]"},
+		{"audit verify too many args", []string{"audit", "verify", "a", "b"}, "usage: kavryctl audit verify"},
+		{"upgrade too many args", []string{"upgrade", "extra"}, "usage: kavryctl upgrade [flags]"},
+		{"rollback too many args", []string{"rollback", "extra"}, "usage: kavryctl rollback [flags]"},
+		{"help too many args", []string{"help", "help", "extra"}, "help does not accept extra arguments"},
+	}
+
+	for _, tc := range badCases {
+		t.Run(tc.name, func(t *testing.T) {
+			out, errOut, code := run(t, tc.args...)
+			if code != 2 {
+				t.Fatalf("code=%d (want 2), err=%q, out=%q", code, errOut, out)
+			}
+			if out != "" {
+				t.Fatalf("expected stdout empty, got %q", out)
+			}
+			if !strings.Contains(errOut, tc.want) {
+				t.Fatalf("expected stderr to contain %q, got %q", tc.want, errOut)
+			}
+		})
+	}
+}
+
+// Verifies SPEC-0045-R05: operational notes moved into each command's help.
+func TestOperationalNotesInHelp(t *testing.T) {
+	notes := []struct {
+		cmd   string
+		args  []string
+		wants []string
+	}{
+		{
+			cmd:  "export",
+			args: []string{"export", "--help"},
+			wants: []string{
+				"environment values and arguments are written empty by default",
+				"Secrets are never read",
+			},
+		},
+		{
+			cmd:  "import",
+			args: []string{"import", "--help"},
+			wants: []string{
+				"import changes nothing if preflight refuses any document",
+				"later write failures can leave partial changes",
+			},
+		},
+		{
+			cmd:  "audit verify",
+			args: []string{"audit", "verify", "--help"},
+			wants: []string{
+				"events cut off the end of a chain are not detected",
+			},
+		},
+		{
+			cmd:  "doctor",
+			args: []string{"doctor", "--help"},
+			wants: []string{
+				"read-only",
+				"-n defaults to kavrynt-system",
+			},
+		},
+		{
+			cmd:  "upgrade",
+			args: []string{"upgrade", "--help"},
+			wants: []string{
+				"--version is required unless --chart is a directory",
+			},
+		},
+	}
+
+	for _, tc := range notes {
+		t.Run(tc.cmd, func(t *testing.T) {
+			out, errOut, code := run(t, tc.args...)
+			if code != 0 || errOut != "" {
+				t.Fatalf("%v: code=%d err=%q out=%q", tc.args, code, errOut, out)
+			}
+			for _, want := range tc.wants {
+				if !strings.Contains(out, want) {
+					t.Errorf("%s help missing operational note %q\nFull output:\n%s", tc.cmd, want, out)
+				}
+			}
+		})
+	}
+}

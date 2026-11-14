@@ -256,7 +256,13 @@ func (s *session) adoptCRD(ctx context.Context, crd *apiextensionsv1.CustomResou
 }
 
 func runUpgrade(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("upgrade", stderr)
+	fs := newFlagSet("upgrade",
+		`Upgrades the Kavrynt release with Helm
+(--version is required unless --chart is a directory)`,
+		`kavryctl upgrade [flags]`,
+		stdout,
+		stderr)
+
 	var opts releaseOptions
 	opts.bind(fs)
 	chart := fs.String("chart", defaultChart, "Chart reference, or a chart directory")
@@ -264,10 +270,13 @@ func runUpgrade(args []string, stdout, stderr io.Writer) int {
 	values := fs.String("values", "", "Values file applied on top of the release's values")
 	adopt := fs.Bool("adopt-crd", false, "Let the release take over an MCPServer CRD installed by 0.0.5-beta.1 or earlier")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 0 {
-		fmt.Fprintln(stderr, "usage: kavryctl upgrade --version <version> [--release kavrynt] [-n kavrynt-system] [--chart REF|DIR] [--values FILE] [--adopt-crd] [--dry-run]")
+		fmt.Fprintln(stderr, "usage: kavryctl upgrade [flags]")
 		return 2
 	}
 	info, statErr := os.Stat(*chart)
@@ -361,15 +370,23 @@ Nothing was changed. Run again with --adopt-crd, or adopt it yourself:
 }
 
 func runRollback(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("rollback", stderr)
+	fs := newFlagSet("rollback",
+		`Rolls back the Kavrynt release with Helm`,
+		`kavryctl rollback [flags]`,
+		stdout,
+		stderr)
+
 	var opts releaseOptions
 	opts.bind(fs)
 	revision := fs.Int("revision", 0, "Release revision to roll back to (default: the previous one)")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 0 || *revision < 0 {
-		fmt.Fprintln(stderr, "usage: kavryctl rollback [--revision N] [--release kavrynt] [-n kavrynt-system] [--dry-run]")
+		fmt.Fprintln(stderr, "usage: kavryctl rollback [flags]")
 		return 2
 	}
 	s, err := newSession(opts, stdout, stderr)
