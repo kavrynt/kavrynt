@@ -9,6 +9,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/go-logr/logr"
+
 	kavryntv1alpha1 "github.com/kavrynt/kavrynt/api/v1alpha1"
 	"github.com/kavrynt/kavrynt/internal/egress"
 	"github.com/kavrynt/kavrynt/internal/mcpsession"
@@ -69,11 +71,19 @@ func main() {
 	flag.StringVar(&cloudURL, "cloud-url", "", "Kavrynt Cloud base URL (https)")
 	flag.StringVar(&cloudTokenFile, "cloud-token-file", cloudsync.DefaultTokenFile, "File holding the Kavrynt Cloud cluster token; read before every sync")
 	flag.DurationVar(&cloudInterval, "cloud-sync-interval", cloudsync.DefaultInterval, "How often the inventory is sent without changes")
-	opts := zap.Options{Development: true}
+	// Production logging: JSON lines at info level, stack traces only for
+	// errors. Development mode logs at debug level, where client libraries
+	// print request details, and adds stack traces to every warning;
+	// --zap-devel still turns it on for local runs.
+	opts := zap.Options{}
 	opts.BindFlags(flag.CommandLine)
 	flag.Parse()
 
-	ctrl.SetLogger(zap.New(zap.UseFlagOptions(&opts)))
+	logger := zap.New(zap.UseFlagOptions(&opts))
+	ctrl.SetLogger(logger)
+	// The Operator's own messages (slog) go through the same logger, so a
+	// collector that parses JSON reads start-up failures too.
+	slog.SetDefault(slog.New(logr.ToSlogHandler(logger)))
 
 	scheme := runtime.NewScheme()
 	utilruntime.Must(clientgoscheme.AddToScheme(scheme))

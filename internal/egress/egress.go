@@ -23,6 +23,23 @@ var metadataAddrs = []netip.Addr{
 	netip.MustParseAddr("169.254.169.254"), // AWS, Azure, GCP, and others
 	netip.MustParseAddr("fd00:ec2::254"),   // AWS IMDS over IPv6
 	netip.MustParseAddr("100.100.100.200"), // Alibaba Cloud metadata
+	netip.MustParseAddr("168.63.129.16"),   // Azure WireServer (agent and extension configuration)
+	netip.MustParseAddr("192.0.0.192"),     // Oracle Cloud legacy metadata
+}
+
+// nat64 is the well-known NAT64 prefix (RFC 6052). In an IPv6-only cluster
+// with DNS64, every IPv4 destination resolves into it, the IPv4 address in
+// its last 32 bits; the translator then connects to that address.
+var nat64 = netip.MustParsePrefix("64:ff9b::/96")
+
+// embeddedIPv4 returns the IPv4 address a NAT64 address translates to, or
+// addr unchanged.
+func embeddedIPv4(addr netip.Addr) netip.Addr {
+	if !nat64.Contains(addr) {
+		return addr
+	}
+	b := addr.As16()
+	return netip.AddrFrom4([4]byte{b[12], b[13], b[14], b[15]})
 }
 
 // Allowed reports whether an MCP endpoint may resolve to addr. Unspecified,
@@ -35,7 +52,10 @@ func Allowed(addr netip.Addr, allowLoopback bool) bool {
 // refusedKind names the kind of address addr is when it is refused, and is
 // empty when it is allowed.
 func refusedKind(addr netip.Addr, allowLoopback bool) string {
-	addr = addr.Unmap()
+	// A NAT64 address is judged by the IPv4 address it reaches, so
+	// 64:ff9b::a9fe:a9fe is the metadata service, while DNS64 answers for
+	// public servers stay allowed.
+	addr = embeddedIPv4(addr.WithZone("").Unmap())
 	for _, blocked := range metadataAddrs {
 		if addr == blocked {
 			return "cloud metadata"

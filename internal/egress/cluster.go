@@ -78,6 +78,9 @@ func (c *Cluster) domain() string {
 func (c *Cluster) contains(addr netip.Addr) bool {
 	// Prefixes hold no zone, and Contains is false for a zoned address.
 	addr = addr.WithZone("").Unmap()
+	if v4 := embeddedIPv4(addr); v4 != addr && c.contains(v4) {
+		return true
+	}
 	for _, prefix := range c.CIDRs {
 		if prefix.Contains(addr) {
 			return true

@@ -25,6 +25,13 @@ func TestAllowed(t *testing.T) {
 		{addr: "fe80::1", want: false},
 		{addr: "fd00:ec2::254", want: false},
 		{addr: "100.100.100.200", want: false},
+		{addr: "168.63.129.16", want: false},
+		{addr: "192.0.0.192", want: false},
+		// NAT64 addresses are judged by the IPv4 address they reach.
+		{addr: "64:ff9b::a9fe:a9fe", want: false},
+		{addr: "64:ff9b::7f00:1", want: false},
+		{addr: "64:ff9b::a83f:8110", want: false},
+		{addr: "64:ff9b::808:808", want: true},
 		{addr: "0.0.0.0", want: false},
 		{addr: "::", want: false},
 		{addr: "224.0.0.1", want: false},
@@ -68,16 +75,20 @@ func TestTransportRefusesLoopbackAtDialTime(t *testing.T) {
 func TestRefusalsNameTheAddressKind(t *testing.T) {
 	control := Control(false)
 	for addr, kind := range map[string]string{
-		"169.254.169.254:80":    "cloud metadata",
-		"[fd00:ec2::254]:80":    "cloud metadata",
-		"100.100.100.200:80":    "cloud metadata",
-		"169.254.170.2:80":      "link-local",
-		"[fe80::1]:80":          "link-local",
-		"127.0.0.1:80":          "loopback",
-		"[::1]:80":              "loopback",
-		"0.0.0.0:80":            "unspecified",
-		"224.0.0.1:80":          "multicast",
-		"[::ffff:127.0.0.1]:80": "loopback",
+		"169.254.169.254:80":      "cloud metadata",
+		"[fd00:ec2::254]:80":      "cloud metadata",
+		"100.100.100.200:80":      "cloud metadata",
+		"168.63.129.16:80":        "cloud metadata",
+		"192.0.0.192:80":          "cloud metadata",
+		"[64:ff9b::a9fe:a9fe]:80": "cloud metadata",
+		"[64:ff9b::7f00:1]:80":    "loopback",
+		"169.254.170.2:80":        "link-local",
+		"[fe80::1]:80":            "link-local",
+		"127.0.0.1:80":            "loopback",
+		"[::1]:80":                "loopback",
+		"0.0.0.0:80":              "unspecified",
+		"224.0.0.1:80":            "multicast",
+		"[::ffff:127.0.0.1]:80":   "loopback",
 	} {
 		var refused *RefusedError
 		if err := control("tcp", addr, nil); !errors.As(err, &refused) || refused.Kind != kind {
