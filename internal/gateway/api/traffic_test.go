@@ -33,7 +33,7 @@ func jsonResponse(status int, body string) *http.Response {
 func scrape(t *testing.T, h *Handler) string {
 	t.Helper()
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/metrics", nil))
+	h.ServeHTTP(rr, newRequest(http.MethodGet, "/metrics", nil))
 	if rr.Code != http.StatusOK {
 		t.Fatalf("metrics status = %d", rr.Code)
 	}
@@ -41,7 +41,7 @@ func scrape(t *testing.T, h *Handler) string {
 }
 
 func post(h *Handler, body string, headers map[string]string) *httptest.ResponseRecorder {
-	req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(body))
+	req := newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(body))
 	for name, value := range headers {
 		req.Header.Set(name, value)
 	}
@@ -114,7 +114,9 @@ func TestTrafficMetricsClassifyCalls(t *testing.T) {
 			name:     "unsafe tool name",
 			body:     `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"x\"} 1\nfake_metric{a=\"b"}}`,
 			response: jsonResponse(http.StatusOK, `{"result":{}}`),
-			series:   `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="ok",route="team-a.demo",tool="invalid"} 1`,
+			// Refused before the server (SPEC-0044-R05, R10), and still
+			// never a label.
+			series: `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="protocol_error",route="team-a.demo",tool="invalid"} 1`,
 		},
 		{
 			name:     "not json-rpc",
@@ -316,7 +318,7 @@ func TestTrafficMetricsCountNormalProbesAsOK(t *testing.T) {
 			if tt.body != "" {
 				body = strings.NewReader(tt.body)
 			}
-			h.ServeHTTP(httptest.NewRecorder(), httptest.NewRequest(tt.method, "/mcp/team-a.demo", body))
+			h.ServeHTTP(httptest.NewRecorder(), newRequest(tt.method, "/mcp/team-a.demo", body))
 			requireSeries(t, scrape(t, h), tt.series)
 		})
 	}
@@ -388,7 +390,7 @@ func TestProxyGetForwardsNoBody(t *testing.T) {
 		return &http.Response{StatusCode: http.StatusOK, Header: http.Header{}, Body: io.NopCloser(strings.NewReader(""))}, nil
 	})
 	rr := httptest.NewRecorder()
-	h.ServeHTTP(rr, httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil))
+	h.ServeHTTP(rr, newRequest(http.MethodGet, "/mcp/team-a.demo", nil))
 	if sawBody {
 		t.Fatal("GET was forwarded with a body")
 	}

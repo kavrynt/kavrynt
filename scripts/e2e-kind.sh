@@ -1459,7 +1459,7 @@ kubectl --context "${KUBE_CONTEXT}" -n "${E2E_NAMESPACE}" delete pod/sessions-af
   mcpserver/stateful-affinity mcpserver/stateful-plain deployment/stateful-mcp-server service/stateful-mcp-server \
   --wait=false >/dev/null
 
-# Verifies SPEC-0006-R04, SPEC-0006-R06, and SPEC-0006-R09.
+# Verifies SPEC-0006-R06, SPEC-0006-R09, and SPEC-0006-R21.
 log "verifying wrong audiences, missing scopes, and query tokens are refused"
 STATUS="$(mcp_status --header "Authorization: Bearer $(mint "${RESOURCE_URL}/mcp/${E2E_NAMESPACE}.other" "mcp:tools")")"
 [ "${STATUS}" = "401" ] || fail "a token for another route answered HTTP ${STATUS}, want 401"
@@ -1469,6 +1469,26 @@ STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --request 
   "${GATEWAY_URL}/mcp/${SERVER_ID}?access_token=${TOKEN}" --header 'Content-Type: application/json' \
   --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
 [ "${STATUS}" = "400" ] || fail "a token in the query string answered HTTP ${STATUS}, want 400"
+
+# Verifies SPEC-0044-R01, SPEC-0044-R02, SPEC-0044-R03, and SPEC-0044-R05.
+log "verifying only MCP requests are forwarded, and no body is read before authentication"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 --request POST \
+  "${GATEWAY_URL}/mcp/${SERVER_ID}" --header 'Content-Type: application/x-www-form-urlencoded' \
+  --data "access_token=${TOKEN}")"
+[ "${STATUS}" = "415" ] || fail "a form without a token in the header answered HTTP ${STATUS}, want 415"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 --request POST \
+  "${GATEWAY_URL}/mcp/${E2E_NAMESPACE}.not-registered" --header 'Content-Type: text/plain' --data 'x')"
+[ "${STATUS}" = "415" ] || fail "a POST that is not JSON to an unregistered route answered HTTP ${STATUS}, want 415"
+STATUS="$(curl --silent --output /dev/null --write-out '%{http_code}' --max-time 10 --request GET \
+  "${GATEWAY_URL}/mcp/${SERVER_ID}" --header "Authorization: Bearer ${TOKEN}" --header 'X-HTTP-Method-Override: POST' \
+  --data '{"jsonrpc":"2.0","id":1,"method":"tools/list","params":{}}')"
+[ "${STATUS}" = "400" ] || fail "a GET with a body answered HTTP ${STATUS}, want 400"
+STATUS="$(curl --silent --output "${TEMP_DIR}/name-body" --write-out '%{http_code}' --max-time 10 --request POST \
+  "${GATEWAY_URL}/mcp/${SERVER_ID}" --header "Authorization: Bearer $(mint "${ROUTE_RESOURCE}" "mcp:tools")" \
+  --header 'Content-Type: application/json' \
+  --data '{"jsonrpc":"2.0","id":2,"method":"tools/call","params":{"name":"echo ","arguments":{}}}')"
+[ "${STATUS}" = "400" ] && jq --exit-status '.error.code == -32600' "${TEMP_DIR}/name-body" >/dev/null ||
+  fail "a tool name with a space answered HTTP ${STATUS}: $(cat "${TEMP_DIR}/name-body"), want 400 with a JSON-RPC error"
 
 # Verifies SPEC-0006-R14, SPEC-0006-R15, and SPEC-0006-R19.
 log "verifying refusals are recorded and the console and route list know about authentication"

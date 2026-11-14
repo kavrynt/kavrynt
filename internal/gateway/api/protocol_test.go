@@ -55,7 +55,7 @@ func TestProtocolRefusesRepeatedHeadersThatDisagreeWithTheBody(t *testing.T) {
 				h, _ = demoHandler(t, okResponse)
 				enablePolicy(t, h, testPolicy)
 			}
-			req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(callEcho))
+			req := newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(callEcho))
 			for key, values := range headers {
 				req.Header[key] = values
 			}
@@ -147,7 +147,7 @@ func TestProtocolRefusalsOfPostAreJSONRPCErrors(t *testing.T) {
 func TestProtocolRefusesUnknownVersions(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
 	for _, version := range []string{"2099-01-01", "1.0", strings.Repeat("9", 500)} {
-		req := httptest.NewRequest(http.MethodGet, "/mcp/team-a.demo", nil)
+		req := newRequest(http.MethodGet, "/mcp/team-a.demo", nil)
 		req.Header.Set("MCP-Protocol-Version", version)
 		rr := httptest.NewRecorder()
 		handler.ServeHTTP(rr, req)
@@ -178,7 +178,7 @@ func TestProtocolPassesStreamsAndSessionHeaders(t *testing.T) {
 		return okResponse(req)
 	})
 	for _, method := range []string{http.MethodGet, http.MethodDelete} {
-		req := httptest.NewRequest(method, "/mcp/team-a.demo", strings.NewReader("[not checked]"))
+		req := newRequest(method, "/mcp/team-a.demo", nil)
 		req.Header.Set("Last-Event-ID", "event-41")
 		req.Header.Set("Mcp-Session-Id", "session-7")
 		req.Header.Set("MCP-Protocol-Version", mcpmeta.HeaderProtocolVersion)

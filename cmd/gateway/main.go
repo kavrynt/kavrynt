@@ -75,6 +75,7 @@ func main() {
 	crossNamespace := flag.String("endpoint-cross-namespace", getenv("KAVRYNT_ENDPOINT_CROSS_NAMESPACE", ""), "Comma-separated from:to namespace pairs whose <service>.<namespace> endpoints are Service names, as the Operator allows them (with --cluster-cidrs)")
 	shutdownDelay := flag.Duration("shutdown-delay", 5*time.Second, "On shutdown, how long to keep serving after /readyz starts failing, so the Service stops sending new requests first")
 	shutdownTimeout := flag.Duration("shutdown-timeout", 10*time.Second, "Graceful shutdown timeout")
+	allowResponseHeaders := flag.String("allow-response-headers", getenv("KAVRYNT_ALLOW_RESPONSE_HEADERS", ""), "Comma-separated MCP server response headers clients also get, besides those MCP needs (Content-Type, Mcp-Session-Id, ...); headers that act on the Gateway's origin or the client's sign-in are refused")
 	strictProtocol := flag.Bool("strict-protocol", true, "Refuse MCP requests that are not well-formed MCP Streamable HTTP: unsupported MCP-Protocol-Version, JSON-RPC batches, Mcp-Method or Mcp-Name headers that disagree with the body")
 	instance := flag.String("instance", getenv("KAVRYNT_INSTANCE", hostname()), "Name of this replica in /v1/traffic and /v1/alerts, normally the pod name")
 	historyMaxTools := flag.Int("history-max-tools", history.DefaultMaxTools, "Tools whose calls the console dashboards keep apart, across routes; further tools count as their route's other tool")
@@ -157,6 +158,10 @@ func main() {
 	})
 	handler.SetCluster(cluster)
 	handler.StripRequestHeaders(splitList(*stripHeaders)...)
+	if err := handler.AllowResponseHeaders(splitList(*allowResponseHeaders)...); err != nil {
+		slog.Error("configure the allowed response headers", "error", err)
+		os.Exit(1)
+	}
 	handler.SetRequestTimeout(*requestTimeout)
 	if *maxRequestBytes <= 0 {
 		slog.Error("configure request size limit", "error", "--max-request-bytes must be positive")

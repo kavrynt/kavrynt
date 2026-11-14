@@ -28,7 +28,8 @@
   served by the handler before the `/mcp/` branch; `404` for unknown
   routes; JSON per RFC 9728.
 - **Handler wiring.** `api.Handler.EnableClientAuth(a)`. The `/mcp/` path
-  rejects tokens in the query string or form body (R04) before routing,
+  rejects tokens in the query string (R21; R04 is withdrawn, form bodies
+  are refused by SPEC-0044-R02) before routing,
   authenticates, then strips credential headers as today (R13). The
   identity goes into the request context for SPEC-0012 and SPEC-0013.
 - **Route listing (R18, R19).** `listRoutes` sanitises endpoints with

@@ -208,6 +208,14 @@
             "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
           }
         },
+        "allowResponseHeaders": {
+          "type": "array",
+          "description": "Extra MCP server response headers clients get (SPEC-0044-R09).",
+          "items": {
+            "type": "string",
+            "pattern": "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$"
+          }
+        },
         "allowedOrigins": {
           "type": "array",
           "items": {

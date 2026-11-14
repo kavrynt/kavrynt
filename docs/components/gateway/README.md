@@ -38,7 +38,24 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   Service names (`<service>.<namespace>[.svc[.<cluster domain>]]`, for the
   route's own namespace and the pairs of `--endpoint-cross-namespace`) are
   resolved only in the cluster's DNS zone. Refused requests return `502`.
-- Upstream redirects are passed to the client, never followed.
+- Only MCP requests are forwarded (SPEC-0044), checked before
+  authentication without reading the body, the same for every route: a
+  `GET` or `DELETE` with a body gets `400` (a `Content-Length` over the
+  request size limit gets its `413`), and a `POST` whose `Content-Type` is
+  not `application/json` (parameters such as `charset` are fine) gets
+  `415`, sub-paths of `spec.forwardSubpaths` routes included. Such answers
+  close the connection. `X-HTTP-Method-Override`, `X-HTTP-Method`, and
+  `X-Method-Override` are never forwarded.
+- A JSON-RPC `method`, or a `tools/call` `params.name`, that is not 1 to
+  128 characters of `A-Z`, `a-z`, `0-9`, `_`, `.`, `/`, and `-` gets `400`
+  with a JSON-RPC error (`-32600`), so a policy rule cannot be passed with
+  `"delete_all "` or `"tools/call "`. With a policy this always applies;
+  without one, unless `--strict-protocol=false`. Names are not folded:
+  `DELETE_ALL` is another tool, which a policy can refuse with
+  `tool_discovered`.
+- Upstream redirects are neither followed nor passed on: a `3xx` answer
+  becomes `502` (outcome `upstream_error`) without its `Location` or body.
+  Register the URL the server redirects to.
 - MCP Streamable HTTP checks (SPEC-0018), on every route, answered with
   `400` and outcome `protocol_error` before anything is forwarded (for a
   `POST`, as a JSON-RPC error with code `-32600` and the request's `id`,
@@ -83,10 +100,21 @@ Routes MCP requests to `MCPServer` endpoints. Source: `cmd/gateway`,
   audited as `invalid`.
 - No token passthrough: `Authorization`, `Cookie`, and `Proxy-Authorization`
   are always removed before forwarding, along with hop-by-hop headers and
-  headers named in `Connection`. Upstream `Set-Cookie` is dropped because
-  every route shares the Gateway origin, and `Server` and `X-Powered-By`
-  because they disclose the upstream's software. Extra headers can be stripped with
+  headers named in `Connection`. Extra headers can be stripped with
   `--strip-request-headers`.
+- Clients get only the response headers MCP needs (SPEC-0044): `Allow`,
+  `Cache-Control`, `Content-Encoding`, `Content-Language`,
+  `Content-Length`, `Content-Type`, `Date`, `MCP-Protocol-Version`,
+  `Mcp-Session-Id`, `Retry-After`, and `Vary`. Every route shares the
+  Gateway origin and its place in the client's sign-in, so a server's
+  `WWW-Authenticate`, `Set-Cookie`, `Strict-Transport-Security`, and the
+  like never reach clients. `--allow-response-headers` (chart:
+  `config.allowResponseHeaders`) adds names, but never `Set-Cookie`,
+  `WWW-Authenticate`, `Proxy-Authenticate`, `Location`, `Refresh`,
+  `Strict-Transport-Security`, `Clear-Site-Data`,
+  `Content-Security-Policy[-Report-Only]`, `X-Content-Type-Options`,
+  `Alt-Svc`, `Server`, `X-Powered-By`, `X-Request-Id`, or `Access-Control-*`;
+  the chart and the Gateway refuse them.
 - Upstream credentials: for a server that declares `spec.credential`, the
   Gateway sends the credential stored for it in the upstream credentials
   Secret (see below), replacing any header of that name from the client.
@@ -395,7 +423,8 @@ Answers:
 | Case | Status | `WWW-Authenticate` |
 | --- | --- | --- |
 | No bearer token | `401` | `Bearer [scope="..."], resource_metadata="<url>"` |
-| Token in a query parameter or form field | `400` | `error="invalid_request"` |
+| Token in a query parameter | `400` | `error="invalid_request"` |
+| A form body (any `POST` that is not JSON), before the token is checked | `415` | |
 | Invalid, expired, wrong issuer or audience | `401` | `error="invalid_token"` (the body never says which check failed) |
 | Missing required scope | `403` | `error="insufficient_scope", scope="..."` |
 | Issuer's keys cannot be loaded | `503`, `Retry-After: 60` | |
@@ -920,8 +949,8 @@ tool arguments, and results are never recorded.
   stored upstream credential is missing or not pinned to its endpoint;
   `denied` (`200` with a JSON-RPC error for a request, `403` otherwise) when
   the tool authorization policy refuses the call;
-  `protocol_error` (`400`) when the request is not well-formed MCP
-  Streamable HTTP; `exchange_failed` (`502`/`503`) when the caller's
+  `protocol_error` (`400` or `415`) when the request is not well-formed MCP
+  Streamable HTTP or not an MCP request (SPEC-0044); `exchange_failed` (`502`/`503`) when the caller's
   token could not be exchanged for the server; and `session_not_found`
   (`404`) when a request with `Mcp-Session-Id` names a session the server
   does not know or, with session affinity, a pod that is no longer ready
@@ -1001,6 +1030,7 @@ grouped by `client_id` or `subject`.
 | `--addr` | `:8080` | Listen address |
 | `--watch-namespaces` | all (chart: `global.watchNamespaces`) | Comma-separated namespaces (`KAVRYNT_WATCH_NAMESPACES`) |
 | `--strip-request-headers` | none | Extra headers never forwarded (`KAVRYNT_STRIP_REQUEST_HEADERS`) |
+| `--allow-response-headers` | none (chart: `config.allowResponseHeaders`) | Extra MCP server response headers clients get (`KAVRYNT_ALLOW_RESPONSE_HEADERS`). Names that act on the Gateway's origin or the client's sign-in stop the Gateway at start |
 | `--session-key-file` | none (chart: the generated or named Secret) | File with the key that binds session IDs to their caller, at least 32 bytes, the same on every replica; required with `--auth` (`KAVRYNT_SESSION_KEY_FILE`) |
 | `--request-timeout` | `30s` | Upstream request timeout; event streams only until response headers. Also how long a request body may take to arrive: a client that stalls is answered (`408`, or the authentication refusal) and disconnected |
 | `--max-request-bytes` | `4194304` (chart: `config.maxRequestBytes`) | Largest request body an MCP route accepts; larger requests get `413` |

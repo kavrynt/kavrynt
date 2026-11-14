@@ -27,9 +27,8 @@ func stalledRequest(t *testing.T, server *httptest.Server, headers string) net.C
 }
 
 // A client that stops sending its body is answered and disconnected at the
-// request timeout, whether the Gateway reads the body for the request's
-// method or, with client authentication and before the token is checked,
-// for a token in a form (the caller has none, so the answer is 401).
+// request timeout. A form body is never read: before the token is checked,
+// it is refused at once and the connection closed (SPEC-0044-R02, R03).
 func TestStalledRequestBodyEndsAtTheRequestTimeout(t *testing.T) {
 	open, calls := demoHandler(t, okResponse)
 	authenticated, received, _ := authHandler(t, true)
@@ -39,7 +38,7 @@ func TestStalledRequestBodyEndsAtTheRequestTimeout(t *testing.T) {
 		status  int
 	}{
 		"JSON body":                  {open, "Content-Type: application/json\r\n", http.StatusRequestTimeout},
-		"form body before the token": {authenticated, "Content-Type: application/x-www-form-urlencoded\r\n", http.StatusUnauthorized},
+		"form body before the token": {authenticated, "Content-Type: application/x-www-form-urlencoded\r\n", http.StatusUnsupportedMediaType},
 	} {
 		t.Run(name, func(t *testing.T) {
 			c.handler.SetRequestTimeout(150 * time.Millisecond)

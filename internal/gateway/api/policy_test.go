@@ -102,7 +102,7 @@ func TestPolicyRefusesBodiesItCannotRead(t *testing.T) {
 			t.Errorf("%s: %d, want 400", name, rr.Code)
 		}
 	}
-	req := httptest.NewRequest(http.MethodPost, "/mcp/team-a.demo", http.NoBody)
+	req := newRequest(http.MethodPost, "/mcp/team-a.demo", http.NoBody)
 	rr := httptest.NewRecorder()
 	handler.ServeHTTP(rr, req)
 	if rr.Code != http.StatusBadRequest {
@@ -199,7 +199,7 @@ default decision := {"allow": false, "reason": "closed"}
 		"event stream": {http.MethodGet, "", http.StatusForbidden},
 		"end session":  {http.MethodDelete, "", http.StatusForbidden},
 	} {
-		req := httptest.NewRequest(tc.method, "/mcp/team-a.demo", strings.NewReader(tc.body))
+		req := newRequest(tc.method, "/mcp/team-a.demo", strings.NewReader(tc.body))
 		if tc.method == http.MethodPost {
 			req.Header.Set("Content-Type", "application/json")
 		}
