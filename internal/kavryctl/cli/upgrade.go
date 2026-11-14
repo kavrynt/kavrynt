@@ -207,8 +207,20 @@ func (s *session) confirmRouted(ctx context.Context, before map[string]string) e
 	if len(missing) > 0 {
 		return fmt.Errorf("%d of %d servers routed before are not routed now", len(missing), len(names))
 	}
-	fmt.Fprintf(s.stdout, "%d servers routed before are routed now\n", len(names))
+	if len(names) == 1 {
+		fmt.Fprintln(s.stdout, "1 server routed before is routed now")
+	} else {
+		fmt.Fprintf(s.stdout, "%d servers routed before are routed now\n", len(names))
+	}
 	return nil
+}
+
+// routedNow says how many servers are routed, with the verb that agrees.
+func routedNow(n int) string {
+	if n == 1 {
+		return "1 server is routed now"
+	}
+	return fmt.Sprintf("%d servers are routed now", n)
 }
 
 func contains(list []string, value string) bool {
@@ -321,7 +333,7 @@ Nothing was changed. Run again with --adopt-crd, or adopt it yourself:
 		fmt.Fprintf(stderr, "upgrade: %v\n", err)
 		return 1
 	}
-	s.check("%d servers are routed now", len(before))
+	s.check("%s", routedNow(len(before)))
 
 	command := []string{"upgrade", opts.release, *chart}
 	if *version != "" {
@@ -389,7 +401,7 @@ func runRollback(args []string, stdout, stderr io.Writer) int {
 		fmt.Fprintf(stderr, "rollback: %v\n", err)
 		return 1
 	}
-	s.check("%d servers are routed now", len(before))
+	s.check("%s", routedNow(len(before)))
 
 	command := []string{"rollback", opts.release}
 	if *revision > 0 {

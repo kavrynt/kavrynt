@@ -234,7 +234,7 @@ is [docs/TESTING.md](docs/TESTING.md).
 ### 1. Deploy and register the sample server
 
 ```bash
-kubectl apply -f https://raw.githubusercontent.com/kavrynt/kavrynt/develop/examples/try/sample-mcp-server.yaml
+kubectl apply -f https://raw.githubusercontent.com/kavrynt/kavrynt/v1.0.0-beta.5/examples/try/sample-mcp-server.yaml
 kubectl -n kavrynt-try rollout status deployment/sample-mcp-server --timeout=180s
 kubectl -n kavrynt-try wait mcpserver/sample --for=condition=Ready --timeout=60s
 kubectl -n kavrynt-try wait mcpserver/sample --for=condition=ToolsDiscovered --timeout=120s

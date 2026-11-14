@@ -197,7 +197,7 @@ func TestRollbackChecksBeforeAndAfter(t *testing.T) {
 	useHelm(t, helm)
 	useFakeClient(t, defaultNamespace, readyServer("team-a", "search"))
 	out, errOut, code := run(t, "rollback", "--revision", "3", "-n", "platform")
-	if code != 0 || !strings.Contains(out, "1 servers routed before are routed now") {
+	if code != 0 || !strings.Contains(out, "1 server routed before is routed now") || !strings.Contains(out, "ok    1 server is routed now") {
 		t.Fatalf("rollback: code=%d out=%q err=%q", code, out, errOut)
 	}
 	want := []string{"rollback", "kavrynt", "3", "--wait", "--timeout", "5m0s", "--namespace", "platform"}
