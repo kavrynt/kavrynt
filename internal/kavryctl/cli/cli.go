@@ -1,8 +1,10 @@
 package cli
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
+	"errors"
 	"flag"
 	"fmt"
 	"io"
@@ -93,17 +95,36 @@ var newKubeClient = func(opts kubeOptions) (client.Client, string, error) {
 
 func Execute(args []string, stdout, stderr io.Writer) int {
 	if len(args) == 0 {
-		printUsage(stderr)
-		return 2
+		// len 0 should not be an error
+		printUsage(stdout)
+		return 0
 	}
 
 	switch args[0] {
 	case "version":
+		fs := newFlagSet("version",
+			"Prints the kavryctl version",
+			"kavryctl version [flags]",
+			stdout,
+			stderr)
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			return 2
+		}
+		if fs.NArg() != 0 {
+			fmt.Fprintln(stderr, "version does not accept positional arguments")
+			return 2
+		}
+
 		fmt.Fprintf(stdout, "kavryctl %s\ncommit %s\nbuilt %s\n", Version, Commit, BuildDate)
 		return 0
-	case "help", "-h", "--help":
+	case "-h", "--help":
 		printUsage(stdout)
 		return 0
+	case "help":
+		return runHelp(args[1:], stdout, stderr)
 	case "validate":
 		return runValidate(args[1:], stdout, stderr)
 	case "register":
@@ -133,13 +154,31 @@ func Execute(args []string, stdout, stderr io.Writer) int {
 	}
 }
 
+type errorTracker struct {
+	io.Writer
+	hasError bool
+}
+
+func (t *errorTracker) Write(p []byte) (int, error) {
+	t.hasError = true
+	return t.Writer.Write(p)
+}
+
 func runValidate(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("validate", stderr)
+	fs := newFlagSet("validate",
+		`Validates the MCPServer manifest`,
+		`kavryctl validate [flags] <manifest.yaml|json>`,
+		stdout,
+		stderr)
+
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl validate <manifest.yaml|json>")
+		fmt.Fprintln(stderr, "usage: kavryctl validate [flags] <manifest.yaml|json>")
 		return 2
 	}
 
@@ -164,8 +203,25 @@ func warnNotRouted(stderr io.Writer, server *kavryntv1alpha1.MCPServer) {
 // input (SPEC-0013-R07). Lines that are not audit events are skipped, so
 // collected Gateway logs can be passed as they are.
 func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
+	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
+		argUsage := "Audit Gateway logs and event chains\n\n" +
+			"Usage:\n   kavryctl audit <command> [flags]\n\n" +
+			"Commands:\n   verify  Verifies Gateway audit event chains read from a file or standard input\n"
+		fmt.Fprint(stdout, argUsage)
+		return 0
+	}
+	if len(args) > 0 && args[0] == "verify" {
+		for _, a := range args[1:] {
+			if a == "-h" || a == "--help" {
+				argUsage := "Verifies Gateway audit event chains from a log file or standard input; events cut off the end of a chain are not detected\n\n" +
+					"Usage:\n kavryctl audit verify [flags] [file]\n"
+				fmt.Fprint(stdout, argUsage)
+				return 0
+			}
+		}
+	}
 	if len(args) == 0 || args[0] != "verify" || len(args) > 2 {
-		fmt.Fprintln(stderr, "usage: kavryctl audit verify [file]   (reads standard input without a file)")
+		fmt.Fprintln(stderr, "usage: kavryctl audit verify [file] (reads standard input without a file)")
 		return 2
 	}
 	input := stdin
@@ -204,6 +260,38 @@ func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	return 0
 }
 
+func runHelp(args []string, stdout, stderr io.Writer) int {
+	if len(args) == 0 {
+		printUsage(stdout)
+		return 0
+	}
+
+	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
+		fs := newFlagSet("help",
+			"Help provides help for any command in kavryctl",
+			"kavryctl help [command]",
+			stdout,
+			stderr)
+		if err := fs.Parse(args[1:]); err != nil {
+			if errors.Is(err, flag.ErrHelp) {
+				return 0
+			}
+			return 2
+		}
+		if fs.NArg() > 0 {
+			fmt.Fprintln(stderr, "help does not accept extra arguments")
+			return 2
+		}
+		printHelp("Help provides help for any command in kavryctl", "kavryctl help [command]", fs, stdout)
+		return 0
+	}
+
+	forwardArgs := append([]string{}, args...)
+	forwardArgs = append(forwardArgs, "--help")
+
+	return Execute(forwardArgs, stdout, stderr)
+}
+
 // plural returns n and noun, with an "s" unless n is 1.
 func plural(n int, noun string) string {
 	if n == 1 {
@@ -213,14 +301,22 @@ func plural(n int, noun string) string {
 }
 
 func runRegister(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("register", stderr)
+	fs := newFlagSet("register",
+		`Registers new MCPServer resources`,
+		`kavryctl register [flags] <manifest.yaml|json>`,
+		stdout,
+		stderr)
+
 	var opts kubeOptions
 	opts.bind(fs)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl register [-n NAMESPACE] <manifest.yaml|json>")
+		fmt.Fprintln(stderr, "usage: kavryctl register [flags] <manifest.yaml|json>")
 		return 2
 	}
 
@@ -274,14 +370,22 @@ func runRegister(args []string, stdout, stderr io.Writer) int {
 }
 
 func runUnregister(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("unregister", stderr)
+	fs := newFlagSet("unregister",
+		`Unregisters the given MCPServer`,
+		`kavryctl unregister [flags] <name>`,
+		stdout,
+		stderr)
+
 	var opts kubeOptions
 	opts.bind(fs)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl unregister [-n NAMESPACE] <name>")
+		fmt.Fprintln(stderr, "usage: kavryctl unregister [flags] <name>")
 		return 2
 	}
 
@@ -304,12 +408,20 @@ func runUnregister(args []string, stdout, stderr io.Writer) int {
 }
 
 func runList(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("list", stderr)
+	fs := newFlagSet("list",
+		`Lists running MCPServer resources`,
+		`kavryctl list [flags]`,
+		stdout,
+		stderr)
 	var opts kubeOptions
 	opts.bind(fs)
+
 	allNamespaces := fs.Bool("all-namespaces", false, "List MCPServers in all namespaces")
 	fs.BoolVar(allNamespaces, "A", false, "Shorthand for --all-namespaces")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 0 {
@@ -384,14 +496,22 @@ func runList(args []string, stdout, stderr io.Writer) int {
 }
 
 func runInspect(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("inspect", stderr)
+	fs := newFlagSet("inspect",
+		`Inspects an MCPServer, showing its configuration and discovered tools`,
+		`kavryctl inspect [flags] <name>`,
+		stdout,
+		stderr)
+
 	var opts kubeOptions
 	opts.bind(fs)
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 1 {
-		fmt.Fprintln(stderr, "usage: kavryctl inspect [-n NAMESPACE] <name>")
+		fmt.Fprintln(stderr, "usage: kavryctl inspect [flags] <name>")
 		return 2
 	}
 
@@ -422,9 +542,18 @@ func runInspect(args []string, stdout, stderr io.Writer) int {
 	return 0
 }
 
-func newFlagSet(name string, stderr io.Writer) *flag.FlagSet {
+func newFlagSet(name string, argUsage string, cmdUsage string, stdout, stderr io.Writer) *flag.FlagSet {
 	fs := flag.NewFlagSet(name, flag.ContinueOnError)
-	fs.SetOutput(stderr)
+	tracker := &errorTracker{Writer: stderr}
+	fs.SetOutput(tracker)
+	fs.Usage = func() {
+		out := stdout
+		if tracker.hasError {
+			// If an error message was written to stderr, send usage to stderr too
+			out = stderr
+		}
+		printHelp(argUsage, cmdUsage, fs, out)
+	}
 	return fs
 }
 
@@ -482,33 +611,60 @@ func shellQuote(s string) string {
 	return "'" + strings.ReplaceAll(s, "'", `'\''`) + "'"
 }
 
+// print text for flags -h or --help
+func printHelp(argUsage string, cmdUsage string, fs *flag.FlagSet, w io.Writer) {
+
+	fmt.Fprint(w, "\n"+strings.TrimSpace(argUsage)+"\n\n")
+	fmt.Fprintf(w, "Usage:\n %s\n", cmdUsage)
+
+	hasFlags := false
+	fs.VisitAll(func(f *flag.Flag) {
+		hasFlags = true
+	})
+
+	if hasFlags {
+		fmt.Fprint(w, "\nFlags:\n")
+		var buf bytes.Buffer
+		fs.SetOutput(&buf)
+		fs.PrintDefaults()
+		lines := strings.Split(buf.String(), "\n")
+		for i, line := range lines {
+			if strings.HasPrefix(line, "  -") && !strings.HasPrefix(line, "  --") {
+				rest := line[3:]
+				idx := strings.IndexAny(rest, " \t")
+				flagName := rest
+				if idx != -1 {
+					flagName = rest[:idx]
+				}
+				if len(flagName) > 1 {
+					lines[i] = "  --" + rest
+				}
+			}
+		}
+		fmt.Fprint(w, strings.Join(lines, "\n"))
+	}
+}
+
 func printUsage(w io.Writer) {
 	fmt.Fprint(w, strings.TrimSpace(`
 kavryctl manages Kavrynt MCPServer resources in a Kubernetes cluster.
 
 Usage:
-  kavryctl version
-  kavryctl validate <manifest.yaml|json>
-  kavryctl register   [cluster flags] <manifest.yaml|json>
-  kavryctl unregister [cluster flags] <name>
-  kavryctl list       [cluster flags] [-A]
-  kavryctl inspect    [cluster flags] <name>
-  kavryctl export   [cluster flags] [-A] [-o FILE] [--include-environment]
-                    Write MCPServers as manifests to restore elsewhere; environment
-                    values are written empty and Secrets are never read
-  kavryctl import   [cluster flags] [--overwrite] [--dry-run] [--wait 60s] <file>
-                    Create the MCPServers of an export, checking every document
-                    first; nothing changes while any is refused
-  kavryctl doctor   [cluster flags] [--release kavrynt] [--output table|json] [--anonymize]
-                    Check the installation and its MCPServers (read-only; -n
-                    defaults to kavrynt-system); --anonymize hides names
-  kavryctl audit verify [file]   Verify Gateway audit event chains (file or stdin);
-                    events cut off the end of a chain are not detected
-  kavryctl upgrade  [cluster flags] --version V [--chart REF|DIR] [--values FILE] [--adopt-crd] [--dry-run]
-  kavryctl rollback [cluster flags] [--revision N] [--dry-run]
-                    Upgrade or roll back the Kavrynt release with helm, checking
-                    before that nothing blocks it and after that every routed
-                    server is routed again (--release kavrynt, -n kavrynt-system)
+  kavryctl version     Prints the kavryctl version
+  kavryctl validate    Validates the MCPServer manifest
+  kavryctl register    Registers new MCPServer resources
+  kavryctl unregister  Unregisters the given MCPServer
+  kavryctl list        Lists running MCPServer resources
+  kavryctl inspect     Inspects an MCPServer, showing its configuration and discovered tools
+  kavryctl export      Write MCPServers as manifests to restore elsewhere
+  kavryctl import      Imports MCPServers from an export file
+  kavryctl doctor      Check the installation and its MCPServers
+  kavryctl audit       Verifies Gateway audit event chains from a log file or standard input
+  kavryctl upgrade     Upgrade the Kavrynt release with Helm
+  kavryctl rollback    Rolls back the Kavrynt release with Helm
+  kavryctl help        Help for kavryctl
+
+-h, --help  help for kavryctl
 
 Cluster flags:
   --kubeconfig PATH   Kubeconfig file (defaults to KUBECONFIG or ~/.kube/config)

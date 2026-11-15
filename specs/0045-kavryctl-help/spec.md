@@ -2,7 +2,7 @@
 
 | Field | Value |
 | --- | --- |
-| Status | Draft |
+| Status | Implemented |
 | Owners | @vak-rashu |
 | Created | 2026-11-10 |
 | Issue | #154 |

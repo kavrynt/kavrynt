@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"errors"
+	"flag"
 	"fmt"
 	"io"
 	"slices"
@@ -68,17 +69,26 @@ type doctor struct {
 }
 
 func runDoctor(args []string, stdout, stderr io.Writer) int {
-	fs := newFlagSet("doctor", stderr)
+	fs := newFlagSet("doctor",
+		`Check the installation and its MCPServers
+(read-only; -n defaults to kavrynt-system)`,
+		`kavryctl doctor [flags]`,
+		stdout,
+		stderr)
+
 	var opts kubeOptions
 	opts.bind(fs)
 	release := fs.String("release", "kavrynt", "Helm release name")
 	output := fs.String("output", "table", "Output format: table or json")
 	anonymize := fs.Bool("anonymize", false, "Replace namespaces and MCPServer names with per-report hashes, for public issues")
 	if err := fs.Parse(args); err != nil {
+		if errors.Is(err, flag.ErrHelp) {
+			return 0
+		}
 		return 2
 	}
 	if fs.NArg() != 0 || (*output != "table" && *output != "json") {
-		fmt.Fprintln(stderr, "usage: kavryctl doctor [-n kavrynt-system] [--release kavrynt] [--output table|json] [--anonymize]")
+		fmt.Fprintln(stderr, "usage: kavryctl doctor [flags]")
 		return 2
 	}
 	if opts.namespace == "" {

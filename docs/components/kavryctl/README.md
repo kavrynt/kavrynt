@@ -20,6 +20,8 @@ Client CLI for `MCPServer` resources. Source: `cmd/kavryctl`,
 | `kavryctl rollback [--revision N]` | Roll the release back with the same checks |
 | `kavryctl audit verify [file]` | Verify Gateway audit event chains from a file or standard input; other log lines are skipped. Prints each break (gap, reordering, altered event) and exits `1` when there is one. Events from a newer Gateway verify as written; their unknown fields are counted, and a break of such an event names them instead of saying altered (SPEC-0035). It cannot detect events cut off the end of a chain, or a chain rewritten with recomputed hashes; see [what verify proves](../gateway/README.md#audit-events) |
 
+`kavryctl help <command>` or `kavryctl <command> --help` shows per-command flags and behavior.
+
 Cluster commands accept `--kubeconfig`, `--context`, and `-n/--namespace`.
 Without `-n`, the namespace comes from the manifest, then the kubeconfig
 context. A manifest namespace that conflicts with `-n` is an error.
