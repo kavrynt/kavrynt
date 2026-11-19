@@ -304,6 +304,14 @@ Merging, when the owner asks for it:
   (`git branch -d`), switch to `develop`, and pull. Never delete `develop`,
   `main`, or `release/*` branches.
 
+## Agents
+
+`.claude/agents/` holds four subagents: `kavrynt-coder` (builds one scoped
+change), `kavrynt-reviewer` and `kavrynt-security` (read-only reviews), and
+`kavrynt-tester` (runs checks, adds tests only). The `weekly-cycle` skill runs
+them in order on one task. They follow this file; none of them commits,
+pushes, or merges unless the owner asks, and the owner merges.
+
 ## Commands
 
 ```bash
@@ -345,6 +353,11 @@ the schema and cover template changes in `charts/kavrynt/tests/`.
   `X.Y.Z-(alpha|beta)[.N]`, be on `main`, and equal the chart version. Publishes
   to GHCR (canonical), mirrors to Docker Hub, Cosign-signs both, builds
   `kavryctl` for six platforms, pushes the OCI chart, then runs `e2e-release`.
+- `.github/workflows/agent-review.yml` (same-repo pull requests that touch code,
+  weekly on Fridays, manual runs): read-only Claude review and security
+  agents (`.claude/agents/`) report on the pull request and in a weekly issue.
+  Advisory only: it never blocks or edits; needs the `ANTHROPIC_API_KEY`
+  secret and skips without it.
 - Full procedure, verification, and failure handling: [docs/RELEASE.md](docs/RELEASE.md).
   Never overwrite a published tag; fix forward with the next prerelease number.
 
