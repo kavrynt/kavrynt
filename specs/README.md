@@ -171,3 +171,4 @@ against the assistant's summary of them.
 | [0043](0043-console-time-ranges/spec.md) | Console dashboard time ranges | Draft |
 | [0044](0044-strict-forwarding/spec.md) | Only MCP requests and answers pass the Gateway | Implemented |
 | [0045](0045-kavryctl-help/spec.md) | kavryctl per-command help and exit codes | Implemented |
+| [0046](0046-gateway-jsonrpc-error-codes/spec.md) | Gateway JSON-RPC error responses on /mcp/ routes | Draft |
