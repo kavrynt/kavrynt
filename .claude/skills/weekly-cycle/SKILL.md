@@ -21,8 +21,9 @@ report that and stop; the owner reviews specs.
 
 Run `kavrynt-reviewer` and `kavrynt-security` at the same time on the working tree against the merge
 base, `git diff $(git merge-base develop HEAD)`, which includes uncommitted changes; tell them to run
-`git status --short` and read untracked files too. Skip `kavrynt-security` only when the diff touches no Go, chart, CRD, console,
-workflow, or Dockerfile files.
+`git status --short --untracked-files=all` and read the untracked files too. Skip `kavrynt-security`
+only when neither the diff nor the untracked files touch Go, chart, CRD, console, workflow, or
+Dockerfile files.
 
 ## 3. Fix
 

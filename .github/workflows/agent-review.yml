@@ -84,7 +84,10 @@ jobs:
 
       - name: Install Claude Code
         if: env.HAS_KEY == 'true'
-        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+        run: |
+          # From outside the checkout, so a .npmrc in it is never read.
+          cd "${RUNNER_TEMP}"
+          npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
       - name: Prepare input
         if: env.HAS_KEY == 'true'
@@ -96,10 +99,36 @@ jobs:
           git diff --no-ext-diff --no-textconv --stat "${BASE_SHA}...HEAD" > agent-review-input/change.stat
           git log --format='%h %s' "${BASE_SHA}..HEAD" > agent-review-input/commits.txt
           # The agent prompts come from the base commit, so a pull request
-          # cannot rewrite its own reviewer (a definition that does not exist
-          # on the base yet is read from the head).
-          node scripts/agent-review-agents.mjs "${BASE_SHA}" agent-review-input/reviewer.json kavrynt-reviewer
-          node scripts/agent-review-agents.mjs "${BASE_SHA}" agent-review-input/security.json kavrynt-security
+          # cannot rewrite its own reviewer. The converter is inline, in the
+          # workflow itself, so no script from the checkout runs here.
+          AGENT_REF="${BASE_SHA}" node --input-type=module - <<'JS'
+          // Builds the --agents files from .claude/agents/*.md. --bare skips that
+          // directory, so the definitions are passed explicitly. Only the prompt
+          // text comes from the files; tools are fixed to read-only file tools.
+          // The prompt is read from AGENT_REF (a definition that ref does not
+          // have yet is read from the working tree).
+          import { execFileSync } from "node:child_process";
+          import { readFileSync, writeFileSync } from "node:fs";
+          const ref = process.env.AGENT_REF;
+          for (const [name, out] of [["kavrynt-reviewer", "reviewer"], ["kavrynt-security", "security"]]) {
+            const path = `.claude/agents/${name}.md`;
+            let text;
+            try {
+              text = execFileSync("git", ["show", `${ref}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+            } catch {
+              console.error(`${name}: not in ${ref}, using the working tree`);
+              text = readFileSync(path, "utf8");
+            }
+            const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+            const description = m && m[1].match(/^description:\s*(.+)$/m)?.[1]?.trim();
+            if (!description) {
+              console.error(`${name}: no front matter or description`);
+              process.exit(1);
+            }
+            writeFileSync(`agent-review-input/${out}.json`,
+              JSON.stringify({ [name]: { description, prompt: m[2].trim(), tools: ["Read", "Grep", "Glob"] } }));
+          }
+          JS
 
       - name: Review
         if: env.HAS_KEY == 'true'
@@ -250,7 +279,10 @@ jobs:
 
       - name: Install Claude Code
         if: env.HAS_KEY == 'true'
-        run: npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
+        run: |
+          # From outside the checkout, so a .npmrc in it is never read.
+          cd "${RUNNER_TEMP}"
+          npm install --global "@anthropic-ai/claude-code@${CLAUDE_CODE_VERSION}"
 
       - name: Prepare input
         if: env.HAS_KEY == 'true'
@@ -270,8 +302,35 @@ jobs:
             base="$(git rev-list --max-parents=0 HEAD | tail -n 1)"
           fi
           git diff --no-ext-diff --no-textconv "${base}..HEAD" > agent-review-input/week.diff
-          node scripts/agent-review-agents.mjs HEAD agent-review-input/reviewer.json kavrynt-reviewer
-          node scripts/agent-review-agents.mjs HEAD agent-review-input/security.json kavrynt-security
+          # The branch itself is the trusted revision here.
+          AGENT_REF=HEAD node --input-type=module - <<'JS'
+          // Builds the --agents files from .claude/agents/*.md. --bare skips that
+          // directory, so the definitions are passed explicitly. Only the prompt
+          // text comes from the files; tools are fixed to read-only file tools.
+          // The prompt is read from AGENT_REF (a definition that ref does not
+          // have yet is read from the working tree).
+          import { execFileSync } from "node:child_process";
+          import { readFileSync, writeFileSync } from "node:fs";
+          const ref = process.env.AGENT_REF;
+          for (const [name, out] of [["kavrynt-reviewer", "reviewer"], ["kavrynt-security", "security"]]) {
+            const path = `.claude/agents/${name}.md`;
+            let text;
+            try {
+              text = execFileSync("git", ["show", `${ref}:${path}`], { encoding: "utf8", stdio: ["ignore", "pipe", "ignore"] });
+            } catch {
+              console.error(`${name}: not in ${ref}, using the working tree`);
+              text = readFileSync(path, "utf8");
+            }
+            const m = text.match(/^---\n([\s\S]*?)\n---\n([\s\S]*)$/);
+            const description = m && m[1].match(/^description:\s*(.+)$/m)?.[1]?.trim();
+            if (!description) {
+              console.error(`${name}: no front matter or description`);
+              process.exit(1);
+            }
+            writeFileSync(`agent-review-input/${out}.json`,
+              JSON.stringify({ [name]: { description, prompt: m[2].trim(), tools: ["Read", "Grep", "Glob"] } }));
+          }
+          JS
 
       - name: Weekly pass
         if: env.HAS_KEY == 'true'
