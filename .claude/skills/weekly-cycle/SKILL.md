@@ -19,8 +19,9 @@ report that and stop; the owner reviews specs.
 
 ## 2. Review and security, in parallel
 
-Run `kavrynt-reviewer` and `kavrynt-security` at the same time on `git diff develop...HEAD` (include
-uncommitted changes). Skip `kavrynt-security` only when the diff touches no Go, chart, CRD, console,
+Run `kavrynt-reviewer` and `kavrynt-security` at the same time on the working tree against the merge
+base, `git diff $(git merge-base develop HEAD)`, which includes uncommitted changes; tell them to run
+`git status --short` and read untracked files too. Skip `kavrynt-security` only when the diff touches no Go, chart, CRD, console,
 workflow, or Dockerfile files.
 
 ## 3. Fix

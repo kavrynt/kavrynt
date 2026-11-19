@@ -283,8 +283,10 @@ Merging, when the owner asks for it:
 
 - Merge pull requests into `develop` with a merge commit
   (`gh pr merge <n> --merge --delete-branch`), only after every CI check on
-  that pull request has passed. `develop` has no branch protection, so check
-  `gh pr checks <n>` yourself.
+  that pull request has passed. A repository ruleset on `develop` requires a
+  pull request, the Go QA, Trivy, Helm, Kind e2e, and CodeQL checks, resolved
+  review threads, and merge commits only; still check `gh pr checks <n>`
+  yourself.
 - Before merging, also wait for CodeRabbit's review of the latest commit
   (its `CodeRabbit` check) and work every comment it raised
   (`gh api repos/kavrynt/kavrynt/pulls/<n>/comments`): verify the finding
@@ -357,7 +359,11 @@ the schema and cover template changes in `charts/kavrynt/tests/`.
   weekly on Fridays, manual runs): read-only Claude review and security
   agents (`.claude/agents/`) report on the pull request and in a weekly issue.
   Advisory only: it never blocks or edits; needs the `ANTHROPIC_API_KEY`
-  secret and skips without it.
+  secret and skips without it. Claude runs with `--bare` and file tools only
+  (the diff is written to a file first). The security agent's findings are
+  never published, because the repository is public: the comment and the
+  issue carry only a status line, and the owner runs `kavrynt-security`
+  locally for the details.
 - Full procedure, verification, and failure handling: [docs/RELEASE.md](docs/RELEASE.md).
   Never overwrite a published tag; fix forward with the next prerelease number.
 
