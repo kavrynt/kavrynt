@@ -47,7 +47,13 @@ test("snippets carry a token placeholder only when MCP routes need tokens", () =
   assert.deepEqual(JSON.parse(guarded["MCP client"]),
     { mcpServers: { incidents: { type: "http", url, headers: { Authorization: "Bearer <access token>" } } } });
   assert.match(guarded.curl, /-H "Authorization: Bearer \$ACCESS_TOKEN"/);
-  assert.match(guarded["Python agent"], /Authorization: Bearer <access token>/);
+  // The SDK's default client sends no token: the snippet passes its own,
+  // built from the environment, and holds no token itself.
+  const python = guarded["Python agent"];
+  assert.match(python, /^import httpx2$/m);
+  assert.match(python, /headers = \{"Authorization": "Bearer " \+ os\.environ\["ACCESS_TOKEN"\]\}/);
+  assert.match(python, /streamable_http_client\("https:\/\/gateway\.example\.com\/mcp\/team-sre\.incidents", http_client=http_client\)/);
+  assert.doesNotMatch(open["Python agent"], /httpx2|http_client=/);
   assert.match(guarded.curl, /-d '\{"jsonrpc"/);
 });
 

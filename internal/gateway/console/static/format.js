@@ -76,24 +76,34 @@
     const auth = Boolean(opts && opts.mcpAuth);
     const client = { type: "http", url };
     if (auth) client.headers = { Authorization: "Bearer <access token>" };
-    const python = [
-      "# pip install \"mcp>=2\"",
-      "import asyncio",
-      "from mcp import ClientSession",
-      "from mcp.client.streamable_http import streamable_http_client",
-      "",
+    const python = ["# pip install \"mcp>=2\"", "import asyncio"];
+    if (auth) python.push("import os", "import httpx2");
+    python.push("from mcp import ClientSession", "from mcp.client.streamable_http import streamable_http_client", "");
+    const session = [
+      "async with ClientSession(read, write) as session:",
+      "    await session.initialize()",
+      "    tools = await session.list_tools()",
+      "    print([tool.name for tool in tools.tools])",
     ];
-    if (auth) python.push("# The Gateway needs an access token: send \"Authorization: Bearer <access token>\"", "# with every request (for example through the HTTP client you pass in).", "");
-    python.push(
-      "async def main():",
-      "    async with streamable_http_client(" + JSON.stringify(url) + ") as (read, write):",
-      "        async with ClientSession(read, write) as session:",
-      "            await session.initialize()",
-      "            tools = await session.list_tools()",
-      "            print([tool.name for tool in tools.tools])",
-      "",
-      "asyncio.run(main())",
-    );
+    if (auth) {
+      // The SDK's own HTTP client sends no token; the one passed in sets it.
+      // The token is read from the environment, never written into the code.
+      python.push(
+        "async def main():",
+        "    # The Gateway needs an access token: set ACCESS_TOKEN in the environment.",
+        "    headers = {\"Authorization\": \"Bearer \" + os.environ[\"ACCESS_TOKEN\"]}",
+        "    async with httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(30.0, read=300.0)) as http_client:",
+        "        async with streamable_http_client(" + JSON.stringify(url) + ", http_client=http_client) as (read, write):",
+        ...session.map((line) => "            " + line),
+      );
+    } else {
+      python.push(
+        "async def main():",
+        "    async with streamable_http_client(" + JSON.stringify(url) + ") as (read, write):",
+        ...session.map((line) => "        " + line),
+      );
+    }
+    python.push("", "asyncio.run(main())");
     return {
       "MCP client": pretty({ mcpServers: { [name]: client } }),
       "Python agent": python.join("\n"),

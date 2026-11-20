@@ -392,6 +392,9 @@
   }
 
   function focusKey(el) {
+    // A scrollable table is redrawn by polling: it is found again by its
+    // position among the tables of the page, so keyboard scrolling goes on.
+    if (el.classList && el.classList.contains("table-wrap")) return "table-wrap:" + [...main().querySelectorAll(".table-wrap")].indexOf(el);
     return el.getAttribute("href") || el.getAttribute("aria-label") || el.id || null;
   }
 
