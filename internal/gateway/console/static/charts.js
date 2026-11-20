@@ -66,6 +66,42 @@
     bytesPerSec: (v) => (v === null ? "–" : fmtBytes(Math.round(v)) + "/s"),
   };
 
+  // trim shows a number with at most d decimals and no trailing zeros.
+  function trim(v, d) {
+    return String(Number(v.toFixed(d)));
+  }
+
+  // TICKS format the labels of a y axis. Axis values are 1, 2, or 5 times a
+  // power of ten and their halves, so milliseconds read "0.5 ms" next to
+  // "1 ms", not "0.50 ms" next to "1 ms".
+  const TICKS = {
+    ms: (v) => (v === 0 ? "0 ms" : v < 1 ? trim(v, 2) + " ms" : fmtMs(v)),
+  };
+
+  // FINE_TICKS keep fractions, for an axis whose rounded labels would repeat
+  // (a peak of 0.7 B/s has ticks 0, 0.5, and 1, which UNITS shows as 0, 1,
+  // and 1).
+  const FINE_TICKS = {
+    perMin: (v, d) => trim(v, d) + "/min",
+    pct: (v, d) => trim(v * 100, d) + " %",
+    ms: (v, d) => (v === 0 ? "0 ms" : v < 1 ? trim(v, d) + " ms" : fmtMs(v)),
+    bytesPerSec: (v, d) => (v < 1024 ? trim(v, d) + " B/s" : UNITS.bytesPerSec(v)),
+  };
+
+  // tickLabels labels axis values with the chart's unit; if two labels would
+  // read the same, every label keeps its fraction.
+  function tickLabels(unit, values) {
+    const fmt = TICKS[unit] || UNITS[unit] || String;
+    const labels = values.map((v) => fmt(v));
+    if (new Set(labels).size === labels.length) return labels;
+    const fine = FINE_TICKS[unit] || String;
+    // Add decimals until the labels differ: a peak of 0.0001 needs more than
+    // two. Axis values are distinct, so a label per value always exists.
+    let finest = values.map((v) => fine(v, 2));
+    for (let digits = 3; digits <= 8 && new Set(finest).size < finest.length; digits++) finest = values.map((v) => fine(v, digits));
+    return finest;
+  }
+
   // chartSeries turns a /v1/history answer into the dashboard's charts:
   // requests per minute by outcome class (stacked), error rate, p50 and p95
   // latency, and bytes per second, which a tool has none of.
@@ -86,13 +122,16 @@
         id: "latency", title: "Latency", kind: "lines", unit: "ms",
         series: [
           { key: "p50Ms", label: "p50", cls: "accent", values: list.map((p) => ({ t: at(p), v: num(p.p50Ms) })) },
-          { key: "p95Ms", label: "p95", cls: "warn", values: list.map((p) => ({ t: at(p), v: num(p.p95Ms) })) },
+          { key: "p95Ms", label: "p95", cls: "warn", dash: true, values: list.map((p) => ({ t: at(p), v: num(p.p95Ms) })) },
         ],
       },
     ];
+    // Calls in the range, whatever their bytes: a call can carry none (an
+    // accepted notification), and then "no calls" would be wrong.
+    const hasCalls = list.some((p) => CLASSES.some((c) => (num(p[c.key]) || 0) > 0));
     if (list.some((p) => num(p.bytesIn) !== null)) {
       charts.push({
-        id: "bytes", title: "Bytes per second", kind: "lines", unit: "bytesPerSec",
+        id: "bytes", title: "Bytes per second", kind: "lines", unit: "bytesPerSec", hasCalls,
         series: [
           { key: "bytesIn", label: "In", cls: "accent", values: list.map((p) => ({ t: at(p), v: num(p.bytesIn) === null ? null : p.bytesIn / step })) },
           { key: "bytesOut", label: "Out", cls: "info", values: list.map((p) => ({ t: at(p), v: num(p.bytesOut) === null ? null : p.bytesOut / step })) },
@@ -136,8 +175,13 @@
     }
     const top = chart.max ? Math.min(chart.max, niceMax(max)) : niceMax(max);
     const y = (v) => plot.y + plot.h - (Math.min(v, top) / top) * plot.h;
-    const fmt = UNITS[chart.unit] || String;
-    const yTicks = [0, top / 2, top].map((v) => ({ y: y(v), label: fmt(v) }));
+    const tickValues = [0, top / 2, top];
+    const tickText = tickLabels(chart.unit, tickValues);
+    const yTicks = tickValues.map((v, i) => ({ y: y(v), label: tickText[i] }));
+    // Nothing to draw: no calls in the range. An error rate of 0 % is data;
+    // a missing rate is not.
+    const empty = chart.kind === "bars" ? max === 0 :
+      chart.series.every((s) => s.values.every((p) => p.v === null)) || (chart.unit === "bytesPerSec" && chart.hasCalls === false);
 
     const span = end - start;
     const tickStep = TICK_STEPS.find((s) => span / s <= 6) || TICK_STEPS[TICK_STEPS.length - 1];
@@ -169,12 +213,12 @@
           d += open ? " L" + px + " " + py : (d ? " " : "") + "M" + px + " " + py + " l0 0";
           open = true;
         }
-        lines.push({ key: s.key, cls: s.cls, d });
+        lines.push({ key: s.key, cls: s.cls, d, dash: Boolean(s.dash) });
       }
     }
     const since = opts.since && opts.since > start ? opts.since : null;
     return {
-      width, height, plot, top, yTicks, xTicks, bars, lines,
+      width, height, plot, top, yTicks, xTicks, bars, lines, empty,
       before: since ? { x: plot.x, w: Math.max(0, x(since) - plot.x) } : null,
       pointX: first.map((p) => x(p.t + stepMs / 2)),
       x,
@@ -318,7 +362,7 @@
   }
 
   Object.assign(exports, {
-    RANGES, parseRange, CLASSES, TOP_N, TOP_MIN_CALLS, UNITS, GRAFANA, historyPath, chartSeries, niceMax, chartGeometry,
+    RANGES, parseRange, CLASSES, TOP_N, TOP_MIN_CALLS, UNITS, GRAFANA, historyPath, chartSeries, niceMax, tickLabels, chartGeometry,
     nearestIndex, moveIndex, pointValues, clockLabel, readout, tableRows, alertMarks, topLists, rangeSummary, toolRows,
     dashboardNote, grafanaLinks,
   });

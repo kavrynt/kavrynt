@@ -69,28 +69,58 @@
   }
 
   // connectSnippets returns, by tab name, the ways to connect an agent to a
-  // route. The Python snippet targets the MCP Python SDK 2.x.
-  function connectSnippets(name, url) {
-    return {
-      "MCP client": pretty({ mcpServers: { [name]: { type: "http", url } } }),
-      "Python agent": [
-        "# pip install \"mcp>=2\"",
-        "import asyncio",
-        "from mcp import ClientSession",
-        "from mcp.client.streamable_http import streamable_http_client",
-        "",
+  // route. With opts.mcpAuth (the Gateway requires access tokens on /mcp/
+  // routes, SPEC-0006), every snippet carries a placeholder for the bearer
+  // token, never a real one.
+  function connectSnippets(name, url, opts) {
+    const auth = Boolean(opts && opts.mcpAuth);
+    const client = { type: "http", url };
+    if (auth) client.headers = { Authorization: "Bearer <access token>" };
+    const python = ["# pip install \"mcp>=2\"", "import asyncio"];
+    if (auth) python.push("import os", "import httpx2");
+    python.push("from mcp import ClientSession", "from mcp.client.streamable_http import streamable_http_client", "");
+    const session = [
+      "async with ClientSession(read, write) as session:",
+      "    await session.initialize()",
+      "    tools = await session.list_tools()",
+      "    print([tool.name for tool in tools.tools])",
+    ];
+    if (auth) {
+      // The SDK's own HTTP client sends no token; the one passed in sets it.
+      // The token is read from the environment, never written into the code.
+      python.push(
+        "async def main():",
+        "    # The Gateway needs an access token: set ACCESS_TOKEN in the environment.",
+        "    headers = {\"Authorization\": \"Bearer \" + os.environ[\"ACCESS_TOKEN\"]}",
+        "    async with httpx2.AsyncClient(headers=headers, timeout=httpx2.Timeout(30.0, read=300.0)) as http_client:",
+        "        async with streamable_http_client(" + JSON.stringify(url) + ", http_client=http_client) as (read, write):",
+        ...session.map((line) => "            " + line),
+      );
+    } else {
+      python.push(
         "async def main():",
         "    async with streamable_http_client(" + JSON.stringify(url) + ") as (read, write):",
-        "        async with ClientSession(read, write) as session:",
-        "            await session.initialize()",
-        "            tools = await session.list_tools()",
-        "            print([tool.name for tool in tools.tools])",
-        "",
-        "asyncio.run(main())",
-      ].join("\n"),
-      curl: "curl -s -X POST '" + url + "' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
+        ...session.map((line) => "        " + line),
+      );
+    }
+    python.push("", "asyncio.run(main())");
+    return {
+      "MCP client": pretty({ mcpServers: { [name]: client } }),
+      "Python agent": python.join("\n"),
+      curl: "curl -s -X POST '" + url + "' \\\n" + (auth ? "  -H \"Authorization: Bearer $ACCESS_TOKEN\" \\\n" : "") +
+        "  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
     };
   }
 
-  Object.assign(exports, { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets });
+  // connectNote is the sentence under the connection snippets: what the
+  // Gateway requires of callers, as the Gateway itself reports it, and what
+  // it never forwards upstream.
+  function connectNote(mcpAuth) {
+    return (mcpAuth ?
+      "This Gateway requires an access token from a trusted authorization server. " :
+      "This Gateway does not require access tokens on its MCP routes: anyone who can reach it can call this server's tools. ") +
+      "It never forwards Authorization or Cookie headers upstream.";
+  }
+
+  Object.assign(exports, { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets, connectNote });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).format = {}));

@@ -208,3 +208,55 @@ test("dashboardNote and grafanaLinks", () => {
     { title: "Kavrynt MCP Server", href: "http://grafana.svc:3000/grafana/d/kavrynt-mcp-server?var-namespace=team-a&var-name=search.v2" },
   ]);
 });
+
+// Issue #189: axis labels never repeat, empty charts say so, and the second
+// latency line does not rely on colour alone.
+test("axis labels stay distinct when the values are fractions", () => {
+  const { tickLabels } = charts;
+  assert.deepEqual(tickLabels("bytesPerSec", [0, 0.5, 1]), ["0 B/s", "0.5 B/s", "1 B/s"]);
+  assert.deepEqual(tickLabels("bytesPerSec", [0, 2.5, 5]).length, 3);
+  assert.equal(new Set(tickLabels("bytesPerSec", [0, 0.5, 1])).size, 3);
+  assert.deepEqual(tickLabels("ms", [0, 0.5, 1]), ["0 ms", "0.5 ms", "1 ms"]);
+  assert.deepEqual(tickLabels("perMin", [0, 2.5, 5]), ["0/min", "2.5/min", "5/min"]);
+  assert.deepEqual(tickLabels("pct", [0, 0.5, 1]), ["0 %", "50 %", "100 %"]);
+});
+
+test("a chart with no calls is empty, one with a 0 % error rate is not", () => {
+  const point = (extra) => Object.assign({ time: "2026-01-01T00:00:00Z", ok: 0, toolError: 0, upstreamError: 0, other: 0, errorRate: null, p50Ms: null, p95Ms: null }, extra);
+  const geometry = (history, id) => {
+    const chart = charts.chartSeries(history).find((c) => c.id === id);
+    return charts.chartGeometry(chart, { width: 400, start: Date.parse("2026-01-01T00:00:00Z"), end: Date.parse("2026-01-01T01:00:00Z"), stepSeconds: 60 });
+  };
+  const none = { stepSeconds: 60, points: [point({})] };
+  for (const id of ["requests", "errors", "latency"]) assert.equal(geometry(none, id).empty, true, id);
+  const served = { stepSeconds: 60, points: [point({ ok: 3, errorRate: 0, p50Ms: 4, p95Ms: 9 })] };
+  for (const id of ["requests", "errors", "latency"]) assert.equal(geometry(served, id).empty, false, id);
+});
+
+test("only the p95 line is dashed", () => {
+  const history = { stepSeconds: 60, points: [{ time: "2026-01-01T00:00:00Z", ok: 1, p50Ms: 2, p95Ms: 8 }, { time: "2026-01-01T00:01:00Z", ok: 1, p50Ms: 3, p95Ms: 9 }] };
+  const chart = charts.chartSeries(history).find((c) => c.id === "latency");
+  const lines = charts.chartGeometry(chart, { width: 400, start: Date.parse("2026-01-01T00:00:00Z"), end: Date.parse("2026-01-01T01:00:00Z"), stepSeconds: 60 }).lines;
+  assert.deepEqual(lines.map((l) => [l.key, l.dash]), [["p50Ms", false], ["p95Ms", true]]);
+});
+
+// Review of #196: a peak far below one still gets distinct labels, and a
+// range with calls but no bytes is not called empty.
+test("axis labels gain decimals until they differ", () => {
+  for (const [unit, values] of [["pct", [0, 0.00005, 0.0001]], ["ms", [0, 0.002, 0.004]], ["perMin", [0, 0.0005, 0.001]], ["bytesPerSec", [0, 0.0005, 0.001]]]) {
+    const labels = charts.tickLabels(unit, values);
+    assert.equal(new Set(labels).size, 3, unit + ": " + labels.join(" | "));
+  }
+  assert.deepEqual(charts.tickLabels("perMin", [0, 2.5, 5]), ["0/min", "2.5/min", "5/min"]);
+});
+
+test("the bytes chart is empty only when there were no calls", () => {
+  const point = (extra) => Object.assign({ time: "2026-01-01T00:00:00Z", ok: 0, toolError: 0, upstreamError: 0, other: 0, bytesIn: 0, bytesOut: 0 }, extra);
+  const bytes = (points) => {
+    const chart = charts.chartSeries({ stepSeconds: 60, points }).find((c) => c.id === "bytes");
+    return charts.chartGeometry(chart, { width: 400, start: Date.parse("2026-01-01T00:00:00Z"), end: Date.parse("2026-01-01T01:00:00Z"), stepSeconds: 60 }).empty;
+  };
+  assert.equal(bytes([point({})]), true);
+  assert.equal(bytes([point({ ok: 2 })]), false);
+  assert.equal(bytes([point({ ok: 2, bytesIn: 40, bytesOut: 90 })]), false);
+});
