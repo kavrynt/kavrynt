@@ -83,11 +83,17 @@ bare "…".
   request once, as a new entry.
 - **SPEC-0048-R07** "Copy as curl" on a history entry or the current form
   MUST copy a `curl` command for the call: the route URL, the JSON body, and
-  the headers `Content-Type` and `Accept`. When the Gateway requires access
-  tokens (`mcpAuth`), the command MUST use `Authorization: Bearer
-  $ACCESS_TOKEN`, the literal text, and MUST NOT contain a pasted token or
-  any session cookie. A session id MUST be included only as the
-  `Mcp-Session-Id` header the call used.
+  the headers `Content-Type` and `Accept`. Every value (URL, body, header
+  values) MUST be a single-quoted shell word with each `'` written as
+  `'\''`, so nothing in a raw body, a route, or a session id (`$(...)`,
+  backticks, `$VAR`, quotes, newlines) is executed or expanded when the
+  command is pasted. When the Gateway requires access tokens (`mcpAuth`), the
+  command MUST carry `Authorization: Bearer $ACCESS_TOKEN` in a double-quoted
+  word that holds only that literal text, and MUST NOT contain a pasted token
+  or any session cookie. If the request body contains the pasted token (the
+  text of the access token field), the console MUST refuse to copy and say
+  why, rather than copy or silently alter the body. A session id MUST be
+  included only as the `Mcp-Session-Id` header the call used.
 - **SPEC-0048-R08** History MUST stay in memory only: nothing from R06 or R07
   is written to `localStorage`, `sessionStorage`, IndexedDB, or cookies
   (SPEC-0002-R13), and signing out clears it (SPEC-0005-R14).
@@ -96,8 +102,9 @@ bare "…".
 
 - **SPEC-0048-R09** Field validation, raw-request checking with error
   position, and `curl` building MUST be DOM-free functions that
-  `make console-test` covers, including a test that no output contains a
-  token. The browser smoke test MUST trigger an inline error, a raw JSON
+  `make console-test` covers, including tests that no output contains a
+  token, that bodies, routes, and session ids holding shell metacharacters
+  stay inside their quotes, and that a body holding the token is refused. The browser smoke test MUST trigger an inline error, a raw JSON
   error, and a re-run at 360 px and 1280 px.
 
 ## Acceptance criteria

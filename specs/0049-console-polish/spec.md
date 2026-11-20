@@ -69,8 +69,10 @@ servers get the same roomy spacing as a demo.
   Overview, Dashboard, Servers, Tools, Playground, Traffic, Alerts; `?` opens
   a list of the shortcuts. Shortcuts MUST NOT replace any browser or screen
   reader command, and MUST be listed in the `?` dialog and in the docs.
-- **SPEC-0049-R04** `Ctrl+K` or `Cmd+K` (and a visible "Search" control in the
-  header) MUST open a command palette: a dialog with a labelled search box
+- **SPEC-0049-R04** `g` then `j` (and a visible "Jump to" control in the
+  header, so the palette never depends on a shortcut) MUST open a command
+  palette; `Ctrl+K` and `Cmd+K` MUST NOT be taken, because browsers use them
+  for their own search (R03): a dialog with a labelled search box
   that lists pages, servers (by `namespace.name`), and tools (by name and
   server) matching what is typed, in a stable order, navigable with the
   arrow keys, chosen with Enter, closed with Escape, with focus trapped in
@@ -114,7 +116,7 @@ servers get the same roomy spacing as a demo.
   given focus in the search box, when `g` is typed, then it is just a letter
   (R03).
 - Given servers `team-sre.incidents` and `team-platform.runbooks`, when
-  `Ctrl+K` opens the palette and `inc` is typed, then `team-sre.incidents`
+  `g` then `j` opens the palette and `inc` is typed, then `team-sre.incidents`
   is the first result and Enter opens its page (R04).
 - Given no alerts, when Alerts opens, then it says why and what an alert
   would look like, not just "No active alerts." (R06).
@@ -140,6 +142,9 @@ unchanged.
 
 ## Open questions
 
+- `Ctrl+K` and `Cmd+K` are common for palettes but are the browsers' own
+  search shortcuts, so the draft uses `g` then `j`. Keep that, or choose
+  another? (maintainer)
 - Which of these should ship first? Placeholders and empty states are small;
   the palette is the largest. (maintainer)
 - Does a per-page help link into docs.kavrynt.com belong here, or in a

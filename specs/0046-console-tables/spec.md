@@ -62,20 +62,25 @@ and are not part of this spec.
 - **SPEC-0046-R04** The sort column and direction MUST be kept in the URL
   hash query as `sort` (a column key, prefixed with `-` for descending)
   beside the existing filters, restored when the URL is opened, and ignored
-  when the key is not a column of that table.
+  when the key is not a column of that table. A page with two tables gives
+  each its own keys, so both states survive in one URL: the Traffic
+  "Requests" table uses `sort`, `page`, and `size`, and its "Per tool" table
+  uses `toolSort`, `toolPage`, and `toolSize` (R05).
 - **SPEC-0046-R05** A table of more than 50 rows MUST show 50 at a time (this
   replaces the Traffic table's 100 rows and "Show all"), with
   Previous and Next controls, the visible range ("51 to 100 of 212"), and a
   page-size choice of 25, 50, or 100. The page and size MUST be kept in the
-  URL as `page` and `size`; a page past the end MUST show the last page.
+  URL under the table's own keys (R04); a page past the end MUST show the
+  last page.
 - **SPEC-0046-R06** Beside each filtered table the console MUST show how many
   rows match ("12 of 212 tools") and, when none match, say so and offer
   "Clear filters" (which exists today).
 - **SPEC-0046-R07** The Traffic "Requests" table MUST keep its live behavior:
-  new rows still appear within the poll interval and the
-  newest-first order holds when no sort is chosen. With a sort chosen, new
-  rows MUST NOT make the visible page jump; the console MUST show "N new
-  requests" with a control that applies them.
+  with no sort chosen, new rows still appear within the poll
+  interval, newest first. With a sort chosen, the visible page MUST NOT
+  change on its own: within the poll interval the console MUST show "N new
+  requests" with a control, and the new rows join the table, in the chosen
+  order, only when the operator uses that control.
 
 ### Servers
 
@@ -107,7 +112,11 @@ and are not part of this spec.
 - Given a URL with `sort=bogus`, when it is opened, then the table shows its
   default order without an error (R04).
 - Given Traffic sorted by latency, when a request arrives, then the visible
-  rows do not move and "1 new request" appears (R07).
+  rows do not move and "1 new request" appears within the poll interval;
+  when its control is used, the row appears in latency order (R07).
+- Given the Per tool table sorted by calls and the Requests table by
+  latency, when the URL is copied and opened, then both sorts are restored
+  (R04).
 - Given two servers, when the operator picks List, then both show on one line
   each with the full endpoint available on focus and a Copy control (R08, R09).
 
