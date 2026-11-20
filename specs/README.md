@@ -171,3 +171,7 @@ against the assistant's summary of them.
 | [0043](0043-console-time-ranges/spec.md) | Console dashboard time ranges | Draft |
 | [0044](0044-strict-forwarding/spec.md) | Only MCP requests and answers pass the Gateway | Implemented |
 | [0045](0045-kavryctl-help/spec.md) | kavryctl per-command help and exit codes | Implemented |
+| [0046](0046-console-tables/spec.md) | Console tables: sorting, paging, and a server list view | Draft |
+| [0047](0047-console-live-status-export/spec.md) | Console data freshness, export, and copy link | Draft |
+| [0048](0048-console-playground-ux/spec.md) | Console Playground: inline validation and re-running calls | Draft |
+| [0049](0049-console-polish/spec.md) | Console polish: loading states, shortcuts, command palette, empty states | Draft |
