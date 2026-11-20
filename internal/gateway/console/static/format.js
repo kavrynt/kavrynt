@@ -117,7 +117,7 @@
   // it never forwards upstream.
   function connectNote(mcpAuth) {
     return (mcpAuth ?
-      "This Gateway requires an access token from a trusted authorization server, with this route's resource URI as its audience. " :
+      "This Gateway requires an access token from a trusted authorization server. " :
       "This Gateway does not require access tokens on its MCP routes: anyone who can reach it can call this server's tools. ") +
       "It never forwards Authorization or Cookie headers upstream.";
   }

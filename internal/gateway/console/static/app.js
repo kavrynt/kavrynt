@@ -364,7 +364,10 @@
         h("p", { class: "muted", style: "margin:0", text: "This console has no page called \u201c" + requested + "\u201d. The link may be mistyped or from another version." }),
         h("div", {}, h("a", { class: "btn primary", href: formatHash("overview"), text: "Go to Overview" })))));
     } else {
-      current.update = views[page](root, rest, params) || null;
+      // resolveRoute only returns pages of views; the check keeps a lookup by
+      // a name from the URL from ever calling anything else.
+      const view = views[page];
+      current.update = typeof view === "function" ? view(root, rest, params) || null : null;
     }
     root.focus({ preventScroll: true });
   }
@@ -384,7 +387,14 @@
     if (!current.update) return;
     const el = document.activeElement;
     const key = el && el !== document.body && focusKey(el);
+    // Scrolled tables are redrawn too: remember how far each was scrolled.
+    const scrolled = [...main().querySelectorAll(".table-wrap")].map((w) => [w.scrollLeft, w.scrollTop]);
     current.update(what);
+    main().querySelectorAll(".table-wrap").forEach((w, i) => {
+      const [left, top] = scrolled[i] || [0, 0];
+      if (left) w.scrollLeft = left;
+      if (top) w.scrollTop = top;
+    });
     if (key && !el.isConnected) {
       const match = [...main().querySelectorAll("a, button, select, input, textarea, [tabindex]")].find((c) => focusKey(c) === key);
       if (match) match.focus({ preventScroll: true });

@@ -239,3 +239,24 @@ test("only the p95 line is dashed", () => {
   const lines = charts.chartGeometry(chart, { width: 400, start: Date.parse("2026-01-01T00:00:00Z"), end: Date.parse("2026-01-01T01:00:00Z"), stepSeconds: 60 }).lines;
   assert.deepEqual(lines.map((l) => [l.key, l.dash]), [["p50Ms", false], ["p95Ms", true]]);
 });
+
+// Review of #196: a peak far below one still gets distinct labels, and a
+// range with calls but no bytes is not called empty.
+test("axis labels gain decimals until they differ", () => {
+  for (const [unit, values] of [["pct", [0, 0.00005, 0.0001]], ["ms", [0, 0.002, 0.004]], ["perMin", [0, 0.0005, 0.001]], ["bytesPerSec", [0, 0.0005, 0.001]]]) {
+    const labels = charts.tickLabels(unit, values);
+    assert.equal(new Set(labels).size, 3, unit + ": " + labels.join(" | "));
+  }
+  assert.deepEqual(charts.tickLabels("perMin", [0, 2.5, 5]), ["0/min", "2.5/min", "5/min"]);
+});
+
+test("the bytes chart is empty only when there were no calls", () => {
+  const point = (extra) => Object.assign({ time: "2026-01-01T00:00:00Z", ok: 0, toolError: 0, upstreamError: 0, other: 0, bytesIn: 0, bytesOut: 0 }, extra);
+  const bytes = (points) => {
+    const chart = charts.chartSeries({ stepSeconds: 60, points }).find((c) => c.id === "bytes");
+    return charts.chartGeometry(chart, { width: 400, start: Date.parse("2026-01-01T00:00:00Z"), end: Date.parse("2026-01-01T01:00:00Z"), stepSeconds: 60 }).empty;
+  };
+  assert.equal(bytes([point({})]), true);
+  assert.equal(bytes([point({ ok: 2 })]), false);
+  assert.equal(bytes([point({ ok: 2, bytesIn: 40, bytesOut: 90 })]), false);
+});
