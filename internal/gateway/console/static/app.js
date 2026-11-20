@@ -364,9 +364,10 @@
         h("p", { class: "muted", style: "margin:0", text: "This console has no page called \u201c" + requested + "\u201d. The link may be mistyped or from another version." }),
         h("div", {}, h("a", { class: "btn primary", href: formatHash("overview"), text: "Go to Overview" })))));
     } else {
-      // resolveRoute only returns pages of views; the check keeps a lookup by
-      // a name from the URL from ever calling anything else.
-      const view = views[page];
+      // The view is found by comparing against the names views defines, so
+      // the function called never depends on a name taken from the URL.
+      const name = Object.keys(views).find((k) => k === page);
+      const view = name === undefined ? null : views[name];
       current.update = typeof view === "function" ? view(root, rest, params) || null : null;
     }
     root.focus({ preventScroll: true });
