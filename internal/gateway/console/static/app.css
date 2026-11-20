@@ -133,7 +133,8 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
 }
 .nav a:hover { background: rgba(255, 255, 255, .06); text-decoration: none; }
 .nav a.active { background: var(--sidebar-active); color: #fff; }
-.nav-icon { width: 18px; text-align: center; opacity: .85; }
+.nav-icon { width: 18px; height: 18px; display: inline-flex; opacity: .85; }
+.icon { display: block; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .nav-count {
   margin-left: auto;
   min-width: 20px;
@@ -159,6 +160,11 @@ code, pre, .mono { font-family: var(--mono); font-size: 12.5px; }
   color: var(--sidebar-text);
   border-radius: 6px;
   padding: 2px 8px;
+  min-width: 32px;
+  min-height: 28px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
   cursor: pointer;
 }
 
@@ -428,6 +434,8 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .chart .tick { fill: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 /* Not .bar: that class sets a height, which would override the rect's. */
 .chart .column { fill: var(--c); }
+.chart .line.dashed { stroke-dasharray: 6 4; }
+.chart .empty-note { fill: var(--muted); font-size: 12px; }
 .chart .line { fill: none; stroke: var(--c); stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 .chart .before-since { fill: var(--surface-2); }
 .chart .cursor { stroke: var(--text); stroke-width: 1; }
@@ -441,6 +449,7 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 .c-accent { --c: var(--accent); }
 .legend { display: flex; flex-wrap: wrap; gap: 4px 14px; list-style: none; margin: 0 0 8px; padding: 0; color: var(--muted); font-size: 12px; }
 .legend .swatch { display: inline-block; width: 10px; height: 10px; border-radius: 2px; margin-right: 6px; background: var(--c); vertical-align: -1px; }
+.legend .swatch.dashed { background-image: repeating-linear-gradient(90deg, transparent 0 3px, var(--surface) 3px 5px); }
 .chart-readout { margin: 6px 0 0; min-height: 1.4em; color: var(--muted); font-size: 12px; font-variant-numeric: tabular-nums; }
 .top-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 420px), 1fr)); gap: 0 16px; }
 .dash-toolbar { margin-bottom: 14px; }
@@ -464,8 +473,48 @@ details summary { cursor: pointer; color: var(--muted); font-size: 12.5px; margi
 }
 @media (max-width: 520px) {
   .gw-version { display: none; }
+  /* Header: the brand and the account controls on one line. The status text
+     stays for screen readers (the dot carries it visually). */
+  .sidebar-foot { flex: 1 1 0; min-width: 0; justify-content: flex-end; flex-wrap: nowrap; gap: 8px; }
+  .gw-status span:not(.dot) { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; }
+  .user .muted { display: none; }
+  .user-name { max-width: 84px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .user .linkish, .theme-toggle { min-height: 44px; min-width: 44px; white-space: nowrap; }
+  /* Navigation: every page visible at once, no hidden scrolling strip. */
+  .nav { display: grid; grid-template-columns: repeat(4, 1fr); gap: 4px; overflow: visible; padding: 0 8px 8px; }
+  .nav a { flex-direction: column; gap: 2px; padding: 6px 2px; min-height: 48px; font-size: 12px; justify-content: center; text-align: center; position: relative; }
+  .nav-count { position: absolute; top: 2px; right: 6px; margin: 0; min-width: 18px; font-size: 11px; }
+  .tiles { grid-template-columns: repeat(2, 1fr); }
+  .tile .value { font-size: 22px; }
+}
+
+/* Scroll cue for wide tables: an edge shadow shows where more columns are.
+   Keyboard users can scroll a table because the wrapper takes focus. */
+.table-wrap {
+  background:
+    linear-gradient(to right, var(--surface) 30%, transparent) 0 0 / 40px 100% no-repeat local,
+    linear-gradient(to left, var(--surface) 30%, transparent) 100% 0 / 40px 100% no-repeat local,
+    radial-gradient(farthest-side at 0 50%, rgba(0, 0, 0, .22), transparent) 0 0 / 12px 100% no-repeat scroll,
+    radial-gradient(farthest-side at 100% 50%, rgba(0, 0, 0, .22), transparent) 100% 0 / 12px 100% no-repeat scroll;
 }
 
 /* Playground access token (SPEC-0006-R16). */
 .token-row { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 10px; }
 .token-row input { flex: 1 1 260px; min-width: 0; }
+
+/* Targets of at least 24 x 24 px (WCAG 2.5.8) for the links and buttons that
+   stand alone, not only the ones inside a sentence. */
+button.linkish, header > a, .panel-actions > a, td > a, .attention-link { display: inline-flex; align-items: center; min-height: 24px; }
+.user .linkish { padding: 0 2px; }
+summary { padding: 4px 0; }
+
+/* People who ask their system for less motion get none: new rows do not
+   flash, and nothing slides or fades. */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; scroll-behavior: auto !important; }
+}
+
+/* The dashboard's ranking tables share a half-width card with another table:
+   tighter cells and wrapping route names keep every column in view. */
+.top-grid th, .top-grid td { padding-left: 8px; padding-right: 8px; }
+.top-grid td.mono { white-space: normal; overflow-wrap: anywhere; }

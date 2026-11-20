@@ -69,28 +69,48 @@
   }
 
   // connectSnippets returns, by tab name, the ways to connect an agent to a
-  // route. The Python snippet targets the MCP Python SDK 2.x.
-  function connectSnippets(name, url) {
+  // route. With opts.mcpAuth (the Gateway requires access tokens on /mcp/
+  // routes, SPEC-0006), every snippet carries a placeholder for the bearer
+  // token, never a real one.
+  function connectSnippets(name, url, opts) {
+    const auth = Boolean(opts && opts.mcpAuth);
+    const client = { type: "http", url };
+    if (auth) client.headers = { Authorization: "Bearer <access token>" };
+    const python = [
+      "# pip install \"mcp>=2\"",
+      "import asyncio",
+      "from mcp import ClientSession",
+      "from mcp.client.streamable_http import streamable_http_client",
+      "",
+    ];
+    if (auth) python.push("# The Gateway needs an access token: send \"Authorization: Bearer <access token>\"", "# with every request (for example through the HTTP client you pass in).", "");
+    python.push(
+      "async def main():",
+      "    async with streamable_http_client(" + JSON.stringify(url) + ") as (read, write):",
+      "        async with ClientSession(read, write) as session:",
+      "            await session.initialize()",
+      "            tools = await session.list_tools()",
+      "            print([tool.name for tool in tools.tools])",
+      "",
+      "asyncio.run(main())",
+    );
     return {
-      "MCP client": pretty({ mcpServers: { [name]: { type: "http", url } } }),
-      "Python agent": [
-        "# pip install \"mcp>=2\"",
-        "import asyncio",
-        "from mcp import ClientSession",
-        "from mcp.client.streamable_http import streamable_http_client",
-        "",
-        "async def main():",
-        "    async with streamable_http_client(" + JSON.stringify(url) + ") as (read, write):",
-        "        async with ClientSession(read, write) as session:",
-        "            await session.initialize()",
-        "            tools = await session.list_tools()",
-        "            print([tool.name for tool in tools.tools])",
-        "",
-        "asyncio.run(main())",
-      ].join("\n"),
-      curl: "curl -s -X POST '" + url + "' \\\n  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
+      "MCP client": pretty({ mcpServers: { [name]: client } }),
+      "Python agent": python.join("\n"),
+      curl: "curl -s -X POST '" + url + "' \\\n" + (auth ? "  -H \"Authorization: Bearer $ACCESS_TOKEN\" \\\n" : "") +
+        "  -H 'Content-Type: application/json' \\\n  -H 'Accept: application/json, text/event-stream' \\\n  -d '{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"tools/list\",\"params\":{}}'",
     };
   }
 
-  Object.assign(exports, { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets });
+  // connectNote is the sentence under the connection snippets: what the
+  // Gateway requires of callers, as the Gateway itself reports it, and what
+  // it never forwards upstream.
+  function connectNote(mcpAuth) {
+    return (mcpAuth ?
+      "This Gateway requires an access token from a trusted authorization server, with this route's resource URI as its audience. " :
+      "This Gateway does not require access tokens on its MCP routes: anyone who can reach it can call this server's tools. ") +
+      "It never forwards Authorization or Cookie headers upstream.";
+  }
+
+  Object.assign(exports, { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets, connectNote });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).format = {}));

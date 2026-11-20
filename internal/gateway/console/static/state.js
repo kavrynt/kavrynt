@@ -35,6 +35,52 @@
     try { return decodeURIComponent(segment); } catch { return segment; }
   }
 
+  const pageNames = { overview: "Overview", dashboard: "Dashboard", servers: "Servers", tools: "Tools", playground: "Playground", traffic: "Traffic", alerts: "Alerts" };
+
+  // resolveRoute maps the first hash segment to a page. An empty hash is the
+  // Overview; a page the console does not have is reported, not replaced by
+  // the Overview, so a mistyped or stale link does not look like it worked.
+  function resolveRoute(requested, known) {
+    if (!requested) return { page: "overview", notFound: false };
+    if (Object.prototype.hasOwnProperty.call(known, requested)) return { page: requested, notFound: false };
+    return { page: "overview", notFound: true };
+  }
+
+  // pageTitle is the document title and the name of the main region for a
+  // route (WCAG 2.4.2): the view first, then the console, so tabs and
+  // history entries tell the pages apart. A server page names the server.
+  const SITE = "Kavrynt Console";
+  function pageTitle(page, rest = [], notFound = false) {
+    if (page === "login") return "Sign in \u00b7 " + SITE;
+    if (notFound) return "Page not found \u00b7 " + SITE;
+    const name = pageNames[page] || pageNames.overview;
+    if (page === "servers" && rest[0]) {
+      const dot = String(rest[0]).indexOf(".");
+      const server = dot > 0 ? rest[0].slice(dot + 1) + " (" + rest[0].slice(0, dot) + ")" : rest[0];
+      return server + " \u00b7 " + name + " \u00b7 " + SITE;
+    }
+    return name + " \u00b7 " + SITE;
+  }
+
+  // THEMES are the console's colour themes in the order the toggle steps
+  // through them: "" follows the device.
+  const THEMES = ["", "light", "dark"];
+
+  // nextTheme is the theme after current; anything unknown counts as the
+  // device's.
+  function nextTheme(current) {
+    const i = Math.max(0, THEMES.indexOf(current));
+    return THEMES[(i + 1) % THEMES.length];
+  }
+
+  // themeLabel names the theme in effect and what the toggle switches to,
+  // for the toggle's accessible name and tooltip.
+  function themeLabel(current) {
+    const names = { "": "system (follows your device)", light: "light", dark: "dark" };
+    const next = nextTheme(current);
+    return "Colour theme: " + (names[current] || names[""]) + ". Switch to " + (names[next] || names[""]) + ".";
+  }
+
   // isLoopbackHost reports whether the console was loaded from this machine,
   // the only case in which the no-login notice is not shown (SPEC-0002-R12).
   function isLoopbackHost(hostname) {
@@ -178,5 +224,5 @@
     }
   }
 
-  Object.assign(exports, { parseHash, formatHash, isLoopbackHost, createPoller, sessionState, ssoOffer, logoutDone, loginMessage, authFailureMessage, notice, noticeShown });
+  Object.assign(exports, { parseHash, formatHash, resolveRoute, pageTitle, nextTheme, themeLabel, isLoopbackHost, createPoller, sessionState, ssoOffer, logoutDone, loginMessage, authFailureMessage, notice, noticeShown });
 })(typeof module === "object" && module.exports ? module.exports : ((globalThis.Kavrynt = globalThis.Kavrynt || {}).state = {}));

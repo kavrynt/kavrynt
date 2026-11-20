@@ -105,9 +105,33 @@
     return h("section", { class: "panel" }, h("header", {}, h("h2", { text: title }), extra || null), body);
   }
 
+  // ICONS are the console's own line icons (24 x 24, drawn with the text
+  // colour by CSS), so they look the same on every system, unlike the
+  // Unicode symbols they replace.
+  const ICONS = {
+    overview: [["circle", { cx: 12, cy: 12, r: 9 }], ["circle", { cx: 12, cy: 12, r: 3 }]],
+    dashboard: [["path", { d: "M5 20v-9M12 20V4M19 20v-6" }]],
+    servers: [["rect", { x: 3, y: 4, width: 18, height: 6, rx: 1.5 }], ["rect", { x: 3, y: 14, width: 18, height: 6, rx: 1.5 }], ["path", { d: "M7 7h.01M7 17h.01" }]],
+    tools: [["path", { d: "M4 7h10M18 7h2M4 17h2M10 17h10" }], ["circle", { cx: 16, cy: 7, r: 2 }], ["circle", { cx: 8, cy: 17, r: 2 }]],
+    playground: [["path", { d: "M8 5l11 7-11 7z" }]],
+    traffic: [["path", { d: "M3 12h4l3-8 4 16 3-8h4" }]],
+    alerts: [["path", { d: "M6 17v-6a6 6 0 0 1 12 0v6l2 2H4z" }], ["path", { d: "M10 21h4" }]],
+    light: [["circle", { cx: 12, cy: 12, r: 4 }], ["path", { d: "M12 2v2M12 20v2M2 12h2M20 12h2M5 5l1.5 1.5M17.5 17.5L19 19M5 19l1.5-1.5M17.5 6.5L19 5" }]],
+    dark: [["path", { d: "M20 14.5A8 8 0 0 1 9.5 4 8 8 0 1 0 20 14.5z" }]],
+    system: [["rect", { x: 3, y: 4, width: 18, height: 12, rx: 2 }], ["path", { d: "M8 20h8M12 16v4" }]],
+  };
+
+  // icon returns the named icon as a decorative SVG, or null.
+  function icon(name) {
+    const parts = ICONS[name];
+    if (!parts) return null;
+    return svg("svg", { viewBox: "0 0 24 24", width: 18, height: 18, "aria-hidden": "true", focusable: "false", class: "icon" },
+      parts.map(([tag, attrs]) => svg(tag, attrs)));
+  }
+
   function scopeNote(text) {
     return h("p", { class: "scope-note", text });
   }
 
-  Kavrynt.dom = { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote };
+  Kavrynt.dom = { h, svg, icon, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote };
 })();

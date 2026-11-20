@@ -211,3 +211,39 @@ test("logoutDone accepts only an ended session", () => {
   // A 401 comes from a proxy in front of the Gateway, never from it.
   for (const status of [0, 401, 403, 500, 502, 503]) assert.equal(logoutDone(status), false, String(status));
 });
+
+// Issue #187: titles tell the pages apart, and a page that does not exist
+// is not the Overview.
+test("every page has its own document title", () => {
+  const { pageTitle } = state;
+  assert.equal(pageTitle("overview"), "Overview · Kavrynt Console");
+  assert.equal(pageTitle("servers"), "Servers · Kavrynt Console");
+  assert.equal(pageTitle("servers", ["team-sre.incidents"]), "incidents (team-sre) · Servers · Kavrynt Console");
+  assert.equal(pageTitle("servers", ["odd"]), "odd · Servers · Kavrynt Console");
+  assert.equal(pageTitle("login"), "Sign in · Kavrynt Console");
+  assert.equal(pageTitle("nope", [], true), "Page not found · Kavrynt Console");
+  const titles = ["overview", "dashboard", "servers", "tools", "playground", "traffic", "alerts"].map((p) => pageTitle(p));
+  assert.equal(new Set(titles).size, titles.length);
+});
+
+test("an unknown page is reported, an empty hash is the Overview", () => {
+  const { resolveRoute } = state;
+  const known = { overview() {}, servers() {} };
+  assert.deepEqual(resolveRoute("", known), { page: "overview", notFound: false });
+  assert.deepEqual(resolveRoute("servers", known), { page: "servers", notFound: false });
+  assert.deepEqual(resolveRoute("does-not-exist", known), { page: "overview", notFound: true });
+  assert.deepEqual(resolveRoute("toString", known), { page: "overview", notFound: true });
+});
+
+// Issue #190: the toggle steps through the device's theme, light, and dark,
+// and its name says which one is on.
+test("the theme toggle cycles system, light, dark", () => {
+  const { nextTheme, themeLabel } = state;
+  assert.equal(nextTheme(""), "light");
+  assert.equal(nextTheme("light"), "dark");
+  assert.equal(nextTheme("dark"), "");
+  assert.equal(nextTheme("sepia"), "light");
+  assert.match(themeLabel(""), /system.*Switch to light/);
+  assert.match(themeLabel("light"), /light.*Switch to dark/);
+  assert.match(themeLabel("dark"), /dark.*Switch to system/);
+});

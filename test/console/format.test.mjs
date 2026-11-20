@@ -38,3 +38,22 @@ test("tool hints are labelled in a fixed order", () => {
   assert.deepEqual(format.toolHints(undefined), []);
   assert.deepEqual(format.toolHints({ readOnlyHint: "yes", dangerous: true }), []);
 });
+
+// Issue #186: the snippets and the note follow what the Gateway requires.
+test("snippets carry a token placeholder only when MCP routes need tokens", () => {
+  const open = connectSnippets("incidents", url);
+  const guarded = connectSnippets("incidents", url, { mcpAuth: true });
+  for (const snippet of Object.values(open)) assert.doesNotMatch(snippet, /Bearer/);
+  assert.deepEqual(JSON.parse(guarded["MCP client"]),
+    { mcpServers: { incidents: { type: "http", url, headers: { Authorization: "Bearer <access token>" } } } });
+  assert.match(guarded.curl, /-H "Authorization: Bearer \$ACCESS_TOKEN"/);
+  assert.match(guarded["Python agent"], /Authorization: Bearer <access token>/);
+  assert.match(guarded.curl, /-d '\{"jsonrpc"/);
+});
+
+test("the connection note never calls a protected Gateway open", () => {
+  assert.match(format.connectNote(true), /requires an access token/);
+  assert.doesNotMatch(format.connectNote(true), /does not require|yet/);
+  assert.match(format.connectNote(false), /does not require access tokens/);
+  assert.match(format.connectNote(false), /never forwards Authorization or Cookie/);
+});

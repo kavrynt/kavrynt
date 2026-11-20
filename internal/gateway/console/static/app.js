@@ -8,8 +8,8 @@
 "use strict";
 
 (() => {
-  const { h, svg, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
-  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets } = Kavrynt.format;
+  const { h, svg, icon, put, clear, toast, copy, copyRow, badge, codeBlock, emptyState, tile, panel, scopeNote } = Kavrynt.dom;
+  const { pretty, fmtBytes, fmtMs, fmtPct, ago, clock, toolHints, connectSnippets, connectNote } = Kavrynt.format;
   const {
     scopeNote: trafficScope, OUTCOMES, outcomeClass, condition, serverHealth, versionInfo, attention, overview, failingTools, toolSummary,
     filterTraffic, filterServers, distinct, catalog, searchCatalog, diagnostics, stripQuery,
@@ -19,7 +19,7 @@
     RANGES, GRAFANA, parseRange, historyPath, chartSeries, chartGeometry, nearestIndex, moveIndex, readout, tableRows, clockLabel,
     alertMarks, topLists, rangeSummary, toolRows, dashboardNote, grafanaLinks,
   } = Kavrynt.charts;
-  const { parseHash, formatHash, createPoller, sessionState, logoutDone, loginMessage, notice, noticeShown } = Kavrynt.state;
+  const { parseHash, formatHash, resolveRoute, pageTitle, nextTheme, themeLabel, createPoller, sessionState, logoutDone, loginMessage, notice, noticeShown } = Kavrynt.state;
   const { renderPlayground, closePlayground, resetPlayground } = Kavrynt.playground;
 
   const SERVER_POLL_MS = 5000;
@@ -338,6 +338,7 @@
       document.querySelectorAll("[data-nav]").forEach((a) => { a.classList.remove("active"); a.removeAttribute("aria-current"); });
       const root = clear(main());
       current = { page: "login", update: null };
+      announce("login", [], false);
       if (state.auth.checked) renderLogin(root);
       else put(root, emptyState("Loading…"));
       // Logging out hides the control that had focus; the admin form then
@@ -346,9 +347,9 @@
       return;
     }
     const { page: requested, rest, params } = parseHash(location.hash);
-    const page = views[requested] ? requested : "overview";
+    const { page, notFound } = resolveRoute(requested, views);
     document.querySelectorAll("[data-nav]").forEach((a) => {
-      const active = a.dataset.nav === page;
+      const active = !notFound && a.dataset.nav === page;
       a.classList.toggle("active", active);
       if (active) a.setAttribute("aria-current", "page");
       else a.removeAttribute("aria-current");
@@ -357,8 +358,24 @@
     current = { page, update: null };
     // Only a dashboard view polls history; it sets the path again.
     state.historyPath = "";
-    current.update = views[page](root, rest, params) || null;
+    announce(page, rest, notFound);
+    if (notFound) {
+      put(root, panel("Page not found", h("div", { class: "body stack" },
+        h("p", { class: "muted", style: "margin:0", text: "This console has no page called \u201c" + requested + "\u201d. The link may be mistyped or from another version." }),
+        h("div", {}, h("a", { class: "btn primary", href: formatHash("overview"), text: "Go to Overview" })))));
+    } else {
+      current.update = views[page](root, rest, params) || null;
+    }
     root.focus({ preventScroll: true });
+  }
+
+  // announce names the page in the document title and on the main region
+  // that takes focus, so history entries, tabs, and screen readers can tell
+  // the pages apart (WCAG 2.4.2).
+  function announce(page, rest, notFound) {
+    const title = pageTitle(page, rest, notFound);
+    document.title = title;
+    main().setAttribute("aria-label", title.split(" \u00b7 ")[0]);
   }
 
   // update redraws the current view after a poll. Views rebuild their content,
@@ -406,7 +423,7 @@
   }
 
   function table(headers, rows, empty) {
-    return h("div", { class: "table-wrap" }, h("table", {},
+    return h("div", { class: "table-wrap", tabindex: "0" }, h("table", {},
       h("thead", {}, h("tr", {}, headers.map((c) => h("th", { scope: "col", class: c.num ? "num" : "", text: c.label || c })))),
       h("tbody", {}, rows.length ? rows : h("tr", {}, h("td", { colspan: String(headers.length), class: "muted", text: empty || "Nothing to show." })))));
   }
@@ -637,7 +654,7 @@
 
   function legend(chart) {
     return h("ul", { class: "legend", "aria-hidden": "true" }, chart.series.map((s) =>
-      h("li", {}, h("span", { class: "swatch c-" + s.cls }), s.label)));
+      h("li", {}, h("span", { class: "swatch c-" + s.cls + (s.dash ? " dashed" : "") }), s.label)));
   }
 
   // drawChart draws a chart as inline SVG at its host's width, with a
@@ -658,7 +675,7 @@
       cursors.set(chart.id, i);
       if (i < 0) {
         cursor.setAttribute("visibility", "hidden");
-        out.textContent = count ? "Hover over the chart or focus it and use the arrow keys to read values." : "No calls recorded in this range yet.";
+        out.textContent = geometry.empty || !count ? "No calls recorded in this range yet." : "Hover over the chart or focus it and use the arrow keys to read values.";
         return;
       }
       cursor.setAttribute("x1", geometry.pointX[i]);
@@ -690,7 +707,8 @@
       svg("text", { class: "tick", x: plot.x - 6, y: t.y + 4, "text-anchor": "end" }, t.label)]),
     geometry.xTicks.map((t) => svg("text", { class: "tick", x: t.x, y: geometry.height - 6, "text-anchor": "middle" }, clockLabel(t.t))),
     geometry.bars.map((b) => svg("rect", { class: "column c-" + b.cls, x: b.x, y: b.y, width: b.w, height: b.h })),
-    geometry.lines.map((l) => svg("path", { class: "line c-" + l.cls, d: l.d })),
+    geometry.lines.map((l) => svg("path", { class: "line c-" + l.cls + (l.dash ? " dashed" : ""), d: l.d })),
+    geometry.empty ? svg("text", { class: "empty-note", x: plot.x + plot.w / 2, y: plot.y + plot.h / 2 + 4, "text-anchor": "middle" }, "No calls in this range") : null,
     ctx.marks.map((m) => svg("line", { class: "mark mark-" + m.kind, x1: geometry.x(m.t), x2: geometry.x(m.t), y1: plot.y, y2: plot.y + plot.h },
       svg("title", {}, alertTitle(m.alert) + (m.kind === "start" ? " started " : " resolved ") + clockLabel(m.t)))),
     cursor);
@@ -1047,7 +1065,7 @@
   }
 
   function connectPanel(server, url) {
-    const snippets = connectSnippets(server.name, url);
+    const snippets = connectSnippets(server.name, url, { mcpAuth: state.auth.mcpAuth });
     const names = Object.keys(snippets);
     let active = names[0];
     const tabs = h("div", { class: "tabs", role: "tablist", style: "margin-bottom:10px" });
@@ -1061,7 +1079,7 @@
     return panel("Connect your agent", h("div", { class: "body stack" },
       h("p", { class: "muted", style: "margin:0", text: "Point any MCP client (Streamable HTTP) at this Gateway URL. Calls show up under Traffic." }),
       copyRow(url), tabs, out,
-      h("p", { class: "muted small", style: "margin:0", text: "The Gateway does not authenticate callers yet and never forwards Authorization or Cookie headers upstream." })));
+      h("p", { class: "muted small", style: "margin:0", text: connectNote(state.auth.mcpAuth) })));
   }
 
   // hintBadges shows the behavior hints the server reported for a tool
@@ -1205,19 +1223,41 @@
   function applyTheme(theme) {
     if (theme === "light" || theme === "dark") document.documentElement.dataset.theme = theme;
     else delete document.documentElement.dataset.theme;
+    drawThemeToggle(theme === "light" || theme === "dark" ? theme : "");
+  }
+
+  // drawThemeToggle shows the theme in effect as an icon and says which one
+  // it is, and what a press switches to, in its name.
+  function drawThemeToggle(theme) {
+    const button = document.getElementById("theme-toggle");
+    const label = themeLabel(theme);
+    button.setAttribute("aria-label", label);
+    button.title = label;
+    put(clear(button), icon(theme === "" ? "system" : theme));
+  }
+
+  // initIcons replaces the navigation's placeholders with the line icons.
+  function initIcons() {
+    document.querySelectorAll("[data-nav]").forEach((a) => {
+      const slot = a.querySelector(".nav-icon");
+      const drawn = icon(a.dataset.nav);
+      if (slot && drawn) put(clear(slot), drawn);
+    });
   }
 
   // The theme is the only thing the console stores in the browser
-  // (SPEC-0002-R13).
+  // (SPEC-0002-R13). The toggle steps through the device's theme, light,
+  // and dark; the device's is stored as nothing.
   function initTheme() {
     let theme = "";
     try { theme = localStorage.getItem(THEME_KEY) || ""; } catch { /* storage unavailable */ }
+    if (theme !== "light" && theme !== "dark") theme = "";
     applyTheme(theme);
+    initIcons();
     document.getElementById("theme-toggle").addEventListener("click", () => {
-      const dark = document.documentElement.dataset.theme ? document.documentElement.dataset.theme === "dark" : matchMedia("(prefers-color-scheme: dark)").matches;
-      const next = dark ? "light" : "dark";
-      applyTheme(next);
-      try { localStorage.setItem(THEME_KEY, next); } catch { /* storage unavailable */ }
+      theme = nextTheme(theme);
+      applyTheme(theme);
+      try { if (theme) localStorage.setItem(THEME_KEY, theme); else localStorage.removeItem(THEME_KEY); } catch { /* storage unavailable */ }
     });
   }
 

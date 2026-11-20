@@ -245,6 +245,40 @@ await check("every view fits 360 px without page scrolling", async (page) => {
   }
 });
 
+// Issues #187, #188, and #190 (bug fixes, so no requirement IDs): every page
+// has its own title, a page that does not exist is not the Overview, and all
+// seven pages are in view on a phone, in targets a thumb can hit.
+await check("titles, unknown pages, and the phone navigation", async (page) => {
+  await page.setViewportSize({ width: 1280, height: 800 });
+  await page.goto(base + "/ui/");
+  await signIn(page);
+  const titles = new Set();
+  for (const hash of ["#/overview", "#/dashboard", "#/servers", "#/tools", "#/playground", "#/traffic", "#/alerts", "#/servers/" + route]) {
+    await page.goto(base + "/ui/" + hash);
+    await page.waitForTimeout(400);
+    titles.add(await page.title());
+  }
+  assert.equal(titles.size, 8, "every page needs its own title, got " + [...titles].join(" | "));
+  await page.goto(base + "/ui/#/no-such-page");
+  await page.waitForTimeout(400);
+  assert.match(await page.title(), /^Page not found/);
+  assert.equal(await page.locator("[data-nav][aria-current]").count(), 0, "no navigation item is current on an unknown page");
+  assert.match(await page.locator("main").innerText(), /Page not found/);
+
+  await page.setViewportSize({ width: 360, height: 800 });
+  await page.goto(base + "/ui/#/overview");
+  await page.waitForTimeout(600);
+  const items = await page.evaluate(() => [...document.querySelectorAll(".nav a")].map((a) => {
+    const r = a.getBoundingClientRect();
+    return { name: a.textContent.trim(), inView: r.left >= 0 && r.right <= window.innerWidth, height: r.height };
+  }));
+  assert.equal(items.length, 7);
+  for (const item of items) {
+    assert.equal(item.inView, true, item.name + " is outside the 360 px viewport");
+    assert.ok(item.height >= 44, item.name + " is only " + item.height + " px high");
+  }
+});
+
 await browser.close();
 if (errors.length) {
   failed = true;
