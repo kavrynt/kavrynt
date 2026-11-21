@@ -205,17 +205,21 @@ func warnNotRouted(stderr io.Writer, server *kavryntv1alpha1.MCPServer) {
 func runAudit(args []string, stdin io.Reader, stdout, stderr io.Writer) int {
 	if len(args) > 0 && (args[0] == "-h" || args[0] == "--help") {
 		argUsage := "Audit Gateway logs and event chains\n\n" +
-			"Usage:\n   kavryctl audit <command> [flags]\n\n" +
-			"Commands:\n   verify  Verifies Gateway audit event chains read from a file or standard input\n"
+			"Usage:\n  kavryctl audit <command> [flags]\n\n" +
+			"Commands:\n  verify  Verifies Gateway audit event chains read from a file or standard input\n"
 		fmt.Fprint(stdout, argUsage)
+		fmt.Fprint(stdout, "\nFlags:\n  -h, --help   Help for audit\n")
+
 		return 0
 	}
 	if len(args) > 0 && args[0] == "verify" {
 		for _, a := range args[1:] {
 			if a == "-h" || a == "--help" {
 				argUsage := "Verifies Gateway audit event chains from a log file or standard input; events cut off the end of a chain are not detected\n\n" +
-					"Usage:\n kavryctl audit verify [flags] [file]\n"
+					"Usage:\n  kavryctl audit verify [flags] [file]\n"
 				fmt.Fprint(stdout, argUsage)
+				fmt.Fprint(stdout, "\nFlags:\n  -h, --help   Help for audit verify\n")
+
 				return 0
 			}
 		}
@@ -269,7 +273,7 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 	if args[0] == "help" || args[0] == "-h" || args[0] == "--help" {
 		fs := newFlagSet("help",
 			"Help provides help for any command in kavryctl",
-			"kavryctl help [command]",
+			"kavryctl help [flags] [command]",
 			stdout,
 			stderr)
 		if err := fs.Parse(args[1:]); err != nil {
@@ -282,7 +286,7 @@ func runHelp(args []string, stdout, stderr io.Writer) int {
 			fmt.Fprintln(stderr, "help does not accept extra arguments")
 			return 2
 		}
-		printHelp("Help provides help for any command in kavryctl", "kavryctl help [command]", fs, stdout)
+		fs.Usage()
 		return 0
 	}
 
@@ -615,7 +619,7 @@ func shellQuote(s string) string {
 func printHelp(argUsage string, cmdUsage string, fs *flag.FlagSet, w io.Writer) {
 
 	fmt.Fprint(w, "\n"+strings.TrimSpace(argUsage)+"\n\n")
-	fmt.Fprintf(w, "Usage:\n %s\n", cmdUsage)
+	fmt.Fprintf(w, "Usage:\n  %s\n", cmdUsage)
 
 	hasFlags := false
 	fs.VisitAll(func(f *flag.Flag) {
@@ -642,6 +646,9 @@ func printHelp(argUsage string, cmdUsage string, fs *flag.FlagSet, w io.Writer) 
 			}
 		}
 		fmt.Fprint(w, strings.Join(lines, "\n"))
+		fmt.Fprintf(w, "  -h, --help\n    \tHelp for %s\n", fs.Name())
+	} else {
+		fmt.Fprintf(w, "\nFlags:\n  -h, --help   Help for %s\n", fs.Name())
 	}
 }
 

@@ -445,18 +445,28 @@ func TestCLIHelp(t *testing.T) {
 				t.Fatalf("help %s: output differs from %s --help", cmd, cmd)
 			}
 
+			if !strings.Contains(outHelp, "Flags:\n") {
+				t.Fatalf("%s --help: expected Flags section in %q", cmd, outHelp)
+			}
+			if !strings.Contains(outHelp, "  -h, --help") {
+				t.Fatalf("%s --help: expected -h, --help flag in %q", cmd, outHelp)
+			}
+			if !strings.Contains(outHelp, "Help for "+cmd) {
+				t.Fatalf("%s --help: expected %q in %q", cmd, "Help for "+cmd, outHelp)
+			}
+
 			// Verify that multi-character flags use -- and single-character flags use -
 			for _, line := range strings.Split(outHelp, "\n") {
 				if strings.HasPrefix(line, "  -") && len(line) > 3 {
 					rest := line[2:]
 					if strings.HasPrefix(rest, "--") {
 						fields := strings.Fields(rest[2:])
-						if len(fields) > 0 && len(fields[0]) <= 1 {
+						if len(fields) > 0 && len(strings.TrimSuffix(fields[0], ",")) <= 1 {
 							t.Errorf("%s: single-character flag unexpectedly formatted with --: %q", cmd, line)
 						}
 					} else if strings.HasPrefix(rest, "-") {
 						fields := strings.Fields(rest[1:])
-						if len(fields) > 0 && len(fields[0]) > 1 {
+						if len(fields) > 0 && len(strings.TrimSuffix(fields[0], ",")) > 1 {
 							t.Errorf("%s: multi-character flag unexpectedly formatted with single -: %q", cmd, line)
 						}
 					}
@@ -484,8 +494,11 @@ func TestAuditHelp(t *testing.T) {
 		if code != 0 || errOut != "" {
 			t.Fatalf("%v: code=%d err=%q out=%q", args, code, errOut, out)
 		}
-		if !strings.Contains(out, "Commands:\n   verify") {
+		if !strings.Contains(out, "Commands:\n  verify") {
 			t.Fatalf("%v: missing verify subcommand in %q", args, out)
+		}
+		if !strings.Contains(out, "Flags:\n  -h, --help") || !strings.Contains(out, "Help for audit") {
+			t.Fatalf("%v: missing help flag documentation in %q", args, out)
 		}
 	}
 
@@ -508,6 +521,9 @@ func TestAuditHelp(t *testing.T) {
 		}
 		if !strings.Contains(out, "kavryctl audit verify [flags] [file]") {
 			t.Fatalf("%v: missing usage in %q", args, out)
+		}
+		if !strings.Contains(out, "Flags:\n  -h, --help") || !strings.Contains(out, "Help for audit verify") {
+			t.Fatalf("%v: missing help flag documentation in %q", args, out)
 		}
 		if expectedVerifyHelp == "" {
 			expectedVerifyHelp = out
