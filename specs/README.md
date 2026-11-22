@@ -175,3 +175,4 @@ against the assistant's summary of them.
 | [0047](0047-console-live-status-export/spec.md) | Console data freshness, export, and copy link | Draft |
 | [0048](0048-console-playground-ux/spec.md) | Console Playground: inline validation and re-running calls | Draft |
 | [0049](0049-console-polish/spec.md) | Console polish: loading states, shortcuts, command palette, empty states | Draft |
+| [0050](0050-gateway-jsonrpc-error-codes/spec.md) | Gateway JSON-RPC error responses on /mcp/ routes | Draft |
