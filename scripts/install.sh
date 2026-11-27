@@ -22,6 +22,7 @@ detect_os() {
   case "$(uname -s)" in
     Linux) printf 'linux' ;;
     Darwin) printf 'darwin' ;;
+    MINGW* | MSYS* | CYGWIN*) printf 'windows' ;;
     *) fail "unsupported operating system: $(uname -s)" ;;
   esac
 }
@@ -57,8 +58,26 @@ sha256_file() {
   fi
 }
 
+extract_zip() {
+  zip_file="$1"
+  dest="$2"
+  if command -v unzip >/dev/null 2>&1; then
+    unzip -q -o "$zip_file" -d "$dest"
+  elif command -v powershell.exe >/dev/null 2>&1; then
+    # Git Bash ships no unzip; Windows PowerShell can expand the archive.
+    if command -v cygpath >/dev/null 2>&1; then
+      zip_file="$(cygpath -w "$zip_file")"
+      dest="$(cygpath -w "$dest")"
+    fi
+    ZIP_FILE="$zip_file" ZIP_DEST="$dest" powershell.exe -NoProfile -NonInteractive -Command \
+      'Expand-Archive -LiteralPath $env:ZIP_FILE -DestinationPath $env:ZIP_DEST -Force' ||
+      fail "could not extract ${zip_file}"
+  else
+    fail "unzip or powershell.exe is required to extract the Windows archive"
+  fi
+}
+
 need_cmd uname
-need_cmd tar
 need_cmd awk
 need_cmd grep
 
@@ -66,7 +85,14 @@ os="$(detect_os)"
 arch="$(detect_arch)"
 version="${RELEASE_TAG#v}"
 archive_dir="kavryctl_${version}_${os}_${arch}"
-archive="${archive_dir}.tar.gz"
+if [ "$os" = "windows" ]; then
+  archive="${archive_dir}.zip"
+  binary="kavryctl.exe"
+else
+  need_cmd tar
+  archive="${archive_dir}.tar.gz"
+  binary="kavryctl"
+fi
 base_url="https://github.com/${REPO}/releases/download/${RELEASE_TAG}"
 
 tmp_dir="$(mktemp -d)"
@@ -86,10 +112,14 @@ actual="$(sha256_file "$archive_path")"
 [ "$actual" = "$expected" ] || fail "checksum mismatch for ${archive}"
 
 mkdir -p "$INSTALL_DIR"
-tar -xzf "$archive_path" -C "$tmp_dir" "${archive_dir}/kavryctl"
-install -m 0755 "${tmp_dir}/${archive_dir}/kavryctl" "${INSTALL_DIR}/kavryctl"
+if [ "$os" = "windows" ]; then
+  extract_zip "$archive_path" "$tmp_dir"
+else
+  tar -xzf "$archive_path" -C "$tmp_dir" "${archive_dir}/${binary}"
+fi
+install -m 0755 "${tmp_dir}/${archive_dir}/${binary}" "${INSTALL_DIR}/${binary}"
 
-log "Installed kavryctl to ${INSTALL_DIR}/kavryctl"
+log "Installed kavryctl to ${INSTALL_DIR}/${binary}"
 case ":$PATH:" in
   *":${INSTALL_DIR}:"*) ;;
   *) log "Add ${INSTALL_DIR} to PATH to run kavryctl from any shell." ;;
