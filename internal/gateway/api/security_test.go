@@ -106,6 +106,21 @@ func TestOriginValidation(t *testing.T) {
 	}
 }
 
+// A refused origin names the chart value, which is what Helm users set.
+func TestOriginRefusalNamesChartValue(t *testing.T) {
+	handler, calls := demoHandler(t, okResponse)
+	req := newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`))
+	req.Header.Set("Origin", "https://evil.example")
+	rr := httptest.NewRecorder()
+	handler.ServeHTTP(rr, req)
+	if rr.Code != http.StatusForbidden || *calls != 0 {
+		t.Fatalf("status = %d after %d upstream calls; want 403 and none", rr.Code, *calls)
+	}
+	if !strings.Contains(rr.Body.String(), "gateway.config.allowedOrigins") {
+		t.Fatalf("body %q does not name gateway.config.allowedOrigins", rr.Body.String())
+	}
+}
+
 func TestProxyDetectsGatewayLoops(t *testing.T) {
 	handler, calls := demoHandler(t, okResponse)
 	req := newRequest(http.MethodPost, "/mcp/team-a.demo", strings.NewReader(`{}`))
