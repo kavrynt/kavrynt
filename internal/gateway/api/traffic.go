@@ -654,7 +654,9 @@ func (m *trafficMetrics) toolLabel(route, tool string, discovered map[string]map
 		return m.tools.admit(route, label)
 	}
 	if _, ok := discovered[label]; ok {
-		return label
+		// A server can change its tools between discoveries; the per-route
+		// cap also bounds the names used over the Gateway's lifetime.
+		return m.tools.admit(route, label)
 	}
 	return labelOther
 }
