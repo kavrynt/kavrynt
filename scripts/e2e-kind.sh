@@ -530,12 +530,13 @@ call_tool() {
     --data "{\"jsonrpc\":\"2.0\",\"id\":3,\"method\":\"tools/call\",\"params\":{\"name\":\"$1\",\"arguments\":{\"message\":\"secret-argument\"}}}"
 }
 call_tool echo | jq --exit-status '.result.content[0].text == "secret-argument"' >/dev/null
+# A tool the server did not list is labelled "other", never by its own name.
 call_tool missing_tool | jq --exit-status '.result.isError == true' >/dev/null
 METRICS="$(curl --fail --silent --show-error "${GATEWAY_URL}/metrics")"
 for series in \
   "kavrynt_gateway_mcp_requests_total{method=\"tools/list\",outcome=\"ok\",route=\"${SERVER_ID}\",tool=\"none\"}" \
   "kavrynt_gateway_mcp_requests_total{method=\"tools/call\",outcome=\"ok\",route=\"${SERVER_ID}\",tool=\"echo\"} 1" \
-  "kavrynt_gateway_mcp_requests_total{method=\"tools/call\",outcome=\"tool_error\",route=\"${SERVER_ID}\",tool=\"missing_tool\"} 1"; do
+  "kavrynt_gateway_mcp_requests_total{method=\"tools/call\",outcome=\"tool_error\",route=\"${SERVER_ID}\",tool=\"other\"} 1"; do
   grep --fixed-strings --quiet "${series}" <<<"${METRICS}" || fail "Gateway metrics missing ${series}"
 done
 if grep --fixed-strings --quiet "secret-argument" <<<"${METRICS}"; then
