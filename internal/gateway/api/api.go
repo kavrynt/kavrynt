@@ -355,7 +355,7 @@ func (h *Handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// able to drive MCP calls through it (MCP requires servers to validate
 	// Origin against DNS rebinding). Clients that are not browsers send none.
 	if !h.originAllowed(r.Header.Get("Origin")) {
-		writeError(w, http.StatusForbidden, errors.New("origin not allowed; add it with --allowed-origins"))
+		writeError(w, http.StatusForbidden, errors.New("origin not allowed; add it to gateway.config.allowedOrigins (Gateway flag --allowed-origins)"))
 		return
 	}
 
