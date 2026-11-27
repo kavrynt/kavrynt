@@ -28,10 +28,9 @@ const (
 	// and classified as "unknown".
 	maxInspectBytes = 1 << 20
 
-	maxToolsPerRoute   = mcpmeta.MaxToolsPerServer
-	maxMethodsPerRoute = 50
-	maxMethodLength    = 64
-	maxToolLength      = mcpmeta.MaxToolNameLength
+	maxToolsPerRoute = mcpmeta.MaxToolsPerServer
+	maxMethodLength  = 64
+	maxToolLength    = mcpmeta.MaxToolNameLength
 
 	labelNone    = "none"
 	labelUnknown = "unknown"
@@ -572,8 +571,45 @@ type trafficMetrics struct {
 	requests *prometheus.CounterVec
 	duration *prometheus.HistogramVec
 	bytes    *prometheus.CounterVec
-	methods  *labelLimiter
 	tools    *labelLimiter
+}
+
+// knownMethods are the MCP method names (specification 2025-11-25, and
+// subscriptions/listen of 2026-07-28) the metrics use as a label. Any other
+// name a caller sends is counted under "other", so a caller cannot choose
+// label values.
+var knownMethods = map[string]struct{}{
+	"initialize": {}, "ping": {},
+	"tools/list": {}, "tools/call": {},
+	"resources/list": {}, "resources/templates/list": {}, "resources/read": {},
+	"resources/subscribe": {}, "resources/unsubscribe": {},
+	"prompts/list": {}, "prompts/get": {},
+	"completion/complete": {}, "logging/setLevel": {},
+	"sampling/createMessage": {}, "elicitation/create": {}, "roots/list": {},
+	"tasks/get": {}, "tasks/result": {}, "tasks/list": {}, "tasks/cancel": {},
+	"subscriptions/listen":      {},
+	"notifications/initialized": {}, "notifications/cancelled": {}, "notifications/progress": {},
+	"notifications/message": {}, "notifications/resources/updated": {},
+	"notifications/resources/list_changed": {}, "notifications/tools/list_changed": {},
+	"notifications/prompts/list_changed": {}, "notifications/roots/list_changed": {},
+	"notifications/tasks/status": {}, "notifications/elicitation/complete": {},
+	// Requests that are not JSON-RPC calls are named after their HTTP method
+	// (see classify); only the methods the Gateway forwards are listed.
+	"http_get": {}, "http_post": {}, "http_delete": {},
+}
+
+// methodLabel returns the label of an MCP method: the name when the
+// specification defines it, else "other".
+func methodLabel(method string) string {
+	label := sanitizeLabel(method, maxMethodLength)
+	switch label {
+	case labelNone, labelUnknown, labelInvalid:
+		return label
+	}
+	if _, ok := knownMethods[label]; ok || probeMethods[label] {
+		return label
+	}
+	return labelOther
 }
 
 // durationBuckets are the latency buckets of the duration histogram, and of
@@ -596,17 +632,40 @@ func newTrafficMetrics(registry prometheus.Registerer) *trafficMetrics {
 			Name: "kavrynt_gateway_mcp_bytes_total",
 			Help: "Request and response body bytes proxied by the Gateway.",
 		}, []string{"route", "direction"}),
-		methods: newLabelLimiter(maxMethodsPerRoute),
-		tools:   newLabelLimiter(maxToolsPerRoute),
+		tools: newLabelLimiter(maxToolsPerRoute),
 	}
 	registry.MustRegister(m.requests, m.duration, m.bytes)
 	return m
 }
 
+// toolLabel returns the label of a called tool. With a discovery on record
+// for the route, only its discovered tools are named and any other name is
+// "other", so hallucinated or hostile names cannot take the label slots. A
+// route without a discovery (the Operator skips servers that need the
+// caller's token) has no list to check against: its first names seen, up to
+// the per-route cap, are used.
+func (m *trafficMetrics) toolLabel(route, tool string, discovered map[string]map[string]bool) string {
+	label := sanitizeLabel(tool, maxToolLength)
+	switch label {
+	case labelNone, labelUnknown, labelInvalid:
+		return label
+	}
+	if len(discovered) == 0 {
+		return m.tools.admit(route, label)
+	}
+	if _, ok := discovered[label]; ok {
+		// A server can change its tools between discoveries; the per-route
+		// cap also bounds the names used over the Gateway's lifetime.
+		return m.tools.admit(route, label)
+	}
+	return labelOther
+}
+
 // observe records a request and returns its bounded method and tool labels.
-func (m *trafficMetrics) observe(route string, call mcpCall, outcome string, elapsed time.Duration, bytesIn, bytesOut int64) (string, string) {
-	method := m.methods.admit(route, sanitizeLabel(call.method, maxMethodLength))
-	tool := m.tools.admit(route, sanitizeLabel(call.tool, maxToolLength))
+// discovered is the route's tools from its last discovery.
+func (m *trafficMetrics) observe(route string, call mcpCall, outcome string, elapsed time.Duration, bytesIn, bytesOut int64, discovered map[string]map[string]bool) (string, string) {
+	method := methodLabel(call.method)
+	tool := m.toolLabel(route, call.tool, discovered)
 	m.requests.WithLabelValues(route, method, tool, outcome).Inc()
 	m.duration.WithLabelValues(route, method, tool, outcome).Observe(elapsed.Seconds())
 	m.bytes.WithLabelValues(route, "in").Add(float64(bytesIn))

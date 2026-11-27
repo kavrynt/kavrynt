@@ -1290,7 +1290,11 @@ func writeRefusal(w http.ResponseWriter, refusal *clientauth.Refusal) {
 // observe records a proxied request in the metrics, the recent traffic,
 // the console alerts' window, and the dashboards' history.
 func (h *Handler) observe(route string, call mcpCall, outcome string, status int, elapsed time.Duration, bytesIn, bytesOut int64) {
-	method, tool := h.traffic.observe(route, call, outcome, elapsed, bytesIn, bytesOut)
+	var discovered map[string]map[string]bool
+	if r, ok := h.table.Get(route); ok {
+		discovered = r.Tools
+	}
+	method, tool := h.traffic.observe(route, call, outcome, elapsed, bytesIn, bytesOut, discovered)
 	h.recent.add(route, call, outcome, status, elapsed, bytesIn, bytesOut)
 	now := time.Now()
 	h.alertWindow.Record(now, route, method, tool, outcome, elapsed)

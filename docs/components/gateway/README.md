@@ -982,7 +982,7 @@ are in the [Operator reference](../operator/README.md#metrics-reference).
 
 | Metric | Type | Labels and bounds |
 | --- | --- | --- |
-| `kavrynt_gateway_mcp_requests_total` | counter | `route` (one per routed `MCPServer`, `<namespace>.<name>`), `method` (50 per route, then `other`), `tool` (200 per route, then `other`; `none`, `invalid`), `outcome` (the list above) |
+| `kavrynt_gateway_mcp_requests_total` | counter | `route` (one per routed `MCPServer`, `<namespace>.<name>`), `method` (a method the MCP specification defines, or `other`), `tool` (a tool of the route's last discovery, or `other`; a route without a discovery uses its first 200 names, then `other`; also `none`, `invalid`), `outcome` (the list above) |
 | `kavrynt_gateway_mcp_request_duration_seconds` | histogram | as `kavrynt_gateway_mcp_requests_total`; buckets 5 ms to 30 s |
 | `kavrynt_gateway_mcp_bytes_total` | counter | `route`, `direction` (`in`, `out`) |
 | `kavrynt_gateway_requests_total` | counter | none; every HTTP request the Gateway received |

@@ -355,6 +355,54 @@ func TestTrafficMetricsCapToolCardinality(t *testing.T) {
 	}
 }
 
+// Verifies issue #170: with a discovery on record, only its tools and the
+// specification's methods are label values.
+func TestTrafficMetricsLabelOnlyDiscoveredToolsAndKnownMethods(t *testing.T) {
+	h := trafficHandler(t, func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"result":{}}`), nil
+	})
+	h.table.Replace([]model.Route{{
+		Name: "team-a.demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp",
+		Tools: map[string]map[string]bool{"echo": {}},
+	}}, time.Now())
+
+	for i := 0; i < maxToolsPerRoute+50; i++ {
+		post(h, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"guess_%d"}}`, i), nil)
+		post(h, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"made/up_%d"}`, i), nil)
+	}
+	post(h, `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"echo"}}`, nil)
+
+	metrics := scrape(t, h)
+	requireSeries(t, metrics, `kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="ok",route="team-a.demo",tool="echo"} 1`)
+	requireSeries(t, metrics, fmt.Sprintf(`kavrynt_gateway_mcp_requests_total{method="tools/call",outcome="ok",route="team-a.demo",tool="other"} %d`, maxToolsPerRoute+50))
+	requireSeries(t, metrics, fmt.Sprintf(`kavrynt_gateway_mcp_requests_total{method="other",outcome="ok",route="team-a.demo",tool="none"} %d`, maxToolsPerRoute+50))
+	for _, name := range []string{`tool="guess_`, `method="made/`} {
+		if strings.Contains(metrics, name) {
+			t.Fatalf("metrics contain a caller-chosen label %s", name)
+		}
+	}
+}
+
+// A server that renames its tools at every discovery cannot add more than the
+// per-route cap of tool label values over the Gateway's lifetime.
+func TestTrafficMetricsBoundToolLabelsAcrossDiscoveries(t *testing.T) {
+	h := trafficHandler(t, func(*http.Request) (*http.Response, error) {
+		return jsonResponse(http.StatusOK, `{"result":{}}`), nil
+	})
+	for i := 0; i < maxToolsPerRoute+20; i++ {
+		name := fmt.Sprintf("rotating_%d", i)
+		h.table.Replace([]model.Route{{
+			Name: "team-a.demo", Version: "0.1.0", Transport: "http", Endpoint: "http://demo.test/mcp",
+			Tools: map[string]map[string]bool{name: {}},
+		}}, time.Now())
+		post(h, fmt.Sprintf(`{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":%q}}`, name), nil)
+	}
+	metrics := scrape(t, h)
+	if got := strings.Count(metrics, `kavrynt_gateway_mcp_requests_total{method="tools/call"`); got != maxToolsPerRoute+1 {
+		t.Fatalf("tools/call series = %d, want %d (cap plus other)", got, maxToolsPerRoute+1)
+	}
+}
+
 func TestProxyForwardsInspectedBodyUnchanged(t *testing.T) {
 	large := `{"jsonrpc":"2.0","id":1,"method":"tools/call","params":{"name":"upload","arguments":{"blob":"` +
 		strings.Repeat("a", maxInspectBytes) + `"}}}`
